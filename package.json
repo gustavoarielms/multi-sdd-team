@@ -1,0 +1,36 @@
+{
+  "name": "@rcarnicer/multi-team-sdd",
+  "version": "0.1.0",
+  "description": "Multi-agent SDD orchestration extension package for pi",
+  "type": "module",
+  "license": "MIT",
+  "author": "rcarnicer",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "sdd",
+    "subagents",
+    "multi-agent"
+  ],
+  "files": [
+    "README.md",
+    "docs",
+    "extensions",
+    "agents",
+    "prompts"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}
