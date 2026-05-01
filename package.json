@@ -17,8 +17,13 @@
     "docs",
     "extensions",
     "agents",
-    "prompts"
+    "prompts",
+    "codex",
+    "setup.sh"
   ],
+  "scripts": {
+    "setup:codex": "./setup.sh codex --global"
+  },
   "pi": {
     "extensions": [
       "./extensions"
