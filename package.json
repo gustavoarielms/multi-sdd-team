@@ -1,11 +1,26 @@
 {
-  "name": "@rcarnicer/multi-team-sdd",
+  "name": "@gustavoarielms/sdd-codegraph-cli",
   "version": "0.1.0",
-  "description": "Multi-agent SDD orchestration extension package for pi",
+  "description": "Unpublished derivative package for Codex SDD agent configuration with optional external CodeGraph integration, based on ram4-dev/multi-sdd-team",
+  "private": true,
   "type": "module",
   "license": "MIT",
-  "author": "rcarnicer",
+  "author": "rcarnicer (original project)",
+  "contributors": [
+    "gustavoarielms (fork maintainer)"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gustavoarielms/multi-sdd-team.git"
+  },
+  "homepage": "https://github.com/gustavoarielms/multi-sdd-team#readme",
+  "bugs": {
+    "url": "https://github.com/gustavoarielms/multi-sdd-team/issues"
+  },
   "keywords": [
+    "codex",
+    "codegraph",
+    "derivative",
     "pi-package",
     "pi",
     "sdd",
@@ -14,6 +29,7 @@
   ],
   "files": [
     "README.md",
+    "NOTICE.md",
     "docs",
     "extensions",
     "agents",

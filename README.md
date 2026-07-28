@@ -1,6 +1,31 @@
-# multi-team-sdd
+# @gustavoarielms/sdd-codegraph-cli
 
-`pi` package for multi-agent orchestration with SDD-aware routing.
+Unpublished derivative package for multi-agent orchestration with SDD-aware
+routing and optional integration with the external CodeGraph tool.
+
+> **Publication status:** this fork is not published to npm or NuGet.
+> `package.json` intentionally contains `"private": true` until the upstream
+> licensing notice is explicit and registry publication is separately approved.
+>
+> **Implementation status:** the future cross-platform CLI is not implemented
+> yet. The currently supported Codex installer is `setup.sh`.
+
+## Origin and attribution
+
+This repository is a fork of
+[`ram4-dev/multi-sdd-team`](https://github.com/ram4-dev/multi-sdd-team), whose
+package metadata identifies `rcarnicer` as the original author.
+
+- The fork maintainer does not claim ownership of SDD as a methodology.
+- The fork maintainer does not claim ownership of CodeGraph.
+- CodeGraph is an external tool and is not bundled with this package.
+- References to CodeGraph describe optional configuration and bootstrap
+  integration only.
+- The package name distinguishes this derivative distribution from the original
+  project; it does not imply authorship of the underlying concepts or tools.
+
+See [NOTICE.md](NOTICE.md) for the detailed attribution and current licensing
+status.
 
 ## Includes
 
