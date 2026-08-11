@@ -38,7 +38,11 @@ At the time this notice was written, the upstream `package.json` declared the
 license identifier `MIT`, but the upstream repository did not include a
 standalone `LICENSE` file recognized by GitHub.
 
-This fork therefore keeps `"private": true` in `package.json` and must not be
-published to a package registry until the upstream licensing notice or explicit
-distribution permission is confirmed and the required license and copyright
-notices are included.
+This fork therefore declares `"license": "UNLICENSED"`, keeps `"private": true`,
+and includes an explicit failing `prepublishOnly` guard in `package.json`. It
+must not be published to a package registry until the upstream licensing notice
+or explicit distribution permission is confirmed and the required license and
+copyright notices are included.
+
+The upstream clarification request is tracked in
+<https://github.com/ram4-dev/multi-sdd-team/issues/1>.
