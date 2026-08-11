@@ -4,11 +4,13 @@ Unpublished derivative package for multi-agent orchestration with SDD-aware
 routing and optional integration with the external CodeGraph tool.
 
 > **Publication status:** this fork is not published to npm or NuGet.
-> `package.json` intentionally contains `"private": true` until the upstream
-> licensing notice is explicit and registry publication is separately approved.
+> `package.json` intentionally contains `"private": true` and
+> `"license": "UNLICENSED"` until the upstream licensing notice is explicit and
+> registry publication is separately approved.
 >
-> **Implementation status:** the future cross-platform CLI is not implemented
-> yet. The currently supported Codex installer is `setup.sh`.
+> **Implementation status:** the cross-platform CLI is implemented for Node.js
+> 20 or newer. The existing `setup.sh` installer remains available for backward
+> compatibility.
 
 ## Origin and attribution
 
@@ -26,6 +28,35 @@ package metadata identifies `rcarnicer` as the original author.
 
 See [NOTICE.md](NOTICE.md) for the detailed attribution and current licensing
 status.
+
+## CLI
+
+Run from a local checkout:
+
+```bash
+node ./bin/sdd-codegraph.js init /absolute/path/to/project
+node ./bin/sdd-codegraph.js update /absolute/path/to/project
+node ./bin/sdd-codegraph.js check /absolute/path/to/project
+```
+
+Once registry publication is legally cleared, the equivalent package commands
+will be:
+
+```bash
+npx @gustavoarielms/sdd-codegraph-cli init
+npx @gustavoarielms/sdd-codegraph-cli update
+npx @gustavoarielms/sdd-codegraph-cli check
+```
+
+- `init` installs the managed Codex SDD configuration and initializes or syncs
+  CodeGraph.
+- `update` refreshes the managed SDD files while preserving project-specific
+  `AGENTS.md` content and unrelated `.codex/config.toml` keys.
+- `check` is read-only and fails when managed files drift or the CodeGraph index
+  is missing or stale.
+
+The target path defaults to the current working directory. CodeGraph must be
+installed separately and available in `PATH`.
 
 ## Includes
 
