@@ -16,6 +16,14 @@ async function temporaryProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), "sdd-codegraph-test-"));
 }
 
+test("package publication remains explicitly blocked", async () => {
+  const packagePath = new URL("../package.json", import.meta.url);
+  const metadata = JSON.parse(await fs.readFile(packagePath, "utf8"));
+  assert.equal(metadata.private, true);
+  assert.equal(metadata.license, "UNLICENSED");
+  assert.match(metadata.scripts.prepublishOnly, /Publication blocked/);
+});
+
 test("mergeManagedBlock preserves unmanaged content and replaces the managed block", () => {
   const existing = "# Project rules\n\n<!-- multi-sdd-team: begin -->\nold\n<!-- multi-sdd-team: end -->\n";
   const result = mergeManagedBlock(existing, "new policy\n");

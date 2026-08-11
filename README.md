@@ -5,8 +5,9 @@ routing and optional integration with the external CodeGraph tool.
 
 > **Publication status:** this fork is not published to npm or NuGet.
 > `package.json` intentionally contains `"private": true` and
-> `"license": "UNLICENSED"` until the upstream licensing notice is explicit and
-> registry publication is separately approved.
+> `"license": "UNLICENSED"`, plus an explicit publication guard, until the
+> upstream licensing notice is explicit and registry publication is separately
+> approved.
 >
 > **Implementation status:** the cross-platform CLI is implemented for Node.js
 > 20 or newer. The existing `setup.sh` installer remains available for backward
