@@ -16,12 +16,13 @@ async function temporaryProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), "sdd-codegraph-test-"));
 }
 
-test("package publication remains explicitly blocked", async () => {
+test("package is configured for public MIT publication", async () => {
   const packagePath = new URL("../package.json", import.meta.url);
   const metadata = JSON.parse(await fs.readFile(packagePath, "utf8"));
-  assert.equal(metadata.private, true);
-  assert.equal(metadata.license, "UNLICENSED");
-  assert.match(metadata.scripts.prepublishOnly, /Publication blocked/);
+  assert.equal("private" in metadata, false);
+  assert.equal(metadata.license, "MIT");
+  assert.equal(metadata.publishConfig.access, "public");
+  assert.equal("prepublishOnly" in metadata.scripts, false);
 });
 
 test("mergeManagedBlock preserves unmanaged content and replaces the managed block", () => {
