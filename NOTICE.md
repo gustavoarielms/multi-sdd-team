@@ -32,17 +32,16 @@ CodeGraph, or the complete upstream implementation.
 - Any CodeGraph support in this fork is limited to configuration, initialization,
   synchronization, or interoperability guidance.
 
-## Licensing status
+## Licensing
 
-At the time this notice was written, the upstream `package.json` declared the
-license identifier `MIT`, but the upstream repository did not include a
-standalone `LICENSE` file recognized by GitHub.
+The upstream `package.json` declares the SPDX license identifier `MIT` and names
+`rcarnicer` as the original author. The upstream repository does not currently
+include a standalone `LICENSE` file recognized by GitHub.
 
-This fork therefore declares `"license": "UNLICENSED"`, keeps `"private": true`,
-and includes an explicit failing `prepublishOnly` guard in `package.json`. It
-must not be published to a package registry until the upstream licensing notice
-or explicit distribution permission is confirmed and the required license and
-copyright notices are included.
+This fork relies on that MIT declaration, includes the complete MIT terms in
+`LICENSE`, preserves attribution to `rcarnicer` and the upstream contributors,
+and identifies Gustavo Ariel Molina Segura's work as fork modifications. It
+does not claim ownership of SDD, CodeGraph, or the upstream implementation.
 
-The upstream clarification request is tracked in
+The request for an upstream standalone license notice remains tracked in
 <https://github.com/ram4-dev/multi-sdd-team/issues/1>.

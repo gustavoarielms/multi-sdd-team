@@ -1,13 +1,10 @@
 # @gustavoarielms/sdd-codegraph-cli
 
-Unpublished derivative package for multi-agent orchestration with SDD-aware
+MIT-licensed derivative package for multi-agent orchestration with SDD-aware
 routing and optional integration with the external CodeGraph tool.
 
-> **Publication status:** this fork is not published to npm or NuGet.
-> `package.json` intentionally contains `"private": true` and
-> `"license": "UNLICENSED"`, plus an explicit publication guard, until the
-> upstream licensing notice is explicit and registry publication is separately
-> approved.
+> **Publication status:** the package is configured for public npm publication
+> under `@gustavoarielms/sdd-codegraph-cli`.
 >
 > **Implementation status:** the cross-platform CLI is implemented for Node.js
 > 20 or newer. The existing `setup.sh` installer remains available for backward
@@ -27,8 +24,8 @@ package metadata identifies `rcarnicer` as the original author.
 - The package name distinguishes this derivative distribution from the original
   project; it does not imply authorship of the underlying concepts or tools.
 
-See [NOTICE.md](NOTICE.md) for the detailed attribution and current licensing
-status.
+See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for licensing and detailed
+attribution.
 
 ## CLI
 
@@ -40,8 +37,7 @@ node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 ```
 
-Once registry publication is legally cleared, the equivalent package commands
-will be:
+From npm, the equivalent package commands are:
 
 ```bash
 npx @gustavoarielms/sdd-codegraph-cli init
@@ -142,3 +138,10 @@ Codex demo-fast behavior:
 - `tester-reviewer` is report-only in v1.
 - `hacker` supports passive and active modes. Active mode allows high-risk commands and requires explicit opt-in (`/security-mode active`).
 - Startup UI renders horizontal cards with each specialized subagent (name + short description + role color).
+
+## License
+
+This derivative package is distributed under the MIT License. See
+[LICENSE](LICENSE) for the full terms and [NOTICE.md](NOTICE.md) for original
+project attribution. CodeGraph remains a separate external MIT-licensed tool
+and is not bundled with this package.
