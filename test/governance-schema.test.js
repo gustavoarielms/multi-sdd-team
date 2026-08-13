@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import test from "node:test";
 import {
@@ -38,7 +38,6 @@ test("governance examples satisfy their schemas and cross-reference integrity", 
 
   assert.deepEqual(await validateAgentResult(agentResult, {
     expectedAgent: "architecture-reviewer",
-    expectedRuntime: "codex",
   }), { ok: true, value: agentResult, errors: [] });
   assert.equal((await validateGovernanceDocument("rule.schema.json", rule)).valid, true);
   assert.equal((await validateGovernanceDocument("exception.schema.json", exception)).valid, true);
@@ -67,6 +66,16 @@ test("a passing gate cannot retain blocking findings", async () => {
   gate.status = "pass";
 
   assert.equal((await validateGovernanceDocument("gate-decision.schema.json", gate)).valid, false);
+});
+
+test("a gate cannot pass by omitting an eligible blocking finding", async () => {
+  const result = await readJson(new URL("architecture-review-result.json", examplesUrl));
+  result.gate_decisions[0].status = "pass";
+  result.gate_decisions[0].blocking_finding_ids = [];
+
+  const validation = await validateAgentResult(result, { expectedAgent: "architecture-reviewer" });
+  assert.equal(validation.ok, false);
+  assert.match(validation.errors.join(" "), /eligible blocking finding/);
 });
 
 test("approved rules and exceptions require human authority", async () => {
@@ -106,7 +115,7 @@ test("pure JSON parser rejects markdown fences and surrounding prose", async () 
   assert.equal((await validateAgentResultText(`Review complete.\n${json}`)).ok, false);
 });
 
-test("review validation rejects role, runtime, gate count, and reference mismatches", async () => {
+test("review validation rejects role, non-Codex runtime, gate count, and reference mismatches", async () => {
   const base = await readJson(new URL("architecture-review-result.json", examplesUrl));
 
   assert.deepEqual(
@@ -117,10 +126,9 @@ test("review validation rejects role, runtime, gate count, and reference mismatc
       "gate type does not match the expected review agent",
     ],
   );
-  assert.deepEqual(
-    (await validateAgentResult(base, { expectedAgent: "architecture-reviewer", expectedRuntime: "pi" })).errors,
-    ["producer runtime does not match the expected runtime"],
-  );
+  const wrongRuntime = structuredClone(base);
+  wrongRuntime.producer.runtime = "ci";
+  assert.equal((await validateAgentResult(wrongRuntime, { expectedAgent: "architecture-reviewer" })).ok, false);
 
   const noGate = structuredClone(base);
   noGate.gate_decisions = [];
@@ -134,7 +142,12 @@ test("review validation rejects role, runtime, gate count, and reference mismatc
   dangling.gate_decisions[0].blocking_finding_ids = ["finding:missing"];
   assert.deepEqual(
     (await validateAgentResult(dangling, { expectedAgent: "architecture-reviewer" })).errors,
-    ["finding references missing evidence", "gate omits finding evidence", "blocking finding is absent from gate findings"],
+    [
+      "finding references missing evidence",
+      "gate omits finding evidence",
+      "gate omits an eligible blocking finding",
+      "blocking finding is absent from gate findings",
+    ],
   );
 
   const omitted = structuredClone(base);
@@ -169,8 +182,6 @@ test("CLI validates files and stdin with expected provenance", async () => {
     example.pathname,
     "--agent",
     "architecture-reviewer",
-    "--runtime",
-    "codex",
   ], { encoding: "utf8" });
   assert.match(fileResult, /Governance result valid for architecture_reviewer/);
 
@@ -181,10 +192,18 @@ test("CLI validates files and stdin with expected provenance", async () => {
     "-",
     "--agent",
     "architecture-reviewer",
-    "--runtime",
-    "codex",
   ], { encoding: "utf8", input });
   assert.match(stdinResult, /gate status: fail/);
+
+  const removedOption = spawnSync(process.execPath, [
+    cli.pathname,
+    "validate-result",
+    example.pathname,
+    "--runtime",
+    "codex",
+  ], { encoding: "utf8" });
+  assert.equal(removedOption.status, 1);
+  assert.match(removedOption.stderr, /Unexpected argument/);
 });
 
 test("versioned governance catalog and check registry are valid and linked", async () => {
@@ -200,7 +219,7 @@ test("versioned governance catalog and check registry are valid and linked", asy
       .map((rule) => rule.rule_id),
     [
       "GOV-CATALOG-INTEGRITY-001",
-      "GOV-RUNTIME-PARITY-001",
+      "GOV-CODEX-ROLE-CATALOG-001",
       "GOV-REVIEW-REPORTONLY-001",
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
@@ -231,6 +250,11 @@ test("versioned governance catalog and check registry are valid and linked", asy
   );
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ARCH-REVIEW-SCOPE-001").enforcement.gate_effect, "warn");
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").enforcement.gate_effect, "warn");
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-REPORTONLY-001").version, 2);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-HANDOFF-001").version, 2);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ROLE-CAPABILITY-001").version, 2);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-SECURITY-ACTIVE-001").version, 2);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").version, 2);
   assert.ok(approvedInventory
     .filter((ruleId) => !["GOV-ARCH-REVIEW-SCOPE-001", "ENG-IMPLEMENTER-TDD-001"].includes(ruleId))
     .every((ruleId) => catalog.rules.find((rule) => rule.rule_id === ruleId).enforcement.gate_effect === "block"));

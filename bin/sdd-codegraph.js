@@ -22,7 +22,7 @@ Usage:
   sdd-codegraph update [path]
   sdd-codegraph check [path]
   sdd-codegraph check-governance [path]
-  sdd-codegraph validate-result [file|-] [--agent <name>] [--runtime <runtime>]
+  sdd-codegraph validate-result [file|-] [--agent <name>]
   sdd-codegraph --version
 
 Commands:
@@ -53,7 +53,6 @@ async function readStdin() {
 function parseValidationArguments(args) {
   let file = "-";
   let expectedAgent;
-  let expectedRuntime;
   let hasFile = false;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -64,19 +63,13 @@ function parseValidationArguments(args) {
       index += 1;
       continue;
     }
-    if (argument === "--runtime") {
-      expectedRuntime = args[index + 1];
-      if (!expectedRuntime) throw new Error("--runtime requires a value");
-      index += 1;
-      continue;
-    }
     if (argument.startsWith("--")) throw new Error(`Unexpected argument: ${argument}`);
     if (hasFile) throw new Error(`Unexpected argument: ${argument}`);
     file = argument;
     hasFile = true;
   }
 
-  return { file, expectedAgent, expectedRuntime };
+  return { file, expectedAgent };
 }
 
 async function run() {
@@ -94,9 +87,9 @@ async function run() {
   }
 
   if (command === "validate-result") {
-    const { file, expectedAgent, expectedRuntime } = parseValidationArguments(args);
+    const { file, expectedAgent } = parseValidationArguments(args);
     const input = file === "-" ? await readStdin() : await fs.readFile(path.resolve(file), "utf8");
-    const validation = await validateAgentResultText(input, { expectedAgent, expectedRuntime });
+    const validation = await validateAgentResultText(input, { expectedAgent });
     if (!validation.ok) {
       process.stderr.write(`Governance result rejected: ${validation.errors.join("; ")}\n`);
       process.exitCode = 1;

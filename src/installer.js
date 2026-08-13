@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -21,6 +22,63 @@ async function readTextIfExists(filePath) {
     return await fs.readFile(filePath, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+async function canonicalInstallRoot(targetPath) {
+  const requestedRoot = path.resolve(targetPath);
+  await fs.mkdir(requestedRoot, { recursive: true });
+  return fs.realpath(requestedRoot);
+}
+
+async function assertManagedPathSafe(installRoot, relativePath) {
+  const target = path.resolve(installRoot, relativePath);
+  const relative = path.relative(installRoot, target);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error(`Managed path escapes installation root: ${relativePath}`);
+  }
+
+  let current = installRoot;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    try {
+      const stat = await fs.lstat(current);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Managed path contains a symbolic link: ${relativePath}`);
+      }
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  }
+}
+
+async function readManagedTextIfExists(installRoot, relativePath) {
+  await assertManagedPathSafe(installRoot, relativePath);
+  return readTextIfExists(path.join(installRoot, relativePath));
+}
+
+async function writeManagedFile(installRoot, relativePath, content) {
+  await assertManagedPathSafe(installRoot, relativePath);
+  const target = path.join(installRoot, relativePath);
+  const parent = path.dirname(target);
+  await fs.mkdir(parent, { recursive: true });
+  await assertManagedPathSafe(installRoot, relativePath);
+
+  let mode = 0o666;
+  try {
+    mode = (await fs.lstat(target)).mode & 0o777;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const temporary = path.join(parent, `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode });
+    await fs.rename(temporary, target);
+  } catch (error) {
+    await fs.rm(temporary, { force: true });
     throw error;
   }
 }
@@ -140,72 +198,83 @@ async function loadTemplates() {
   };
 }
 
-async function expectedProjectFiles(projectRoot) {
+async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   const [metadata, templates] = await Promise.all([loadPackageMetadata(), loadTemplates()]);
   const files = new Map();
 
   for (const [name, content] of templates.agents) {
-    files.set(path.join(".codex", "agents", name), content);
+    files.set(path.join(codexPrefix, "agents", name), content);
   }
   for (const [name, content] of templates.governanceSchemas) {
-    files.set(path.join(".codex", "governance", "schemas", "v1", name), content);
+    files.set(path.join(codexPrefix, "governance", "schemas", "v1", name), content);
   }
   for (const [name, content] of templates.governanceRules) {
-    files.set(path.join(".codex", "governance", "rules", "v1", name), content);
+    files.set(path.join(codexPrefix, "governance", "rules", "v1", name), content);
   }
   for (const [name, content] of templates.governanceChecks) {
-    files.set(path.join(".codex", "governance", "checks", "v1", name), content);
+    files.set(path.join(codexPrefix, "governance", "checks", "v1", name), content);
   }
 
   files.set("pipeline.json", templates.pipeline);
 
-  const agentsPath = path.join(projectRoot, "AGENTS.md");
-  const currentAgents = await readTextIfExists(agentsPath);
+  const currentAgents = await readManagedTextIfExists(installRoot, "AGENTS.md");
   files.set("AGENTS.md", mergeManagedBlock(currentAgents, templates.agentsPolicy));
 
-  const configPath = path.join(projectRoot, ".codex", "config.toml");
-  let config = await readTextIfExists(configPath);
+  const configRelativePath = path.join(codexPrefix, "config.toml");
+  let config = await readManagedTextIfExists(installRoot, configRelativePath);
   config = setTomlKey(config, "", "service_tier", '"fast"');
   config = setTomlKey(config, "features", "fast_mode", "true");
   config = setTomlKey(config, "agents", "max_threads", "6");
   config = setTomlKey(config, "agents", "max_depth", "1");
-  files.set(path.join(".codex", "config.toml"), config);
+  files.set(configRelativePath, config);
 
-  const manifest = {
-    schemaVersion: 1,
-    package: metadata.name,
-    version: metadata.version,
-  };
-  files.set(MANIFEST_NAME, `${JSON.stringify(manifest, null, 2)}\n`);
+  if (includeManifest) {
+    const manifest = {
+      schemaVersion: 1,
+      package: metadata.name,
+      version: metadata.version,
+    };
+    files.set(MANIFEST_NAME, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
 
   return files;
 }
 
-export async function installProject(targetPath) {
-  const projectRoot = path.resolve(targetPath);
-  await fs.mkdir(projectRoot, { recursive: true });
-  const expected = await expectedProjectFiles(projectRoot);
+async function installFiles(targetPath, codexPrefix, includeManifest) {
+  const installRoot = await canonicalInstallRoot(targetPath);
+  const expected = await expectedInstallFiles(installRoot, codexPrefix, includeManifest);
+  await Promise.all([...expected.keys()].map((relativePath) => (
+    assertManagedPathSafe(installRoot, relativePath)
+  )));
   const changed = [];
 
   for (const [relativePath, content] of expected) {
-    const target = path.join(projectRoot, relativePath);
-    const current = await readTextIfExists(target);
+    const current = await readManagedTextIfExists(installRoot, relativePath);
     if (current === content) continue;
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, content, "utf8");
+    await writeManagedFile(installRoot, relativePath, content);
     changed.push(relativePath);
   }
 
-  return { projectRoot, changed };
+  return { installRoot, changed };
+}
+
+export async function installProject(targetPath) {
+  const result = await installFiles(targetPath, ".codex", true);
+  return { projectRoot: result.installRoot, changed: result.changed };
+}
+
+export async function installGlobal(targetPath) {
+  const result = await installFiles(targetPath, "", false);
+  return { codexHome: result.installRoot, changed: result.changed };
 }
 
 export async function checkProjectFiles(targetPath) {
-  const projectRoot = path.resolve(targetPath);
-  const expected = await expectedProjectFiles(projectRoot);
+  const projectRoot = await fs.realpath(path.resolve(targetPath));
+  const expected = await expectedInstallFiles(projectRoot, ".codex", true);
   const drift = [];
 
   for (const [relativePath, content] of expected) {
-    const current = await readTextIfExists(path.join(projectRoot, relativePath));
+    const current = await readManagedTextIfExists(projectRoot, relativePath);
     if (current !== content) drift.push(relativePath);
   }
 

@@ -1,6 +1,5 @@
 export interface GovernanceValidationOptions {
   expectedAgent?: string;
-  expectedRuntime?: "pi" | "codex" | "ci" | "manual";
 }
 
 export interface GovernanceValidationSuccess {

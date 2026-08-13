@@ -102,7 +102,7 @@
           "$ref": "#/$defs/agentRole"
         },
         "runtime": {
-          "enum": ["pi", "codex", "ci", "manual"]
+          "enum": ["codex", "ci", "manual"]
         },
         "model": {
           "type": "string",
@@ -124,7 +124,7 @@
                 "$ref": "#/$defs/agentRole"
               },
               "runtime": {
-                "enum": ["pi", "codex", "ci", "manual"]
+                "const": "codex"
               }
             },
             "required": ["role", "runtime"]

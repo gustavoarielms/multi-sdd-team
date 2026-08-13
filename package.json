@@ -1,6 +1,6 @@
 {
   "name": "@gustavoarielms/sdd-codegraph-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI for installing Codex multi-agent SDD configuration with optional external CodeGraph integration, derived from ram4-dev/multi-sdd-team",
   "type": "module",
   "bin": {
@@ -29,8 +29,6 @@
     "codex",
     "codegraph",
     "derivative",
-    "pi-package",
-    "pi",
     "sdd",
     "subagents",
     "multi-agent"
@@ -40,48 +38,17 @@
     "NOTICE.md",
     "bin",
     "docs",
-    "extensions",
-    "agents",
-    "prompts",
     "codex",
     "governance",
     "src",
     "setup.sh"
   ],
   "scripts": {
-    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/pi-reviewer-command-policy.js && npm test",
+    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && npm test",
     "check:governance": "node --test test/governance-schema.test.js test/governance-checks.test.js",
     "governance": "node bin/sdd-codegraph.js check-governance .",
-    "setup:codex": "./setup.sh codex --global",
+    "setup": "./setup.sh --global",
     "test": "node --test"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions"
-    ],
-    "prompts": [
-      "./prompts"
-    ]
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "@sinclair/typebox": "*"
-  },
-  "peerDependenciesMeta": {
-    "@mariozechner/pi-coding-agent": {
-      "optional": true
-    },
-    "@mariozechner/pi-ai": {
-      "optional": true
-    },
-    "@mariozechner/pi-tui": {
-      "optional": true
-    },
-    "@sinclair/typebox": {
-      "optional": true
-    }
   },
   "dependencies": {
     "ajv": "8.20.0"

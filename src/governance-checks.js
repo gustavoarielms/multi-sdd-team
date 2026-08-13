@@ -7,7 +7,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
 const checks = Object.freeze({
   governance_catalog_integrity: checkCatalogIntegrity,
-  runtime_role_parity: checkRuntimeRoleParity,
+  codex_role_catalog: checkCodexRoleCatalog,
   reviewer_report_only: checkReviewerReportOnly,
   review_handoff_contract: checkReviewHandoffContract,
   pipeline_dependency_order: checkPipelineDependencyOrder,
@@ -38,13 +38,14 @@ async function buildLayout(rootReal, values, canonicalTargetProvided) {
     values.governanceRoot,
     values.codexAgentsRoot,
     values.pipelinePath,
+    values.agentsPolicyPath,
     path.join(values.governanceRoot, "rules", "v1", "catalog.json"),
     path.join(values.governanceRoot, "checks", "v1", "registry.json"),
   ];
   try {
     await Promise.all(artifacts.map((artifact) => containedRealPath(rootReal, artifact)));
     if (canonicalTargetProvided) {
-      await Promise.all(["agents", "extensions", "src"].map((directory) => (
+      await Promise.all(["src"].map((directory) => (
         containedRealPath(rootReal, path.join(values.canonicalRoot, directory))
       )));
     }
@@ -75,6 +76,8 @@ async function resolveGovernanceLayout(root) {
       governanceRoot: sourceGovernance,
       codexAgentsRoot: path.join(sourceCodex, "agents"),
       pipelinePath: path.join(sourceCodex, "pipeline.json"),
+      agentsPolicyPath: path.join(sourceCodex, "AGENTS.md"),
+      managedAgentsPolicy: false,
     }, true);
   }
 
@@ -86,6 +89,8 @@ async function resolveGovernanceLayout(root) {
       governanceRoot: path.join(projectCodex, "governance"),
       codexAgentsRoot: path.join(projectCodex, "agents"),
       pipelinePath: path.join(root, "pipeline.json"),
+      agentsPolicyPath: path.join(root, "AGENTS.md"),
+      managedAgentsPolicy: true,
     }, false);
   }
 
@@ -96,6 +101,8 @@ async function resolveGovernanceLayout(root) {
       governanceRoot: path.join(root, "governance"),
       codexAgentsRoot: path.join(root, "agents"),
       pipelinePath: path.join(root, "pipeline.json"),
+      agentsPolicyPath: path.join(root, "AGENTS.md"),
+      managedAgentsPolicy: true,
     }, false);
   }
   return null;
@@ -131,42 +138,36 @@ async function declaredRoles(directory, extension, pattern, boundary) {
   return roles.sort();
 }
 
-async function checkRuntimeRoleParity({ layout }) {
-  const pi = await declaredRoles(path.join(layout.canonicalRoot, "agents"), ".md", /^name:\s*([^\s]+)$/m, layout.canonicalBoundary);
+async function checkCodexRoleCatalog({ layout }) {
   const codex = await declaredRoles(layout.codexAgentsRoot, ".toml", /^name\s*=\s*"([^"]+)"$/m, layout.targetBoundary);
-  const pass = Boolean(pi && codex && JSON.stringify(pi) === JSON.stringify(codex));
+  const expected = [
+    "architecture_reviewer",
+    "documentator",
+    "explorer",
+    "hacker",
+    "implementer",
+    "orchestrator",
+    "planner",
+    "tester_reviewer",
+  ];
+  const pass = Boolean(codex && JSON.stringify(codex) === JSON.stringify(expected));
   return pass
-    ? { pass: true, summary: `Pi and Codex expose the same ${pi.length} governed roles.` }
-    : { pass: false, summary: "Pi and Codex governed role declarations differ or are invalid." };
+    ? { pass: true, summary: `Codex exposes the complete ${codex.length}-role governed catalog.` }
+    : { pass: false, summary: "The Codex governed role catalog is incomplete or invalid." };
 }
 
 async function checkReviewerReportOnly({ layout }) {
   const reviewers = ["architecture-reviewer", "tester-reviewer", "hacker"];
   const conditionalWrite = /(?:modific|escrib|write|edit)[^\n]{0,120}(?:salvo|except|reasign)|(?:salvo|except|reasign)[^\n]{0,120}(?:modific|escrib|write|edit)/i;
   for (const reviewer of reviewers) {
-    const [pi, codex] = await Promise.all([
-      readText(path.join(layout.canonicalRoot, "agents", `${reviewer}.md`), layout.canonicalBoundary),
-      readText(path.join(layout.codexAgentsRoot, `${reviewer}.toml`), layout.targetBoundary),
-    ]);
-    const piTools = pi.match(/^tools:\s*(.+)$/m)?.[1]
-      .split(",")
-      .map((tool) => tool.trim().toLowerCase());
-    if (!piTools || piTools.some((tool) => tool === "write" || tool === "edit" || tool === "bash")
-      || !/solo reporte|NO corregís código|No modifi/i.test(pi)
-      || !/solo reporte|No modifi/i.test(codex)
+    const codex = await readText(path.join(layout.codexAgentsRoot, `${reviewer}.toml`), layout.targetBoundary);
+    if (!/solo reporte|No modifi/i.test(codex)
       || !/^sandbox_mode\s*=\s*"read-only"$/m.test(codex)
-      || conditionalWrite.test(pi)
       || conditionalWrite.test(codex)) {
       return { pass: false, summary: "At least one independent reviewer has an invalid report-only declaration." };
     }
   }
-  const guardrails = await readText(path.join(layout.canonicalRoot, "extensions", "multi-team-sdd", "child-guardrails.ts"), layout.canonicalBoundary);
-  const policy = await readText(path.join(layout.canonicalRoot, "src", "pi-reviewer-command-policy.js"), layout.canonicalBoundary);
-  if (!/evaluatePiReviewerToolCall/.test(guardrails)
-    || !/review agents may only inspect provided evidence/.test(policy)) {
-    return { pass: false, summary: "Pi reviewer report-only command enforcement is not connected." };
-  }
-  return { pass: true, summary: "Architecture, quality, and security reviewers are report-only in Pi and Codex." };
+  return { pass: true, summary: "Codex architecture, quality, and security reviewers are report-only." };
 }
 
 async function checkReviewHandoffContract({ layout }) {
@@ -176,22 +177,32 @@ async function checkReviewHandoffContract({ layout }) {
     ["hacker", "hacker", "security"],
   ];
   for (const [file, role, gate] of reviewers) {
-    const [pi, codex] = await Promise.all([
-      readText(path.join(layout.canonicalRoot, "agents", `${file}.md`), layout.canonicalBoundary),
-      readText(path.join(layout.codexAgentsRoot, `${file}.toml`), layout.targetBoundary),
-    ]);
-    for (const content of [pi, codex]) {
-      if (!/exactamente un objeto JSON|exactamente un objeto JSON válido/i.test(content)
-        || !new RegExp(`producer\\.role.{0,15}${role}`).test(content)
-        || !new RegExp(`gate_type.{0,15}${gate}`).test(content)) {
-        return { pass: false, summary: "At least one review prompt lacks its strict governance handoff contract." };
-      }
+    const codex = await readText(path.join(layout.codexAgentsRoot, `${file}.toml`), layout.targetBoundary);
+    if (!/exactamente un objeto JSON|exactamente un objeto JSON válido/i.test(codex)
+      || !new RegExp(`producer\\.role.{0,15}${role}`).test(codex)
+      || !/producer\.runtime.{0,15}codex/.test(codex)
+      || !new RegExp(`gate_type.{0,15}${gate}`).test(codex)) {
+      return { pass: false, summary: "At least one review prompt lacks its strict governance handoff contract." };
     }
   }
-  const runtime = await readText(path.join(layout.canonicalRoot, "extensions", "multi-team-sdd", "subagent-tool.ts"), layout.canonicalBoundary);
+  const commonSchema = await readJson(
+    path.join(layout.governanceRoot, "schemas", "v1", "common.schema.json"),
+    layout.targetBoundary,
+  );
   const validator = await readText(path.join(layout.canonicalRoot, "src", "governance-validator.js"), layout.canonicalBoundary);
-  const pass = /validateAgentResultText/.test(runtime) && /expectedRuntime:\s*"pi"/.test(runtime)
-    && /review agents must emit exactly one gate decision/.test(validator);
+  const pipeline = await readText(layout.pipelinePath, layout.targetBoundary);
+  const policyFile = await readText(layout.agentsPolicyPath, layout.targetBoundary);
+  const managedPolicy = policyFile.match(
+    /<!-- multi-sdd-team: begin -->([\s\S]*?)<!-- multi-sdd-team: end -->/,
+  )?.[1];
+  const policy = layout.managedAgentsPolicy ? managedPolicy : policyFile;
+  const runtimeContract = commonSchema?.$defs?.producer?.allOf?.[0]?.then?.properties?.runtime;
+  const pass = runtimeContract?.const === "codex"
+    && /review agents must emit exactly one gate decision/.test(validator)
+    && typeof policy === "string"
+    && /sdd-codegraph validate-result - --agent <agent_name>/.test(policy)
+    && !/validate-result[^\n]*--runtime/.test(policy)
+    && /invalid structured review output.*passing gate/i.test(pipeline);
   return pass
     ? { pass: true, summary: "Review prompts and runtime validation enforce the strict handoff contract." }
     : { pass: false, summary: "Structured review runtime validation is incomplete." };
