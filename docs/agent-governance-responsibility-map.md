@@ -593,7 +593,7 @@ No single agent can satisfy all eight conditions alone.
 ## Current responsibility gaps
 
 1. No machine-readable catalog implements the approved engineering-rule lifecycle yet.
-2. No component owns normalized finding identity and status transitions.
+2. Contract v1 defines normalized finding identity, but no runtime component owns status transitions yet.
 3. No component currently persists evidence, trends, or metrics.
 4. A named human authority other than the user has not yet been designated for approving architecture rules or accepting residual architecture and security risk.
 
@@ -602,20 +602,22 @@ These gaps must be resolved before assigning architecture or governance approval
 ## Known runtime divergences to remove in later phases
 
 1. Pi and Codex prompts do not contain identical responsibilities and limits.
-2. Codex `demo_fast` sends reviewer fixes to the main session, while reviewer prompts send them to the implementer.
-3. The standalone Codex orchestrator agent has routing rules that differ from the Pi runtime policy.
-4. TDD is unconditional in Pi but conditional on testability in Codex.
-5. Security active-mode language and enforcement differ between the two runtimes.
-6. Output headings and severity vocabularies are not normalized.
-7. The architecture reviewer is newly approved and must remain aligned across both runtimes and pipeline policies.
+2. The standalone Codex orchestrator agent has routing rules that differ from the Pi runtime policy.
+3. TDD is unconditional in Pi but conditional on testability in Codex.
+4. Security active-mode language and enforcement differ between the two runtimes.
+5. Output headings and severity vocabularies are not yet aligned with governance contract v1.
 
-## Next contract-design inputs
+## Governance contract v1
 
-The next phase must define:
+The modular Draft 2020-12 schemas under `governance/schemas/v1/` now define:
 
 - stable execution, acceptance-criterion, task, evidence, finding, rule, and exception identifiers;
-- a shared machine-readable result schema;
+- a shared machine-readable agent-result envelope;
 - normalized status, severity, confidence, validation, and blocking fields;
 - authority for architecture decisions and engineering-rule lifecycle;
-- deterministic rules that can be enforced immediately;
-- parity checks that prevent Pi and Codex contracts from drifting.
+- strict evidence redaction metadata;
+- human approval for rules and exceptions.
+
+The next phase must align Pi and Codex output instructions with that contract,
+validate structured handoffs before accepting them, and fail closed on invalid
+required output. Rule catalog persistence and dashboard metrics remain later work.

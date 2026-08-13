@@ -23,6 +23,7 @@ test("package is configured for public MIT publication", async () => {
   assert.equal(metadata.license, "MIT");
   assert.equal(metadata.publishConfig.access, "public");
   assert.equal("prepublishOnly" in metadata.scripts, false);
+  assert.ok(metadata.files.includes("governance"));
 });
 
 test("Pi and Codex expose the same governed agent roles", async () => {

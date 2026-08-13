@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/agent-result.schema.json",
+  "title": "Governance Agent Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "producer",
+    "task",
+    "started_at",
+    "completed_at",
+    "outcome",
+    "evidence",
+    "findings",
+    "gate_decisions",
+    "handoff"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schemaVersion"
+    },
+    "run_id": {
+      "$ref": "common.schema.json#/$defs/runId"
+    },
+    "parent_run_id": {
+      "$ref": "common.schema.json#/$defs/runId"
+    },
+    "producer": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/producer" },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "agent" }
+          }
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "summary", "acceptance_criterion_ids"],
+      "properties": {
+        "task_id": {
+          "$ref": "common.schema.json#/$defs/referenceId"
+        },
+        "summary": {
+          "$ref": "common.schema.json#/$defs/shortText"
+        },
+        "acceptance_criterion_ids": {
+          "$ref": "common.schema.json#/$defs/stringSet"
+        }
+      }
+    },
+    "started_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "completed_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "outcome": {
+      "enum": ["completed", "failed", "blocked", "cancelled"]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "evidence.schema.json"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "finding.schema.json"
+      }
+    },
+    "gate_decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "gate-decision.schema.json"
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "unresolved_finding_ids"],
+      "properties": {
+        "next_owner": {
+          "$ref": "common.schema.json#/$defs/referenceId"
+        },
+        "summary": {
+          "$ref": "common.schema.json#/$defs/longText"
+        },
+        "unresolved_finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/findingId"
+          }
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

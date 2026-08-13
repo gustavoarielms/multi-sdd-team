@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/finding.schema.json",
+  "title": "Governance Finding v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "fingerprint",
+    "rule_id",
+    "rule_status",
+    "category",
+    "severity",
+    "title",
+    "explanation",
+    "recommendation",
+    "subject",
+    "evidence_ids",
+    "validation_status",
+    "confidence",
+    "recommended_gate_effect",
+    "status",
+    "reported_at",
+    "reported_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schemaVersion"
+    },
+    "finding_id": {
+      "$ref": "common.schema.json#/$defs/findingId"
+    },
+    "fingerprint": {
+      "$ref": "common.schema.json#/$defs/fingerprint"
+    },
+    "rule_id": {
+      "$ref": "common.schema.json#/$defs/ruleId"
+    },
+    "rule_status": {
+      "enum": ["approved", "candidate"]
+    },
+    "category": {
+      "$ref": "common.schema.json#/$defs/category"
+    },
+    "severity": {
+      "$ref": "common.schema.json#/$defs/severity"
+    },
+    "title": {
+      "$ref": "common.schema.json#/$defs/shortText"
+    },
+    "explanation": {
+      "$ref": "common.schema.json#/$defs/longText"
+    },
+    "recommendation": {
+      "$ref": "common.schema.json#/$defs/longText"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component"],
+      "properties": {
+        "component": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/location"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "acceptance_criterion_ids": {
+      "$ref": "common.schema.json#/$defs/stringSet"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/evidenceId"
+      }
+    },
+    "validation_status": {
+      "enum": ["verified", "unverified", "not_reproduced"]
+    },
+    "confidence": {
+      "$ref": "common.schema.json#/$defs/confidence"
+    },
+    "recommended_gate_effect": {
+      "enum": ["block", "warn", "none"]
+    },
+    "status": {
+      "enum": ["open", "resolved", "accepted_risk", "false_positive", "superseded"]
+    },
+    "reported_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "reported_by": {
+      "$ref": "common.schema.json#/$defs/producer"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "rule_status": { "const": "candidate" }
+        },
+        "required": ["rule_status"]
+      },
+      "then": {
+        "properties": {
+          "recommended_gate_effect": {
+            "enum": ["warn", "none"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "validation_status": {
+            "enum": ["unverified", "not_reproduced"]
+          }
+        },
+        "required": ["validation_status"]
+      },
+      "then": {
+        "properties": {
+          "recommended_gate_effect": {
+            "enum": ["warn", "none"]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/exception.schema.json",
+  "title": "Governance Rule Exception v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "exception_id",
+    "rule_id",
+    "rule_version",
+    "status",
+    "scope",
+    "reason",
+    "owner",
+    "approved_by",
+    "created_at",
+    "evidence_ids"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schemaVersion"
+    },
+    "exception_id": {
+      "$ref": "common.schema.json#/$defs/exceptionId"
+    },
+    "rule_id": {
+      "$ref": "common.schema.json#/$defs/ruleId"
+    },
+    "rule_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": ["active", "expired", "revoked"]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": {
+          "$ref": "common.schema.json#/$defs/referenceId"
+        },
+        "paths": {
+          "$ref": "common.schema.json#/$defs/stringSet"
+        },
+        "components": {
+          "$ref": "common.schema.json#/$defs/stringSet"
+        }
+      }
+    },
+    "reason": {
+      "$ref": "common.schema.json#/$defs/longText"
+    },
+    "owner": {
+      "$ref": "common.schema.json#/$defs/referenceId"
+    },
+    "approved_by": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/producer" },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "human" }
+          }
+        }
+      ]
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "expires_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "review_at": {
+      "$ref": "common.schema.json#/$defs/utcTimestamp"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/evidenceId"
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "expires_at": {
+          "$ref": "common.schema.json#/$defs/utcTimestamp"
+        }
+      },
+      "required": ["expires_at"]
+    },
+    {
+      "properties": {
+        "review_at": {
+          "$ref": "common.schema.json#/$defs/utcTimestamp"
+        }
+      },
+      "required": ["review_at"]
+    }
+  ]
+}

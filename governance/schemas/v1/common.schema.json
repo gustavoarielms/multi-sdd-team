@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/common.schema.json",
+  "title": "Multi-SDD Governance Common Definitions v1",
+  "$defs": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "entityId": {
+      "type": "string",
+      "pattern": "^(run|finding|evidence|gate|exception):[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "findingId": {
+      "type": "string",
+      "pattern": "^finding:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^evidence:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "gateId": {
+      "type": "string",
+      "pattern": "^gate:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "exceptionId": {
+      "type": "string",
+      "pattern": "^exception:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "ruleId": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){2,}$",
+      "maxLength": 128
+    },
+    "referenceId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._:-]{1,127}$"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$"
+    },
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "longText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "severity": {
+      "enum": ["critical", "high", "medium", "low", "info"]
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"]
+    },
+    "category": {
+      "enum": [
+        "architecture",
+        "quality",
+        "security",
+        "testing",
+        "requirements",
+        "process",
+        "governance",
+        "other"
+      ]
+    },
+    "agentRole": {
+      "enum": [
+        "orchestrator",
+        "explorer",
+        "documentator",
+        "planner",
+        "architecture_reviewer",
+        "implementer",
+        "tester_reviewer",
+        "hacker"
+      ]
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "enum": ["agent", "deterministic", "human"]
+        },
+        "id": {
+          "$ref": "#/$defs/referenceId"
+        },
+        "role": {
+          "$ref": "#/$defs/agentRole"
+        },
+        "runtime": {
+          "enum": ["pi", "codex", "ci", "manual"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": { "const": "agent" }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "$ref": "#/$defs/agentRole"
+              },
+              "runtime": {
+                "enum": ["pi", "codex", "ci", "manual"]
+              }
+            },
+            "required": ["role", "runtime"]
+          },
+          "else": {
+            "properties": {
+              "role": false,
+              "model": false
+            }
+          }
+        }
+      ]
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "dependentRequired": {
+        "line_end": ["line_start"]
+      }
+    },
+    "stringSet": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "uniqueItems": true
+    }
+  }
+}

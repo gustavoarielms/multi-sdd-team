@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0.0",
+  "rule_id": "ARCH-BOUNDARY-001",
+  "version": 1,
+  "title": "Application must not depend on infrastructure implementations",
+  "description": "Application code may depend on application-owned abstractions but not on concrete infrastructure adapters.",
+  "category": "architecture",
+  "status": "approved",
+  "owner": "engineering_governance",
+  "default_severity": "high",
+  "enforcement": {
+    "mode": "deterministic",
+    "gate_effect": "block",
+    "automation": {
+      "engine": "codegraph",
+      "check_id": "architecture_boundary_check",
+      "config_ref": "governance/rules/architecture-boundaries.json"
+    }
+  },
+  "scope": {
+    "description": "Application modules in repositories that declare layered architecture.",
+    "include": ["src/application/**"],
+    "exclude": ["test/**"]
+  },
+  "exceptions_allowed": true,
+  "approval": {
+    "approved_by": {
+      "kind": "human",
+      "id": "gustavo",
+      "runtime": "manual"
+    },
+    "approved_at": "2026-08-13T18:00:00Z",
+    "rationale": "Approved as the initial architecture dependency rule."
+  }
+}

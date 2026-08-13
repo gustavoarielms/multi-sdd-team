@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/rule.schema.json",
+  "title": "Governance Rule v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rule_id",
+    "version",
+    "title",
+    "description",
+    "category",
+    "status",
+    "owner",
+    "default_severity",
+    "enforcement",
+    "scope",
+    "exceptions_allowed"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "common.schema.json#/$defs/schemaVersion"
+    },
+    "rule_id": {
+      "$ref": "common.schema.json#/$defs/ruleId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "$ref": "common.schema.json#/$defs/shortText"
+    },
+    "description": {
+      "$ref": "common.schema.json#/$defs/longText"
+    },
+    "category": {
+      "$ref": "common.schema.json#/$defs/category"
+    },
+    "status": {
+      "enum": ["proposed", "approved", "deprecated"]
+    },
+    "owner": {
+      "$ref": "common.schema.json#/$defs/referenceId"
+    },
+    "default_severity": {
+      "$ref": "common.schema.json#/$defs/severity"
+    },
+    "enforcement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "gate_effect"],
+      "properties": {
+        "mode": {
+          "enum": ["deterministic", "agent_review", "human_review"]
+        },
+        "gate_effect": {
+          "enum": ["block", "warn", "none"]
+        },
+        "automation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine", "check_id"],
+          "properties": {
+            "engine": {
+              "$ref": "common.schema.json#/$defs/referenceId"
+            },
+            "check_id": {
+              "$ref": "common.schema.json#/$defs/referenceId"
+            },
+            "config_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": { "const": "deterministic" }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {
+              "automation": {
+                "type": "object"
+              }
+            },
+            "required": ["automation"]
+          },
+          "else": {
+            "properties": {
+              "automation": false
+            }
+          }
+        }
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": {
+          "$ref": "common.schema.json#/$defs/longText"
+        },
+        "include": {
+          "$ref": "common.schema.json#/$defs/stringSet"
+        },
+        "exclude": {
+          "$ref": "common.schema.json#/$defs/stringSet"
+        }
+      }
+    },
+    "exceptions_allowed": {
+      "type": "boolean"
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved_by", "approved_at", "rationale"],
+      "properties": {
+        "approved_by": {
+          "allOf": [
+            { "$ref": "common.schema.json#/$defs/producer" },
+            {
+              "type": "object",
+              "properties": {
+                "kind": { "const": "human" }
+              }
+            }
+          ]
+        },
+        "approved_at": {
+          "$ref": "common.schema.json#/$defs/utcTimestamp"
+        },
+        "rationale": {
+          "$ref": "common.schema.json#/$defs/longText"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "approved" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "approval": {
+            "type": "object"
+          }
+        },
+        "required": ["approval"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "proposed" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "enforcement": {
+            "type": "object",
+            "properties": {
+              "gate_effect": {
+                "type": "string",
+                "enum": ["warn", "none"]
+              }
+            }
+          },
+          "approval": false
+        }
+      }
+    }
+  ]
+}

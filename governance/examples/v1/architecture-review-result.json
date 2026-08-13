@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "run:20260813T180000Z-architecture-review",
+  "producer": {
+    "kind": "agent",
+    "id": "architecture_reviewer",
+    "role": "architecture_reviewer",
+    "runtime": "codex",
+    "model": "gpt-5.6-terra"
+  },
+  "task": {
+    "task_id": "TASK-ARCH-001",
+    "summary": "Verify dependency direction after an application boundary change",
+    "acceptance_criterion_ids": ["AC-ARCH-001"]
+  },
+  "started_at": "2026-08-13T18:00:00Z",
+  "completed_at": "2026-08-13T18:01:20Z",
+  "outcome": "completed",
+  "evidence": [
+    {
+      "schema_version": "1.0.0",
+      "evidence_id": "evidence:arch-boundary-import-001",
+      "kind": "static_analysis",
+      "level": "deterministic",
+      "outcome": "fail",
+      "summary": "The architecture check found one application-to-infrastructure dependency.",
+      "location": {
+        "path": "src/application/order-service.ts",
+        "line_start": 12,
+        "line_end": 12,
+        "symbol": "OrderService"
+      },
+      "check_id": "architecture_boundary_check",
+      "collected_at": "2026-08-13T18:00:45Z",
+      "collected_by": {
+        "kind": "deterministic",
+        "id": "architecture_boundary_check",
+        "runtime": "ci"
+      },
+      "redaction": {
+        "applied": false,
+        "categories": []
+      }
+    }
+  ],
+  "findings": [
+    {
+      "schema_version": "1.0.0",
+      "finding_id": "finding:arch-boundary-001",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "rule_id": "ARCH-BOUNDARY-001",
+      "rule_status": "approved",
+      "category": "architecture",
+      "severity": "high",
+      "title": "Application layer imports infrastructure implementation",
+      "explanation": "The dependency points from application to a concrete infrastructure adapter and violates the approved layer boundary.",
+      "recommendation": "Depend on an application-owned port and bind the infrastructure adapter at the composition root.",
+      "subject": {
+        "component": "order-application",
+        "locations": [
+          {
+            "path": "src/application/order-service.ts",
+            "line_start": 12,
+            "line_end": 12,
+            "symbol": "OrderService"
+          }
+        ]
+      },
+      "acceptance_criterion_ids": ["AC-ARCH-001"],
+      "evidence_ids": ["evidence:arch-boundary-import-001"],
+      "validation_status": "verified",
+      "confidence": "high",
+      "recommended_gate_effect": "block",
+      "status": "open",
+      "reported_at": "2026-08-13T18:01:00Z",
+      "reported_by": {
+        "kind": "agent",
+        "id": "architecture_reviewer",
+        "role": "architecture_reviewer",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra"
+      }
+    }
+  ],
+  "gate_decisions": [
+    {
+      "schema_version": "1.0.0",
+      "gate_id": "gate:architecture-001",
+      "run_id": "run:20260813T180000Z-architecture-review",
+      "gate_type": "architecture",
+      "required": true,
+      "status": "fail",
+      "evaluated_rule_ids": ["ARCH-BOUNDARY-001"],
+      "finding_ids": ["finding:arch-boundary-001"],
+      "blocking_finding_ids": ["finding:arch-boundary-001"],
+      "evidence_ids": ["evidence:arch-boundary-import-001"],
+      "exception_ids": [],
+      "decided_by": {
+        "kind": "agent",
+        "id": "architecture_reviewer",
+        "role": "architecture_reviewer",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra"
+      },
+      "decided_at": "2026-08-13T18:01:15Z",
+      "rationale": "An approved blocking architecture rule has a verified unresolved finding."
+    }
+  ],
+  "handoff": {
+    "next_owner": "implementer",
+    "summary": "Remove the concrete infrastructure dependency and return the finding for architecture revalidation.",
+    "unresolved_finding_ids": ["finding:arch-boundary-001"]
+  },
+  "usage": {
+    "duration_ms": 80000,
+    "input_tokens": 4200,
+    "output_tokens": 900
+  }
+}

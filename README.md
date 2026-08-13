@@ -148,6 +148,14 @@ defines the approved responsibility and authority model used to derive agent
 prompts, pipeline policy, parity tests, and future enforcement schemas. It is a
 design source, not a file automatically loaded by Pi, Codex, or CI.
 
+The versioned machine-readable contract is documented in
+[`governance/README.md`](governance/README.md). Validate its modular JSON Schemas,
+examples, negative cases, and referential integrity with:
+
+```bash
+npm run check:governance
+```
+
 ## License
 
 This derivative package is distributed under the MIT License. See

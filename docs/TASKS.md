@@ -136,3 +136,18 @@
 - [x] Implementer TDD + Tester/Reviewer report-only.
 - [x] Hacker con auditoría completa y guardrails.
 - [x] README con setup y límites conocidos.
+
+---
+
+## Fase 7 — Governance contract v1
+- [x] Definir schemas modulares para resultados, findings, evidencia, gates, reglas y excepciones
+- [x] Separar severidad, recomendación del agente y efecto efectivo del gate
+- [x] Exigir autoridad humana para reglas aprobadas y excepciones
+- [x] Rechazar evidencia cruda no declarada y exigir metadata de redacción
+- [x] Agregar ejemplos y validación estricta Draft 2020-12
+- [x] Validar integridad de referencias dentro del resultado de agente
+
+**Verificación**
+- [x] `npm run check:governance`
+- [ ] Los agentes Pi y Codex emiten el contrato v1
+- [ ] El orchestrator rechaza handoffs estructurados inválidos

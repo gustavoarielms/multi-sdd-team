@@ -44,11 +44,13 @@
     "agents",
     "prompts",
     "codex",
+    "governance",
     "src",
     "setup.sh"
   ],
   "scripts": {
     "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && npm test",
+    "check:governance": "node --test test/governance-schema.test.js",
     "setup:codex": "./setup.sh codex --global",
     "test": "node --test"
   },
@@ -61,8 +63,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
   },
@@ -79,5 +81,8 @@
     "@sinclair/typebox": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
   }
 }
