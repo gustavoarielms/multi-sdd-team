@@ -13,8 +13,9 @@ For demo-speed multi-agent work, optimize for quick iteration:
 - Spawn specialist agents with Codex `fast` enabled by default.
 - Agent TOML files use `service_tier = "fast"` and `[features].fast_mode = true`; reasoning effort stays medium/high depending on the role.
 - Do not call the `hacker` agent during demo work unless the user explicitly asks for a security audit.
-- Use `tester_reviewer` as the review/validation step when needed. If the reviewer reports required changes, the main orchestrator applies those changes directly instead of calling the builder/implementer again.
-- Prefer this fast demo chain: `planner` only if the implementation shape is unclear, then `implementer`, then `tester_reviewer`, then main-session fixes.
+- Use `tester_reviewer` as the review/validation step when needed. If a review gate reports required changes, route them to `implementer`, rerun deterministic checks, and ask the originating gate to revalidate.
+- Use `architecture_reviewer` before and after implementation when module/layer boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions change.
+- Prefer this fast demo chain: `planner` only if the implementation shape is unclear, then any required architecture design review, `implementer`, any required architecture compliance review, `tester_reviewer`, and main-session integration.
 
 If the chosen strategy uses subagents, the active session coordinates, waits, reviews, and integrates. It must not implement, inspect, scaffold, prepare, verify, or otherwise advance the delegated task locally while subagents are running.
 
@@ -33,6 +34,7 @@ If the user says "sos el orquestador", "actua como orchestrator", or similar, tr
 - `explorer`: read-only codebase reconnaissance.
 - `planner`: sequenced implementation planning.
 - `documentator`: functional and technical specs under `docs/`.
+- `architecture_reviewer`: report-only architecture design and compliance gate.
 - `implementer`: focused TDD implementation.
 - `tester_reviewer`: report-only static/E2E validation.
 - `hacker`: passive security audit only when explicitly requested or when security review is required by the task.
@@ -88,7 +90,7 @@ Then execute the chosen path. For small `INLINE` work, keep classification impli
 
 - `INLINE`: the main session may implement directly.
 - `SUBAGENT_SINGLE`: delegate the scoped task, then wait. Do not inspect, scaffold, implement, or validate locally until the agent returns.
-- `SUBAGENT_CHAIN`: run the chain and wait for each needed handoff. Do not work ahead locally.
+- `SUBAGENT_CHAIN`: run the chain and wait for each needed handoff. Review findings return to `implementer`, followed by deterministic checks and revalidation by the originating gate. Do not work ahead locally.
 - `SDD_INLINE`: the main session may write the spec/plan and implement because scope is intentionally inline.
 - `SDD_SUBAGENTS`: delegate spec/planning/implementation/review to specialists. The main session coordinates and integrates only after results return. Never build a "base", inspect data, or prepare files locally while those specialists run.
 
@@ -97,7 +99,10 @@ Then execute the chosen path. For small `INLINE` work, keep classification impli
 1. `explorer`
 2. `documentator`, only after `explorer` returns
 3. `planner`, only after `documentator` returns
-4. `hacker`, skipped by default in demo_fast mode; only when explicitly requested or required by security-sensitive work, and only after `planner` returns
-5. `implementer`, only after `planner` and optional `hacker` return
-6. `tester_reviewer`, only after `implementer` returns
-7. `main_session` integrates and directly fixes reviewer findings, only after `tester_reviewer` returns
+4. `architecture_reviewer` design gate when required, only after `planner` returns
+5. `hacker`, skipped by default in demo_fast mode; only when explicitly requested or required by security-sensitive work, and only after `planner` and any required architecture design review return
+6. `implementer`, only after `planner` and any required architecture/security reviews return
+7. deterministic checks
+8. `architecture_reviewer` compliance gate when required, only after `implementer` and deterministic checks return
+9. `tester_reviewer`, only after implementation and any required architecture compliance review return
+10. `main_session` integrates only after all required gates return; findings are remediated by `implementer` and revalidated by the originating gate

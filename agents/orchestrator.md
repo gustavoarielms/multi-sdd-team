@@ -28,3 +28,9 @@ Siempre devolvé:
 4. validación esperada
 
 No implementes código en este rol, salvo que la tarea explícitamente pida salida ejecutable para otro agente.
+
+Reglas de governance:
+- Usá architecture-reviewer antes y después de implementar cuando cambien límites, dependencias, contratos, persistencia, integraciones o decisiones de arquitectura.
+- El architecture-reviewer, tester-reviewer y hacker son report-only.
+- Todo finding vuelve al implementer y después se repiten los checks determinísticos y el gate que lo originó.
+- No apruebes reglas o excepciones arquitectónicas sin autoridad humana explícita.

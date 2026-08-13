@@ -41,6 +41,7 @@
   - [x] implementer
   - [x] tester-reviewer
   - [x] hacker
+  - [x] architecture-reviewer
   - [x] orchestrator
 - [x] Definir allowlist de tools por agente
 - [x] Restringir `documentator` a escritura en `./docs/**` (child guardrails)
@@ -104,6 +105,11 @@
 - [x] Modo de auditoría dinámica con guardrails (`security-mode`)
 - [x] Reporte final de vulnerabilidades y severidad
 
+### 5.5 Architecture Reviewer
+- [x] Revisión report-only de diseño y conformidad
+- [x] Activación por cambios arquitectónicamente sensibles
+- [x] Excepciones reservadas a autoridad humana
+
 **Verificación**
 - [ ] Cada rol produce salida según contrato
 
@@ -124,7 +130,7 @@
 ## Definition of Done (v1)
 - [ ] Package separado instalable con `pi -e`.
 - [x] Subagent tool estable con 3 modos.
-- [x] 6 subagentes especializados + orchestrator operativo.
+- [x] 7 subagentes especializados + orchestrator operativo.
 - [x] UI de cards horizontal con descripción.
 - [x] Documentator escribe specs en `./docs`.
 - [x] Implementer TDD + Tester/Reviewer report-only.

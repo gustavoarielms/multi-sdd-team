@@ -64,6 +64,7 @@ installed separately and available in `PATH`.
   - `explorer`
   - `documentator`
   - `planner`
+  - `architecture-reviewer`
   - `implementer`
   - `tester-reviewer`
   - `hacker`
@@ -118,9 +119,9 @@ The Codex setup installs:
 Codex demo-fast behavior:
 
 - the main session acts as orchestrator
-- `SDD_SUBAGENTS` runs sequentially: `explorer -> documentator -> planner -> implementer -> tester-reviewer -> main integration`
+- `SDD_SUBAGENTS` runs sequentially: `explorer -> documentator -> planner -> architecture-reviewer (when required) -> implementer -> architecture-reviewer (when required) -> tester-reviewer -> main integration`
 - `hacker` is skipped unless explicitly requested or security-sensitive
-- if `tester-reviewer` asks for small demo-blocking fixes, the main session applies them directly instead of calling `implementer` again
+- review findings return to `implementer`, then deterministic checks and the originating review gate run again
 
 ## Quick usage
 
@@ -135,9 +136,17 @@ Codex demo-fast behavior:
 ## Notes
 
 - `documentator` is constrained to `./docs/**` write/edit operations.
+- `architecture-reviewer` is report-only and cannot approve new architecture policy or exceptions.
 - `tester-reviewer` is report-only in v1.
 - `hacker` supports passive and active modes. Active mode allows high-risk commands and requires explicit opt-in (`/security-mode active`).
 - Startup UI renders horizontal cards with each specialized subagent (name + short description + role color).
+
+## Governance baseline
+
+[`docs/agent-governance-responsibility-map.md`](docs/agent-governance-responsibility-map.md)
+defines the approved responsibility and authority model used to derive agent
+prompts, pipeline policy, parity tests, and future enforcement schemas. It is a
+design source, not a file automatically loaded by Pi, Codex, or CI.
 
 ## License
 

@@ -25,6 +25,52 @@ test("package is configured for public MIT publication", async () => {
   assert.equal("prepublishOnly" in metadata.scripts, false);
 });
 
+test("Pi and Codex expose the same governed agent roles", async () => {
+  const root = new URL("../", import.meta.url);
+  const piAgentFiles = (await fs.readdir(new URL("agents/", root)))
+    .filter((name) => name.endsWith(".md"));
+  const codexAgentFiles = (await fs.readdir(new URL("codex/agents/", root)))
+    .filter((name) => name.endsWith(".toml"));
+
+  const readDeclaredNames = async (directory, files, pattern) => Promise.all(
+    files.map(async (file) => {
+      const content = await fs.readFile(new URL(`${directory}/${file}`, root), "utf8");
+      const match = content.match(pattern);
+      assert.ok(match, `missing declared agent name in ${directory}/${file}`);
+      return match[1].replaceAll("-", "_");
+    }),
+  );
+
+  const piNames = await readDeclaredNames("agents", piAgentFiles, /^name:\s*([^\s]+)$/m);
+  const codexNames = await readDeclaredNames("codex/agents", codexAgentFiles, /^name\s*=\s*"([^"]+)"$/m);
+  const expected = [
+    "architecture_reviewer",
+    "documentator",
+    "explorer",
+    "hacker",
+    "implementer",
+    "orchestrator",
+    "planner",
+    "tester_reviewer",
+  ];
+
+  assert.deepEqual(piNames.sort(), expected);
+  assert.deepEqual(codexNames.sort(), expected);
+});
+
+test("pipeline routes review remediation through implementer and architecture revalidation", async () => {
+  const pipeline = JSON.parse(await fs.readFile(new URL("../codex/pipeline.json", import.meta.url), "utf8"));
+  const sdd = pipeline.strategies.SDD_SUBAGENTS.sequence;
+  const byId = new Map(sdd.map((step) => [step.id, step]));
+
+  assert.equal(pipeline.version, 2);
+  assert.equal(byId.get("architecture_design_review").actor, "architecture_reviewer");
+  assert.equal(byId.get("architecture_compliance_review").actor, "architecture_reviewer");
+  assert.deepEqual(byId.get("architecture_compliance_review").depends_on, ["deterministic_checks"]);
+  assert.match(byId.get("main_integrate").action, /Route findings to implementer/);
+  assert.doesNotMatch(JSON.stringify(pipeline), /main (?:session|orchestrator) (?:applies|fixes|resolve)/i);
+});
+
 test("mergeManagedBlock preserves unmanaged content and replaces the managed block", () => {
   const existing = "# Project rules\n\n<!-- multi-sdd-team: begin -->\nold\n<!-- multi-sdd-team: end -->\n";
   const result = mergeManagedBlock(existing, "new policy\n");
@@ -57,10 +103,15 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.deepEqual(second.changed, []);
 
   const agents = await fs.readFile(path.join(project, "AGENTS.md"), "utf8");
+  const architectureReviewer = await fs.readFile(
+    path.join(project, ".codex", "agents", "architecture-reviewer.toml"),
+    "utf8",
+  );
   const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
   assert.match(agents, /<!-- multi-sdd-team: begin -->/);
+  assert.match(architectureReviewer, /name = "architecture_reviewer"/);
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);

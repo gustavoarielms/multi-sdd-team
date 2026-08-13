@@ -26,7 +26,8 @@ Subagentes a crear:
 4. `implementer`
 5. `tester-reviewer`
 6. `hacker`
-7. `orchestrator` (componente de coordinación)
+7. `architecture-reviewer`
+8. `orchestrator` (componente de coordinación)
 
 ### D-004 — Documentator escribe specs en `./docs`
 El `documentator`:
@@ -62,6 +63,12 @@ Cuando la extensión está cargada y hay UI interactiva:
   - nombre del subagente
   - breve descripción debajo
   - color distintivo por rol
+
+### D-009 — Architecture reviewer report-only
+El `architecture-reviewer` revisa decisiones antes de implementar y conformidad
+después cuando cambian límites, dependencias, contratos, persistencia o
+integraciones. No modifica código ni política; reglas y excepciones materiales
+requieren aprobación humana.
 
 ---
 
@@ -107,6 +114,7 @@ Protección anti-recursión:
 | explorer | read-only | mapa de código y contexto comprimido |
 | documentator | write restringido a `./docs/**` | `functional-spec.md` + `technical-spec.md` |
 | planner | read-only | plan de tareas accionables |
+| architecture-reviewer | read-only | gate de diseño/conformidad arquitectónica |
 | implementer | write + tests | cambios de código + evidencia TDD |
 | tester-reviewer | read + ejecución de checks/tests | reporte de calidad + E2E + recomendaciones |
 | hacker | análisis seguridad estático/dinámico | reporte de riesgos y PoC/checklist |
@@ -124,6 +132,7 @@ Widget persistente con cards horizontales de subagentes:
   - explorer: warning
   - documentator: mdHeading/accent
   - planner: muted
+  - architecture-reviewer: accent
   - implementer: success
   - tester-reviewer: toolTitle
   - hacker: error
@@ -144,10 +153,11 @@ Widget persistente con cards horizontales de subagentes:
 ## Criterios de aceptación de diseño
 
 1. Existe package `multi-team-sdd` separado.
-2. Los 7 roles están definidos con contrato de entrada/salida.
+2. Los 8 roles están definidos con contrato de entrada/salida.
 3. `documentator` está obligado a producir specs en `./docs`.
 4. `implementer` opera en TDD.
 5. `tester-reviewer` solo reporta.
 6. `hacker` cubre auditoría completa con guardrails.
 7. La UI muestra cards horizontales con nombre + descripción + color.
 8. El orchestrator decide estrategia de ejecución y lo justifica.
+9. El architecture-reviewer es report-only y las excepciones requieren autoridad humana.

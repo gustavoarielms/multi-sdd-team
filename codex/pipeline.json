@@ -1,6 +1,6 @@
 {
   "name": "multi-sdd-team",
-  "version": 1,
+  "version": 2,
   "owner": "main_session_orchestrator",
   "mode": "demo_fast",
   "principles": [
@@ -9,7 +9,9 @@
     "After spawning any subagent, the orchestrator waits for the required handoff before the next local or delegated step.",
     "No delegated stage may start until its declared dependencies are complete.",
     "The orchestrator must not inspect, scaffold, implement, or validate locally while subagents are running unless the user explicitly authorizes parallel local work.",
-    "Demo-fast mode: run agents in fast mode, skip hacker by default, and let the main orchestrator apply small reviewer-requested fixes directly."
+    "Demo-fast mode: run agents in fast mode and skip hacker by default.",
+    "Review findings return to the implementer, then deterministic checks and the originating gate run again.",
+    "Architecture rules and exceptions require approval by the user or a designated human authority."
   ],
   "strategies": {
     "INLINE": {
@@ -57,16 +59,30 @@
           "action": "Make the scoped change using the available handoff."
         },
         {
+          "id": "deterministic_checks",
+          "actor": "deterministic_enforcement",
+          "depends_on": ["implement"],
+          "action": "Run all required objective checks and preserve machine-readable outcomes."
+        },
+        {
+          "id": "architecture_compliance_review",
+          "actor": "architecture_reviewer",
+          "depends_on": ["deterministic_checks"],
+          "optional": true,
+          "condition": "Run when the change affects architecture-sensitive boundaries, dependencies, contracts, persistence, integrations, or decisions.",
+          "action": "Perform report-only architecture compliance review. Findings return to implementer and this gate must revalidate remediation."
+        },
+        {
           "id": "review",
           "actor": "tester_reviewer",
-          "depends_on": ["implement"],
+          "depends_on": ["deterministic_checks", "architecture_compliance_review"],
           "action": "Report-only validation of the implemented change."
         },
         {
           "id": "main_integrate",
           "actor": "main_session",
           "depends_on": ["review"],
-          "action": "Summarize results and perform final integration or small reviewer-requested fixes directly. Do not call implementer again for review fixes in demo-fast mode."
+          "action": "Integrate only after required gates pass. Route findings to the implementer and require revalidation by the originating gate."
         }
       ]
     },
@@ -103,9 +119,17 @@
           "action": "Turn specs into ordered, verifiable implementation tasks. Do not start before documentator returns."
         },
         {
+          "id": "architecture_design_review",
+          "actor": "architecture_reviewer",
+          "depends_on": ["plan"],
+          "optional": true,
+          "condition": "Run when module or layer boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions change.",
+          "action": "Perform report-only design compliance review. New architecture policy or exceptions require human approval."
+        },
+        {
           "id": "security_review",
           "actor": "hacker",
-          "depends_on": ["plan"],
+          "depends_on": ["plan", "architecture_design_review"],
           "optional": true,
           "disabled_by_default": true,
           "condition": "Skip in demo-fast mode. Run only if the user explicitly asks for security review or the task involves auth, secrets, payments, destructive actions, or external network exposure.",
@@ -114,20 +138,34 @@
         {
           "id": "implement",
           "actor": "implementer",
-          "depends_on": ["plan", "security_review"],
+          "depends_on": ["plan", "architecture_design_review", "security_review"],
           "action": "Implement according to the planner handoff and any security constraints."
+        },
+        {
+          "id": "deterministic_checks",
+          "actor": "deterministic_enforcement",
+          "depends_on": ["implement"],
+          "action": "Run all required objective checks and preserve machine-readable outcomes."
+        },
+        {
+          "id": "architecture_compliance_review",
+          "actor": "architecture_reviewer",
+          "depends_on": ["deterministic_checks"],
+          "optional": true,
+          "condition": "Run when architecture_design_review ran or the implementation changed an architecture-sensitive area.",
+          "action": "Perform report-only implementation compliance review. Findings return to implementer and this gate must revalidate remediation."
         },
         {
           "id": "review",
           "actor": "tester_reviewer",
-          "depends_on": ["implement"],
+          "depends_on": ["deterministic_checks", "architecture_compliance_review"],
           "action": "Run report-only static/E2E/manual validation and return findings."
         },
         {
           "id": "main_integrate",
           "actor": "main_session",
           "depends_on": ["review"],
-          "action": "Integrate final results, resolve tester_reviewer findings directly when they are small or demo-blocking, and summarize evidence. Do not call implementer again for review fixes in demo-fast mode."
+          "action": "Integrate final results only after required gates pass. Route findings to implementer, rerun deterministic checks, and require revalidation by the originating gate."
         }
       ]
     }
@@ -135,10 +173,13 @@
   "hard_rules": [
     "For SDD_SUBAGENTS, never spawn documentator in parallel with explorer.",
     "For SDD_SUBAGENTS, never spawn planner before documentator returns.",
-    "For SDD_SUBAGENTS, never spawn implementer before planner returns.",
-    "For SDD_SUBAGENTS, never spawn tester_reviewer before implementer returns.",
+    "For SDD_SUBAGENTS, never spawn an architecture design review before planner returns.",
+    "For SDD_SUBAGENTS, never spawn implementer before planner and required pre-implementation gates return.",
+    "For SDD_SUBAGENTS, never spawn an architecture compliance review before implementation and deterministic checks return.",
+    "For SDD_SUBAGENTS, never spawn tester_reviewer before implementation, deterministic checks, and required architecture compliance review return.",
     "In demo-fast mode, skip hacker unless explicitly requested by the user or required by sensitive security scope.",
-    "In demo-fast mode, if tester_reviewer requests changes, the main session fixes them directly instead of calling implementer again.",
+    "The main session never fixes review findings while acting as orchestrator; route them to implementer and revalidate.",
+    "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",
     "If a dependency is optional and skipped, note why it was skipped before continuing."
   ]
 }

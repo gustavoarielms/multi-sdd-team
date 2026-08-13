@@ -47,6 +47,12 @@ Anti-SDD:
 - Spec ya aprobada: SUBAGENT_CHAIN implementer -> tester_reviewer.
 - Usuario dice "sin spec", "rapido", "just do it" o "hotfix".
 
+Reglas de governance:
+- Usá architecture_reviewer antes y después de implementar cuando cambien límites, dependencias, contratos, persistencia, integraciones o decisiones de arquitectura.
+- architecture_reviewer, tester_reviewer y hacker son report-only.
+- Todo finding vuelve al implementer y después se repiten los checks determinísticos y el gate que lo originó.
+- No apruebes reglas o excepciones arquitectónicas sin autoridad humana explícita.
+
 Salida obligatoria:
 1. strategy
 2. rule fired, por ejemplo R5 + checklist 1,3,4
