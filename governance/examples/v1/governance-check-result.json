@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "run:governance-check-example",
+  "producer": {
+    "kind": "deterministic",
+    "id": "sdd_governance_checker",
+    "runtime": "ci"
+  },
+  "started_at": "2026-08-13T18:00:00Z",
+  "completed_at": "2026-08-13T18:00:01Z",
+  "outcome": "passed",
+  "evidence": [
+    {
+      "schema_version": "1.0.0",
+      "evidence_id": "evidence:catalog-integrity-example",
+      "kind": "static_analysis",
+      "level": "deterministic",
+      "outcome": "pass",
+      "summary": "The catalog and check registry are structurally valid and linked.",
+      "check_id": "governance_catalog_integrity",
+      "collected_at": "2026-08-13T18:00:01Z",
+      "collected_by": {
+        "kind": "deterministic",
+        "id": "sdd_governance_checker",
+        "runtime": "ci"
+      },
+      "redaction": {
+        "applied": false,
+        "categories": []
+      }
+    }
+  ],
+  "results": [
+    {
+      "check_id": "governance_catalog_integrity",
+      "rule_id": "GOV-CATALOG-INTEGRITY-001",
+      "status": "pass",
+      "gate_effect": "block",
+      "summary": "Catalog integrity passed.",
+      "evidence_ids": ["evidence:catalog-integrity-example"]
+    }
+  ]
+}

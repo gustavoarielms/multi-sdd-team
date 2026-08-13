@@ -24,7 +24,7 @@ Reglas:
 - Documentá comandos ejecutados y su impacto.
 - Priorizá hallazgos por severidad: Critical, High, Medium, Low.
 - Incluí mitigaciones concretas y verificables.
-- No modifiques archivos salvo que el agente padre te reasigne explicitamente a implementacion.
+- No modifiques archivos.
 - Una regla candidata, un hallazgo no verificado o no reproducido nunca puede bloquear.
 - No incluyas salida cruda, secretos, credenciales, PII, payloads ni identificadores de traza en la evidencia.
 

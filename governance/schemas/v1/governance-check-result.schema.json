@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/governance-check-result.schema.json",
+  "title": "Governance Deterministic Check Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "producer", "started_at", "completed_at", "outcome", "evidence", "results"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "run_id": { "$ref": "common.schema.json#/$defs/runId" },
+    "producer": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/producer" },
+        { "type": "object", "properties": { "kind": { "const": "deterministic" } } }
+      ]
+    },
+    "started_at": { "$ref": "common.schema.json#/$defs/utcTimestamp" },
+    "completed_at": { "$ref": "common.schema.json#/$defs/utcTimestamp" },
+    "outcome": { "enum": ["passed", "failed"] },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "evidence.schema.json" }
+    },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_id", "rule_id", "status", "gate_effect", "summary", "evidence_ids"],
+        "properties": {
+          "check_id": { "$ref": "common.schema.json#/$defs/referenceId" },
+          "rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+          "status": { "enum": ["pass", "fail"] },
+          "gate_effect": { "enum": ["block", "warn", "none"] },
+          "summary": { "$ref": "common.schema.json#/$defs/shortText" },
+          "evidence_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "$ref": "common.schema.json#/$defs/evidenceId" }
+          }
+        }
+      }
+    }
+  }
+}

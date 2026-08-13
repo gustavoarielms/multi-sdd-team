@@ -49,8 +49,9 @@
     "setup.sh"
   ],
   "scripts": {
-    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && npm test",
-    "check:governance": "node --test test/governance-schema.test.js",
+    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/pi-reviewer-command-policy.js && npm test",
+    "check:governance": "node --test test/governance-schema.test.js test/governance-checks.test.js",
+    "governance": "node bin/sdd-codegraph.js check-governance .",
     "setup:codex": "./setup.sh codex --global",
     "test": "node --test"
   },

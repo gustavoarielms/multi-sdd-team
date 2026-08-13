@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0.0",
+  "registry_id": "multi_sdd_deterministic_checks",
+  "checks": [
+    { "check_id": "governance_catalog_integrity", "rule_id": "GOV-CATALOG-INTEGRITY-001", "implementation": "governance_catalog_integrity", "description": "Validate schemas, approvals, identifiers, and catalog-to-check links." },
+    { "check_id": "runtime_role_parity", "rule_id": "GOV-RUNTIME-PARITY-001", "implementation": "runtime_role_parity", "description": "Compare normalized Pi and Codex governed role sets." },
+    { "check_id": "reviewer_report_only", "rule_id": "GOV-REVIEW-REPORTONLY-001", "implementation": "reviewer_report_only", "description": "Verify reviewer prompts and Codex sandboxes remain report-only." },
+    { "check_id": "review_handoff_contract", "rule_id": "GOV-REVIEW-HANDOFF-001", "implementation": "review_handoff_contract", "description": "Verify structured reviewer handoff contracts and runtime validation integration." },
+    { "check_id": "pipeline_dependency_order", "rule_id": "GOV-PIPELINE-ORDER-001", "implementation": "pipeline_dependency_order", "description": "Validate declared dependencies, ordering, cycles, and fail-closed policy." }
+  ]
+}

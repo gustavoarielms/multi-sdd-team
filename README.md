@@ -35,6 +35,7 @@ Run from a local checkout:
 node ./bin/sdd-codegraph.js init /absolute/path/to/project
 node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
+node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
 ```
 
 From npm, the equivalent package commands are:
@@ -43,6 +44,7 @@ From npm, the equivalent package commands are:
 npx @gustavoarielms/sdd-codegraph-cli init
 npx @gustavoarielms/sdd-codegraph-cli update
 npx @gustavoarielms/sdd-codegraph-cli check
+npx @gustavoarielms/sdd-codegraph-cli check-governance
 ```
 
 - `init` installs the managed Codex SDD configuration and initializes or syncs
@@ -51,6 +53,8 @@ npx @gustavoarielms/sdd-codegraph-cli check
   `AGENTS.md` content and unrelated `.codex/config.toml` keys.
 - `check` is read-only and fails when managed files drift or the CodeGraph index
   is missing or stale.
+- `check-governance` emits canonical JSON and exits nonzero only for failed
+  deterministic checks whose approved catalog effect is `block`.
 
 The target path defaults to the current working directory. CodeGraph must be
 installed separately and available in `PATH`.
@@ -111,7 +115,8 @@ Install both global and project config:
 The Codex setup installs:
 
 - `~/.codex/agents/*.toml` or `<project>/.codex/agents/*.toml`
-- governance v1 schemas under the matching `.codex/governance/schemas/v1/` directory
+- governance v1 schemas, rule catalog, and check registry under the matching
+  `.codex/governance/` directory
 - `pipeline.json`
 - `AGENTS.md` instructions with a managed `multi-sdd-team` block
 - `service_tier = "fast"` and `[features].fast_mode = true`
@@ -146,7 +151,7 @@ Codex demo-fast behavior:
 
 [`docs/agent-governance-responsibility-map.md`](docs/agent-governance-responsibility-map.md)
 defines the approved responsibility and authority model used to derive agent
-prompts, pipeline policy, parity tests, and future enforcement schemas. It is a
+prompts, pipeline policy, parity tests, and enforcement contracts. It is a
 design source, not a file automatically loaded by Pi, Codex, or CI.
 
 The versioned machine-readable contract is documented in
@@ -155,6 +160,7 @@ examples, negative cases, and referential integrity with:
 
 ```bash
 npm run check:governance
+npm run governance
 ```
 
 Architecture, quality, and security reviewers emit pure JSON. Pi validates

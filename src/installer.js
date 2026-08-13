@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const TEMPLATE_ROOT = path.join(PACKAGE_ROOT, "codex");
 const GOVERNANCE_SCHEMAS_ROOT = path.join(PACKAGE_ROOT, "governance", "schemas", "v1");
+const GOVERNANCE_RULES_ROOT = path.join(PACKAGE_ROOT, "governance", "rules", "v1");
+const GOVERNANCE_CHECKS_ROOT = path.join(PACKAGE_ROOT, "governance", "checks", "v1");
 const MANAGED_MARKER = "multi-sdd-team";
 const MANIFEST_NAME = ".sdd-codegraph.json";
 
@@ -96,6 +98,8 @@ async function loadTemplates() {
     assertReadable(pipelinePath),
     assertReadable(agentsPath),
     assertReadable(GOVERNANCE_SCHEMAS_ROOT),
+    assertReadable(GOVERNANCE_RULES_ROOT),
+    assertReadable(GOVERNANCE_CHECKS_ROOT),
   ]);
 
   const agentNames = (await fs.readdir(agentsRoot))
@@ -117,9 +121,20 @@ async function loadTemplates() {
     governanceSchemas.set(name, await fs.readFile(path.join(GOVERNANCE_SCHEMAS_ROOT, name), "utf8"));
   }
 
+  const governanceRules = new Map();
+  for (const name of (await fs.readdir(GOVERNANCE_RULES_ROOT)).filter((item) => item.endsWith(".json")).sort()) {
+    governanceRules.set(name, await fs.readFile(path.join(GOVERNANCE_RULES_ROOT, name), "utf8"));
+  }
+  const governanceChecks = new Map();
+  for (const name of (await fs.readdir(GOVERNANCE_CHECKS_ROOT)).filter((item) => item.endsWith(".json")).sort()) {
+    governanceChecks.set(name, await fs.readFile(path.join(GOVERNANCE_CHECKS_ROOT, name), "utf8"));
+  }
+
   return {
     agents,
     governanceSchemas,
+    governanceRules,
+    governanceChecks,
     pipeline: await fs.readFile(pipelinePath, "utf8"),
     agentsPolicy: await fs.readFile(agentsPath, "utf8"),
   };
@@ -134,6 +149,12 @@ async function expectedProjectFiles(projectRoot) {
   }
   for (const [name, content] of templates.governanceSchemas) {
     files.set(path.join(".codex", "governance", "schemas", "v1", name), content);
+  }
+  for (const [name, content] of templates.governanceRules) {
+    files.set(path.join(".codex", "governance", "rules", "v1", name), content);
+  }
+  for (const [name, content] of templates.governanceChecks) {
+    files.set(path.join(".codex", "governance", "checks", "v1", name), content);
   }
 
   files.set("pipeline.json", templates.pipeline);

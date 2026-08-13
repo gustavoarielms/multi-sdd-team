@@ -1,8 +1,17 @@
 import fs from "node:fs/promises";
 import Ajv2020 from "ajv/dist/2020.js";
+import {
+  APPROVED_GOVERNANCE_RULES,
+  CANONICAL_GOVERNANCE_CHECK_BINDINGS,
+  GOVERNANCE_APPROVAL_AUTHORITY,
+  governanceRuleDigest,
+} from "./governance-trust.js";
 
 const schemasUrl = new URL("../governance/schemas/v1/", import.meta.url);
 const agentResultSchemaName = "agent-result.schema.json";
+const ruleCatalogSchemaName = "rule-catalog.schema.json";
+const checkRegistrySchemaName = "check-registry.schema.json";
+const governanceCheckResultSchemaName = "governance-check-result.schema.json";
 
 const reviewGateTypes = new Map([
   ["architecture_reviewer", "architecture"],
@@ -181,4 +190,105 @@ export async function validateAgentResultText(text, options = {}) {
   }
 
   return validateAgentResult(value, options);
+}
+
+export async function validateGovernanceCatalog(catalog, registry) {
+  const [catalogStructure, registryStructure] = await Promise.all([
+    validateGovernanceDocument(ruleCatalogSchemaName, catalog),
+    validateGovernanceDocument(checkRegistrySchemaName, registry),
+  ]);
+  const errors = [...catalogStructure.errors, ...registryStructure.errors];
+  if (!catalogStructure.valid || !registryStructure.valid) return { ok: false, errors };
+
+  const ruleIds = new Set();
+  const checksById = new Map();
+  for (const rule of catalog.rules) {
+    if (ruleIds.has(rule.rule_id)) errors.push("duplicate rule identifier");
+    ruleIds.add(rule.rule_id);
+  }
+
+  for (const check of registry.checks) {
+    if (checksById.has(check.check_id)) errors.push("duplicate check identifier");
+    checksById.set(check.check_id, check);
+    if (!ruleIds.has(check.rule_id)) errors.push("check references missing rule");
+  }
+
+  const canonicalCheckIds = Object.keys(CANONICAL_GOVERNANCE_CHECK_BINDINGS);
+  if (registry.checks.length !== canonicalCheckIds.length) errors.push("check registry does not contain the canonical bindings");
+  for (const checkId of canonicalCheckIds) {
+    const expected = CANONICAL_GOVERNANCE_CHECK_BINDINGS[checkId];
+    const actual = registry.checks.find((check) => check.check_id === checkId);
+    if (!actual || actual.rule_id !== expected.rule_id || actual.implementation !== expected.implementation) {
+      errors.push("check registry binding does not match trusted code");
+    }
+  }
+
+  for (const rule of catalog.rules) {
+    if (rule.enforcement.mode !== "deterministic") continue;
+    const check = checksById.get(rule.enforcement.automation.check_id);
+    if (!check) errors.push("deterministic rule references missing check");
+    else if (check.rule_id !== rule.rule_id) errors.push("deterministic check references another rule");
+  }
+
+
+  const trustedApprovedRuleIds = new Set(Object.keys(APPROVED_GOVERNANCE_RULES));
+  const catalogApprovedRuleIds = new Set(
+    catalog.rules.filter((candidate) => candidate.status === "approved").map((rule) => rule.rule_id),
+  );
+  if (trustedApprovedRuleIds.size !== catalogApprovedRuleIds.size
+    || [...trustedApprovedRuleIds].some((ruleId) => !catalogApprovedRuleIds.has(ruleId))
+    || [...catalogApprovedRuleIds].some((ruleId) => !trustedApprovedRuleIds.has(ruleId))) {
+    errors.push("approved rule set does not match trusted code");
+  }
+
+  for (const rule of catalog.rules.filter((candidate) => candidate.status === "approved")) {
+    const trusted = APPROVED_GOVERNANCE_RULES[rule.rule_id];
+    if (rule.approval.approved_by.id !== GOVERNANCE_APPROVAL_AUTHORITY.id
+      || rule.approval.reference !== GOVERNANCE_APPROVAL_AUTHORITY.reference) {
+      errors.push("approved rule authority does not match trusted code");
+    }
+    if (!trusted) {
+      errors.push("approved rule has no trusted binding");
+      continue;
+    }
+    if (rule.version !== trusted.version || governanceRuleDigest(rule) !== trusted.digest) {
+      errors.push("approved rule content does not match trusted binding");
+    }
+  }
+
+  return errors.length === 0
+    ? { ok: true, value: catalog, errors: [] }
+    : { ok: false, errors };
+}
+
+export async function validateGovernanceCheckResult(value) {
+  const structural = await validateGovernanceDocument(governanceCheckResultSchemaName, value);
+  if (!structural.valid) return { ok: false, errors: structural.errors };
+
+  const errors = [];
+  const evidenceIds = new Set();
+  const resultIds = new Set();
+  for (const evidence of value.evidence) {
+    if (evidenceIds.has(evidence.evidence_id)) errors.push("duplicate evidence identifier");
+    evidenceIds.add(evidence.evidence_id);
+  }
+  for (const result of value.results) {
+    if (resultIds.has(result.check_id)) errors.push("duplicate check result identifier");
+    resultIds.add(result.check_id);
+    for (const evidenceId of result.evidence_ids) {
+      if (!evidenceIds.has(evidenceId)) {
+        errors.push("check references missing evidence");
+        continue;
+      }
+      const evidence = value.evidence.find((candidate) => candidate.evidence_id === evidenceId);
+      if (evidence.check_id !== result.check_id) errors.push("check evidence belongs to another check");
+    }
+  }
+
+  const allPassed = value.results.every((result) => result.status === "pass");
+  if ((value.outcome === "passed") !== allPassed) errors.push("outcome does not match check results");
+
+  return errors.length === 0
+    ? { ok: true, value, errors: [] }
+    : { ok: false, errors };
 }

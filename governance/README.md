@@ -6,7 +6,8 @@
 - Schema dialect: [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
 - Validator used by this repository: Ajv 8 in strict mode
 - Structured emission and handoff validation: implemented for architecture, quality, and security review gates
-- Persistence, rule catalog, metrics, and dashboard integration: not implemented yet
+- Approved rule catalog and deterministic governance checks: implemented
+- Persistence, metrics, and dashboard integration: not implemented
 
 ## Purpose
 
@@ -24,11 +25,20 @@ The contract is modular:
 | `evidence.schema.json` | Bounded, redacted evidence metadata |
 | `gate-decision.schema.json` | Effective pass/fail/blocked/not-run decision |
 | `rule.schema.json` | Versioned engineering or architecture rule |
+| `rule-catalog.schema.json` | Canonical versioned collection of governance rules |
+| `check-registry.schema.json` | Deterministic check-to-rule registry |
+| `governance-check-result.schema.json` | Deterministic results with bounded evidence |
 | `exception.schema.json` | Human-approved, scoped, time-bounded exception |
 | `common.schema.json` | Shared identifiers, actors, locations, and enums |
 
 Schemas live under `governance/schemas/v1/`. Examples live under
 `governance/examples/v1/`.
+
+The canonical rule catalog is `governance/rules/v1/catalog.json`; the check
+registry is `governance/checks/v1/registry.json`. An approved rule records its
+human approval reference, responsible gate, source references, and evidence
+requirements. Session-only recommendations remain `proposed` with a `none`
+gate effect until a versioned authority approves them.
 
 ## Authority and blocking semantics
 
@@ -86,6 +96,7 @@ Run:
 
 ```bash
 npm run check:governance
+npm run governance
 ```
 
 Validate an agent handoff from a file or stdin:
@@ -99,15 +110,37 @@ The parser accepts exactly one JSON object. Markdown fences and surrounding
 prose fail closed. Validation errors describe only the failed constraint and do
 not echo rejected values.
 
+`sdd-codegraph check-governance [path]` writes exactly one canonical JSON
+`governance-check-result` document to stdout. It exits nonzero only when a
+failed result has approved `block` effect; failed `warn` or `none` results stay
+machine-readable without failing the process. The initial checks cover catalog
+integrity, Pi/Codex role parity, reviewer report-only constraints, structured
+review handoffs, and pipeline dependency ordering with fail-closed policy.
+If the catalog or registry loads as JSON but fails its schema or referential
+integrity, execution stops before registry dispatch and emits one bounded,
+blocking `GOV-CATALOG-INTEGRITY-001` result. Result validation also requires
+the envelope outcome to match all check statuses and every referenced evidence
+item to carry the same `check_id` as its result.
+
+The command resolves three layouts: this source checkout, a project installation
+under `.codex/`, and a global Codex home containing `governance/`, `agents/`,
+and `pipeline.json`. Installed layouts use their installed Codex definitions and
+pipeline while Pi parity and runtime validation are checked against the
+canonical definitions shipped by this package. Unknown or incomplete layouts
+fail closed with a bounded machine-readable result.
+
 ## Runtime enforcement
 
 - Pi automatically validates the final output of `architecture-reviewer`,
   `tester-reviewer`, and `hacker` before the subagent tool accepts the handoff.
+- Pi reviewers consume files and deterministic evidence supplied by the
+  orchestrator. Their runtime tool policy permits only direct inspection tools;
+  shell, write, edit, and unrecognized tools are rejected fail closed.
 - Codex agent configuration supplies the JSON-only contract, while the main
   session policy requires the deterministic CLI validator before accepting a
   review handoff.
-- Project and global Codex installers copy the v1 schemas under
-  `.codex/governance/schemas/v1/` or `$CODEX_HOME/governance/schemas/v1/`.
+- Project and global Codex installers copy the v1 schemas, canonical catalog,
+  and check registry under `.codex/governance/` or `$CODEX_HOME/governance/`.
 - The main session may render a human-readable summary only after validation;
   the validated JSON remains canonical.
 
@@ -118,8 +151,19 @@ not echo rejected values.
 - Existing stored documents retain the schema version they were validated against.
 - Prompts and runtimes must not emit a new contract version until parity tests cover both Pi and Codex.
 
-## Next integration step
+## Deliberate boundary
 
-The next phase will define the approved rule catalog and connect deterministic
-checks to stable rule IDs. Persistence, trend metrics, and the dashboard remain
-separate later phases.
+The checker evaluates the current repository and emits an ephemeral result. It
+does not persist runs, calculate trends, publish metrics, or drive a dashboard.
+Those capabilities remain separate later phases.
+
+## Local trust boundary
+
+Approval trust is checker-owned code in `src/governance-trust.js`, not a claim
+made by the catalog being validated. It fixes the human authority and approval
+reference, the exact five check-to-rule implementation bindings, and each
+approved `rule_id` plus version and canonical SHA-256 content digest. Proposed
+rules do not require a trust binding. Changing an approved rule therefore
+requires both a newly approved catalog change and an explicit trust-code update.
+Installed projects do not copy a second trust file: validation uses the trust
+module shipped with the executing package.

@@ -23,6 +23,9 @@
     "exclude": ["test/**"]
   },
   "exceptions_allowed": true,
+  "source_refs": ["docs/agent-governance-responsibility-map.md"],
+  "responsible_gate": "architecture_gate",
+  "evidence_requirements": ["A deterministic dependency result with bounded source locations."],
   "approval": {
     "approved_by": {
       "kind": "human",
@@ -30,6 +33,7 @@
       "runtime": "manual"
     },
     "approved_at": "2026-08-13T18:00:00Z",
-    "rationale": "Approved as the initial architecture dependency rule."
+    "rationale": "Approved as the initial architecture dependency rule.",
+    "reference": "conversation:initial-governance-approval"
   }
 }

@@ -28,3 +28,10 @@ export function validateAgentResultText(
   text: unknown,
   options?: GovernanceValidationOptions,
 ): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
+export function validateGovernanceCatalog(
+  catalog: unknown,
+  registry: unknown,
+): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
+export function validateGovernanceCheckResult(
+  value: unknown,
+): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;

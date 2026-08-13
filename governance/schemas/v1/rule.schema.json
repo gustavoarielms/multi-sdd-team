@@ -16,7 +16,10 @@
     "default_severity",
     "enforcement",
     "scope",
-    "exceptions_allowed"
+    "exceptions_allowed",
+    "source_refs",
+    "responsible_gate",
+    "evidence_requirements"
   ],
   "properties": {
     "schema_version": {
@@ -120,10 +123,31 @@
     "exceptions_allowed": {
       "type": "boolean"
     },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "responsible_gate": {
+      "$ref": "common.schema.json#/$defs/referenceId"
+    },
+    "evidence_requirements": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/shortText"
+      }
+    },
     "approval": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["approved_by", "approved_at", "rationale"],
+      "required": ["approved_by", "approved_at", "rationale", "reference"],
       "properties": {
         "approved_by": {
           "allOf": [
@@ -141,6 +165,9 @@
         },
         "rationale": {
           "$ref": "common.schema.json#/$defs/longText"
+        },
+        "reference": {
+          "$ref": "common.schema.json#/$defs/shortText"
         }
       }
     }

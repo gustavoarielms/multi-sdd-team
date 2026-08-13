@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { evaluatePiReviewerToolCall } from "../../src/pi-reviewer-command-policy.js";
 
 const role = process.env.PI_SUBAGENT_ROLE?.trim();
 const securityMode = process.env.PI_SUBAGENT_SECURITY_MODE === "active" ? "active" : "passive";
@@ -25,6 +26,11 @@ function isInsideDocs(targetPath: string, cwd: string): boolean {
 
 export default function childGuardrails(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
+    const reviewerPolicy = evaluatePiReviewerToolCall(role, event.toolName);
+    if (!reviewerPolicy.allowed) {
+      return { block: true, reason: reviewerPolicy.reason ?? "reviewer tool rejected" };
+    }
+
     if (role === "documentator" && (event.toolName === "write" || event.toolName === "edit")) {
       const pathValue = (event.input as Record<string, unknown>).path;
       if (typeof pathValue !== "string") return;

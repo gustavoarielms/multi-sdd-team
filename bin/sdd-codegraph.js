@@ -10,6 +10,7 @@ import {
   syncCodeGraph,
 } from "../src/installer.js";
 import { validateAgentResultText } from "../src/governance-validator.js";
+import { runGovernanceChecks } from "../src/governance-checks.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -20,6 +21,7 @@ Usage:
   sdd-codegraph init [path]
   sdd-codegraph update [path]
   sdd-codegraph check [path]
+  sdd-codegraph check-governance [path]
   sdd-codegraph validate-result [file|-] [--agent <name>] [--runtime <runtime>]
   sdd-codegraph --version
 
@@ -27,6 +29,8 @@ Commands:
   init      Install managed Codex SDD files and initialize or sync CodeGraph.
   update    Refresh managed Codex SDD files and initialize or sync CodeGraph.
   check     Verify managed files and CodeGraph state without making changes.
+  check-governance
+            Run deterministic governance checks and emit one canonical JSON result.
   validate-result
             Validate one governance agent-result JSON document. Reads stdin by default.
 
@@ -101,6 +105,15 @@ async function run() {
     const role = validation.value.producer.role;
     const statuses = validation.value.gate_decisions.map((gate) => gate.status).join(", ") || "none";
     process.stdout.write(`Governance result valid for ${role}; gate status: ${statuses}.\n`);
+    return;
+  }
+
+  if (command === "check-governance") {
+    const [target = process.cwd(), ...rest] = args;
+    if (rest.length > 0) throw new Error(`Unexpected argument: ${rest[0]}`);
+    const result = await runGovernanceChecks(target);
+    process.stdout.write(`${JSON.stringify(result.document)}\n`);
+    if (result.blocking) process.exitCode = 1;
     return;
   }
 

@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEX_TEMPLATE_DIR="$ROOT_DIR/codex"
 GOVERNANCE_SCHEMA_DIR="$ROOT_DIR/governance/schemas/v1"
+GOVERNANCE_RULE_DIR="$ROOT_DIR/governance/rules/v1"
+GOVERNANCE_CHECK_DIR="$ROOT_DIR/governance/checks/v1"
 
 usage() {
   cat <<'USAGE'
@@ -41,6 +43,10 @@ require_codex_templates() {
   fi
   if [[ ! -f "$GOVERNANCE_SCHEMA_DIR/agent-result.schema.json" ]]; then
     echo "Missing governance schemas: $GOVERNANCE_SCHEMA_DIR" >&2
+    exit 1
+  fi
+  if [[ ! -f "$GOVERNANCE_RULE_DIR/catalog.json" || ! -f "$GOVERNANCE_CHECK_DIR/registry.json" ]]; then
+    echo "Missing governance catalog or check registry" >&2
     exit 1
   fi
 }
@@ -150,8 +156,12 @@ install_codex_global() {
 
   mkdir -p "$agents_dir"
   mkdir -p "$codex_home/governance/schemas/v1"
+  mkdir -p "$codex_home/governance/rules/v1"
+  mkdir -p "$codex_home/governance/checks/v1"
   cp "$CODEX_TEMPLATE_DIR"/agents/*.toml "$agents_dir/"
   cp "$GOVERNANCE_SCHEMA_DIR"/*.schema.json "$codex_home/governance/schemas/v1/"
+  cp "$GOVERNANCE_RULE_DIR"/*.json "$codex_home/governance/rules/v1/"
+  cp "$GOVERNANCE_CHECK_DIR"/*.json "$codex_home/governance/checks/v1/"
   cp "$CODEX_TEMPLATE_DIR/pipeline.json" "$codex_home/pipeline.json"
 
   merge_marked_file "$codex_home/AGENTS.md" "$CODEX_TEMPLATE_DIR/AGENTS.md" "multi-sdd-team"
@@ -172,8 +182,12 @@ install_codex_project() {
 
   mkdir -p "$codex_dir/agents"
   mkdir -p "$codex_dir/governance/schemas/v1"
+  mkdir -p "$codex_dir/governance/rules/v1"
+  mkdir -p "$codex_dir/governance/checks/v1"
   cp "$CODEX_TEMPLATE_DIR"/agents/*.toml "$codex_dir/agents/"
   cp "$GOVERNANCE_SCHEMA_DIR"/*.schema.json "$codex_dir/governance/schemas/v1/"
+  cp "$GOVERNANCE_RULE_DIR"/*.json "$codex_dir/governance/rules/v1/"
+  cp "$GOVERNANCE_CHECK_DIR"/*.json "$codex_dir/governance/checks/v1/"
   cp "$CODEX_TEMPLATE_DIR/pipeline.json" "$project_dir/pipeline.json"
 
   merge_marked_file "$project_dir/AGENTS.md" "$CODEX_TEMPLATE_DIR/AGENTS.md" "multi-sdd-team"

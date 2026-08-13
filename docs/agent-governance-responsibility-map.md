@@ -2,10 +2,10 @@
 
 ## Status
 
-- Phase: 2 — Responsibility Map
-- Status: baseline approved for contract design
+- Phase: 4 — Deterministic Governance Enforcement
+- Status: approved catalog and initial checks implemented
 - Scope: the existing roles plus the approved architecture reviewer in both Pi and Codex
-- Out of scope: prompt rewrites, enforcement implementation, metrics storage, and dashboard design
+- Out of scope: persistence, metrics storage, dashboard design, publication, and deployment
 
 ## Approved decisions
 
@@ -16,6 +16,37 @@
 5. Findings that require code changes return to the implementer and must be revalidated by the gate that raised them.
 6. Deterministic checks take precedence over agent opinion whenever a rule can be automated.
 7. Architecture rules and exceptions require approval by the user or a designated human authority.
+8. The canonical v1 catalog is the only source for approved blocking effects and deterministic check links.
+9. Deterministic check output is a strict, evidence-bearing governance envelope; warnings do not change process exit status.
+
+## Implemented catalog and checks
+
+`governance/rules/v1/catalog.json` holds approved and proposed rules in one
+versioned catalog. `governance/checks/v1/registry.json` binds each automated
+rule to one implementation and stable `check_id`.
+
+The initial blocking checks are:
+
+- `governance_catalog_integrity` for schemas, unique IDs, human authority, and links;
+- `runtime_role_parity` for normalized Pi/Codex role sets;
+- `reviewer_report_only` for independent reviewer mutation constraints;
+- `review_handoff_contract` for strict reviewer JSON contracts and validation;
+- `pipeline_dependency_order` for dependency existence, order, cycles, and fail-closed policy.
+
+`GOV-REMEDIATION-LOOP-001` is approved with `warn`: configuration can be
+reviewed statically, but without persisted executions the tool cannot prove an
+individual finding completed the full remediation loop. Session-only guidance
+without a versioned root `AGENTS.md` remains proposed with no gate effect.
+
+The first catalog also inventories the approved authority, role capability,
+architecture scope, active-security authorization, implementer TDD, failed
+gate, deterministic precedence, safe evidence, candidate non-blocking, human
+authority, exception lifecycle, check linkage, and installer parity rules.
+These rules use `agent_review` or `human_review` until a dedicated deterministic
+check is approved. `GOV-FAILED-GATE-001` has partial static coverage through
+`pipeline_dependency_order`, but remains agent-reviewed because this phase has
+no persisted execution state with which to prove that a dependent stage did
+not actually run.
 
 ## How this document is used
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -139,15 +140,47 @@ test("installProject is idempotent and preserves project-specific content", asyn
     path.join(project, ".codex", "governance", "schemas", "v1", "agent-result.schema.json"),
     "utf8",
   ));
+  const catalog = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "governance", "rules", "v1", "catalog.json"),
+    "utf8",
+  ));
+  const registry = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "governance", "checks", "v1", "registry.json"),
+    "utf8",
+  ));
   const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
   assert.match(agents, /<!-- multi-sdd-team: begin -->/);
   assert.match(architectureReviewer, /name = "architecture_reviewer"/);
   assert.equal(agentResultSchema.title, "Governance Agent Result v1");
+  assert.equal(catalog.rules[0].rule_id, "GOV-CATALOG-INTEGRITY-001");
+  assert.equal(registry.checks[0].check_id, "governance_catalog_integrity");
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);
+});
+
+test("shell project and global installers copy equivalent governance contracts", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  const codexHome = path.join(root, "global-codex");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  execFileSync("bash", [new URL("../setup.sh", import.meta.url).pathname, "codex", "--global", "--project", project], {
+    env: { ...process.env, CODEX_HOME: codexHome },
+  });
+
+  for (const relative of [
+    path.join("schemas", "v1", "rule-catalog.schema.json"),
+    path.join("schemas", "v1", "governance-check-result.schema.json"),
+    path.join("rules", "v1", "catalog.json"),
+    path.join("checks", "v1", "registry.json"),
+  ]) {
+    const globalContent = await fs.readFile(path.join(codexHome, "governance", relative), "utf8");
+    const projectContent = await fs.readFile(path.join(project, ".codex", "governance", relative), "utf8");
+    assert.equal(projectContent, globalContent, relative);
+  }
 });
 
 test("checkProjectFiles reports managed drift", async (context) => {

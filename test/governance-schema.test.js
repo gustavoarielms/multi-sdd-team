@@ -5,12 +5,16 @@ import test from "node:test";
 import {
   validateAgentResult,
   validateAgentResultText,
+  validateGovernanceCatalog,
+  validateGovernanceCheckResult,
   validateGovernanceDocument,
 } from "../src/governance-validator.js";
 
 const root = new URL("../", import.meta.url);
 const schemasUrl = new URL("governance/schemas/v1/", root);
 const examplesUrl = new URL("governance/examples/v1/", root);
+const catalogUrl = new URL("governance/rules/v1/catalog.json", root);
+const registryUrl = new URL("governance/checks/v1/registry.json", root);
 
 async function readJson(url) {
   return JSON.parse(await fs.readFile(url, "utf8"));
@@ -181,4 +185,168 @@ test("CLI validates files and stdin with expected provenance", async () => {
     "codex",
   ], { encoding: "utf8", input });
   assert.match(stdinResult, /gate status: fail/);
+});
+
+test("versioned governance catalog and check registry are valid and linked", async () => {
+  const catalog = await readJson(catalogUrl);
+  const registry = await readJson(registryUrl);
+  const validation = await validateGovernanceCatalog(catalog, registry);
+
+  assert.deepEqual(validation, { ok: true, value: catalog, errors: [] });
+  assert.deepEqual(
+    catalog.rules.filter((rule) => rule.status === "approved"
+      && rule.enforcement.mode === "deterministic"
+      && rule.enforcement.gate_effect === "block")
+      .map((rule) => rule.rule_id),
+    [
+      "GOV-CATALOG-INTEGRITY-001",
+      "GOV-RUNTIME-PARITY-001",
+      "GOV-REVIEW-REPORTONLY-001",
+      "GOV-REVIEW-HANDOFF-001",
+      "GOV-PIPELINE-ORDER-001",
+    ],
+  );
+  assert.equal(
+    catalog.rules.find((rule) => rule.rule_id === "GOV-REMEDIATION-LOOP-001").enforcement.gate_effect,
+    "warn",
+  );
+  const approvedInventory = [
+    "GOV-ORCHESTRATOR-AUTHORITY-001",
+    "GOV-ROLE-CAPABILITY-001",
+    "GOV-ARCH-REVIEW-SCOPE-001",
+    "GOV-SECURITY-ACTIVE-001",
+    "ENG-IMPLEMENTER-TDD-001",
+    "GOV-FAILED-GATE-001",
+    "GOV-DETERMINISTIC-PRECEDENCE-001",
+    "GOV-EVIDENCE-SAFE-001",
+    "GOV-CANDIDATE-NONBLOCKING-001",
+    "GOV-HUMAN-AUTHORITY-001",
+    "GOV-EXCEPTION-LIFECYCLE-001",
+    "GOV-CHECK-RULE-LINK-001",
+    "GOV-INSTALL-PARITY-001",
+  ];
+  assert.deepEqual(
+    approvedInventory.filter((ruleId) => catalog.rules.find((rule) => rule.rule_id === ruleId)?.status !== "approved"),
+    [],
+  );
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ARCH-REVIEW-SCOPE-001").enforcement.gate_effect, "warn");
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").enforcement.gate_effect, "warn");
+  assert.ok(approvedInventory
+    .filter((ruleId) => !["GOV-ARCH-REVIEW-SCOPE-001", "ENG-IMPLEMENTER-TDD-001"].includes(ruleId))
+    .every((ruleId) => catalog.rules.find((rule) => rule.rule_id === ruleId).enforcement.gate_effect === "block"));
+  assert.ok(catalog.rules.filter((rule) => rule.status === "proposed")
+    .every((rule) => rule.enforcement.gate_effect === "none"));
+});
+
+test("catalog integrity rejects invalid documents, duplicate rules, proposed blocks, missing human approval, and orphan checks", async () => {
+  const catalog = await readJson(catalogUrl);
+  const registry = await readJson(registryUrl);
+
+  assert.equal((await validateGovernanceCatalog({ schema_version: "1.0.0" }, registry)).ok, false);
+
+  const duplicate = structuredClone(catalog);
+  duplicate.rules.push(structuredClone(duplicate.rules[0]));
+  assert.match((await validateGovernanceCatalog(duplicate, registry)).errors.join(" "), /duplicate rule identifier/);
+
+  const proposedBlock = structuredClone(catalog);
+  const proposed = proposedBlock.rules.find((rule) => rule.status === "proposed");
+  proposed.enforcement.gate_effect = "block";
+  assert.equal((await validateGovernanceCatalog(proposedBlock, registry)).ok, false);
+
+  const missingAuthority = structuredClone(catalog);
+  delete missingAuthority.rules.find((rule) => rule.status === "approved").approval;
+  assert.equal((await validateGovernanceCatalog(missingAuthority, registry)).ok, false);
+
+  const orphan = structuredClone(registry);
+  orphan.checks[0].rule_id = "GOV-NOT-REGISTERED-999";
+  assert.match((await validateGovernanceCatalog(catalog, orphan)).errors.join(" "), /check references missing rule/);
+
+  for (const mutate of [
+    (value) => { [value.checks[0].implementation, value.checks[1].implementation] = [value.checks[1].implementation, value.checks[0].implementation]; },
+    (value) => { value.checks[0].implementation = value.checks[1].implementation; },
+    (value) => { value.checks.pop(); },
+    (value) => { value.checks.push(structuredClone(value.checks[0])); },
+    (value) => { value.checks[0].check_id = "unknown_check"; },
+  ]) {
+    const rebound = structuredClone(registry);
+    mutate(rebound);
+    assert.equal((await validateGovernanceCatalog(catalog, rebound)).ok, false);
+  }
+
+  const unknownApprover = structuredClone(catalog);
+  unknownApprover.rules.find((rule) => rule.status === "approved").approval.approved_by.id = "self_asserted";
+  assert.equal((await validateGovernanceCatalog(unknownApprover, registry)).ok, false);
+
+  const unknownReference = structuredClone(catalog);
+  unknownReference.rules.find((rule) => rule.status === "approved").approval.reference = "conversation:untrusted";
+  assert.equal((await validateGovernanceCatalog(unknownReference, registry)).ok, false);
+
+  const changedContent = structuredClone(catalog);
+  changedContent.rules.find((rule) => rule.status === "approved").title = "Self-approved changed content";
+  assert.equal((await validateGovernanceCatalog(changedContent, registry)).ok, false);
+
+  const changedVersion = structuredClone(catalog);
+  changedVersion.rules.find((rule) => rule.status === "approved").version += 1;
+  assert.equal((await validateGovernanceCatalog(changedVersion, registry)).ok, false);
+
+  const unboundApproved = structuredClone(catalog);
+  const extra = structuredClone(unboundApproved.rules.find((rule) => rule.status === "approved"));
+  extra.rule_id = "GOV-UNBOUND-APPROVED-001";
+  unboundApproved.rules.push(extra);
+  assert.equal((await validateGovernanceCatalog(unboundApproved, registry)).ok, false);
+
+  const missingTrustedApproved = structuredClone(catalog);
+  missingTrustedApproved.rules = missingTrustedApproved.rules
+    .filter((rule) => rule.rule_id !== "GOV-ORCHESTRATOR-AUTHORITY-001");
+  assert.match(
+    (await validateGovernanceCatalog(missingTrustedApproved, registry)).errors.join(" "),
+    /approved rule set does not match trusted code/,
+  );
+
+  const downgradedToProposed = structuredClone(catalog);
+  const proposedDowngrade = downgradedToProposed.rules
+    .find((rule) => rule.rule_id === "GOV-ORCHESTRATOR-AUTHORITY-001");
+  proposedDowngrade.status = "proposed";
+  proposedDowngrade.enforcement.gate_effect = "none";
+  delete proposedDowngrade.approval;
+  assert.match(
+    (await validateGovernanceCatalog(downgradedToProposed, registry)).errors.join(" "),
+    /approved rule set does not match trusted code/,
+  );
+
+  const changedToDeprecated = structuredClone(catalog);
+  changedToDeprecated.rules.find((rule) => rule.rule_id === "GOV-ORCHESTRATOR-AUTHORITY-001").status = "deprecated";
+  assert.match(
+    (await validateGovernanceCatalog(changedToDeprecated, registry)).errors.join(" "),
+    /approved rule set does not match trusted code/,
+  );
+
+  const changedProposed = structuredClone(catalog);
+  changedProposed.rules.find((rule) => rule.status === "proposed").title = "Changed proposed guidance";
+  assert.equal((await validateGovernanceCatalog(changedProposed, registry)).ok, true);
+});
+
+test("deterministic check results require bounded evidence linked to rule and check", async () => {
+  const result = await readJson(new URL("governance-check-result.json", examplesUrl));
+  assert.deepEqual(await validateGovernanceCheckResult(result), { ok: true, value: result, errors: [] });
+
+  const missingEvidence = structuredClone(result);
+  missingEvidence.results[0].evidence_ids = [];
+  assert.equal((await validateGovernanceCheckResult(missingEvidence)).ok, false);
+
+  const dangling = structuredClone(result);
+  dangling.results[0].evidence_ids = ["evidence:missing"];
+  assert.match((await validateGovernanceCheckResult(dangling)).errors.join(" "), /check references missing evidence/);
+
+  const passedWithFailure = structuredClone(result);
+  passedWithFailure.results[0].status = "fail";
+  assert.match((await validateGovernanceCheckResult(passedWithFailure)).errors.join(" "), /outcome does not match check results/);
+
+  const failedWithoutFailure = structuredClone(result);
+  failedWithoutFailure.outcome = "failed";
+  assert.match((await validateGovernanceCheckResult(failedWithoutFailure)).errors.join(" "), /outcome does not match check results/);
+
+  const mismatchedEvidence = structuredClone(result);
+  mismatchedEvidence.evidence[0].check_id = "another_check";
+  assert.match((await validateGovernanceCheckResult(mismatchedEvidence)).errors.join(" "), /evidence belongs to another check/);
 });
