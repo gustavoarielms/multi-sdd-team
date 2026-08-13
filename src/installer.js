@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const TEMPLATE_ROOT = path.join(PACKAGE_ROOT, "codex");
+const GOVERNANCE_SCHEMAS_ROOT = path.join(PACKAGE_ROOT, "governance", "schemas", "v1");
 const MANAGED_MARKER = "multi-sdd-team";
 const MANIFEST_NAME = ".sdd-codegraph.json";
 
@@ -90,7 +91,12 @@ async function loadTemplates() {
   const agentsRoot = path.join(TEMPLATE_ROOT, "agents");
   const pipelinePath = path.join(TEMPLATE_ROOT, "pipeline.json");
   const agentsPath = path.join(TEMPLATE_ROOT, "AGENTS.md");
-  await Promise.all([assertReadable(agentsRoot), assertReadable(pipelinePath), assertReadable(agentsPath)]);
+  await Promise.all([
+    assertReadable(agentsRoot),
+    assertReadable(pipelinePath),
+    assertReadable(agentsPath),
+    assertReadable(GOVERNANCE_SCHEMAS_ROOT),
+  ]);
 
   const agentNames = (await fs.readdir(agentsRoot))
     .filter((name) => name.endsWith(".toml"))
@@ -103,8 +109,17 @@ async function loadTemplates() {
     agents.set(name, await fs.readFile(path.join(agentsRoot, name), "utf8"));
   }
 
+  const governanceSchemas = new Map();
+  const schemaNames = (await fs.readdir(GOVERNANCE_SCHEMAS_ROOT))
+    .filter((name) => name.endsWith(".schema.json"))
+    .sort();
+  for (const name of schemaNames) {
+    governanceSchemas.set(name, await fs.readFile(path.join(GOVERNANCE_SCHEMAS_ROOT, name), "utf8"));
+  }
+
   return {
     agents,
+    governanceSchemas,
     pipeline: await fs.readFile(pipelinePath, "utf8"),
     agentsPolicy: await fs.readFile(agentsPath, "utf8"),
   };
@@ -116,6 +131,9 @@ async function expectedProjectFiles(projectRoot) {
 
   for (const [name, content] of templates.agents) {
     files.set(path.join(".codex", "agents", name), content);
+  }
+  for (const [name, content] of templates.governanceSchemas) {
+    files.set(path.join(".codex", "governance", "schemas", "v1", name), content);
   }
 
   files.set("pipeline.json", templates.pipeline);

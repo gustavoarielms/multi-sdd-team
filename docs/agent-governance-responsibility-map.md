@@ -605,7 +605,7 @@ These gaps must be resolved before assigning architecture or governance approval
 2. The standalone Codex orchestrator agent has routing rules that differ from the Pi runtime policy.
 3. TDD is unconditional in Pi but conditional on testability in Codex.
 4. Security active-mode language and enforcement differ between the two runtimes.
-5. Output headings and severity vocabularies are not yet aligned with governance contract v1.
+5. Structured output is aligned for the architecture, quality, and security review gates; the remaining agent roles still use role-specific handoffs.
 
 ## Governance contract v1
 
@@ -618,6 +618,8 @@ The modular Draft 2020-12 schemas under `governance/schemas/v1/` now define:
 - strict evidence redaction metadata;
 - human approval for rules and exceptions.
 
-The next phase must align Pi and Codex output instructions with that contract,
-validate structured handoffs before accepting them, and fail closed on invalid
-required output. Rule catalog persistence and dashboard metrics remain later work.
+Pi now validates architecture, quality, and security review handoffs before
+acceptance. Codex uses the same JSON-only prompts and a mandatory deterministic
+CLI validation policy because its custom-agent configuration does not itself
+enforce the repository schema. Invalid output fails closed. Approved rule
+automation, persistence, metrics, and dashboard work remain later phases.

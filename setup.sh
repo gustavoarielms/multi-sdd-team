@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEX_TEMPLATE_DIR="$ROOT_DIR/codex"
+GOVERNANCE_SCHEMA_DIR="$ROOT_DIR/governance/schemas/v1"
 
 usage() {
   cat <<'USAGE'
@@ -36,6 +37,10 @@ require_codex_templates() {
   fi
   if [[ ! -f "$CODEX_TEMPLATE_DIR/AGENTS.md" ]]; then
     echo "Missing Codex AGENTS template: $CODEX_TEMPLATE_DIR/AGENTS.md" >&2
+    exit 1
+  fi
+  if [[ ! -f "$GOVERNANCE_SCHEMA_DIR/agent-result.schema.json" ]]; then
+    echo "Missing governance schemas: $GOVERNANCE_SCHEMA_DIR" >&2
     exit 1
   fi
 }
@@ -144,7 +149,9 @@ install_codex_global() {
   local agents_dir="$codex_home/agents"
 
   mkdir -p "$agents_dir"
+  mkdir -p "$codex_home/governance/schemas/v1"
   cp "$CODEX_TEMPLATE_DIR"/agents/*.toml "$agents_dir/"
+  cp "$GOVERNANCE_SCHEMA_DIR"/*.schema.json "$codex_home/governance/schemas/v1/"
   cp "$CODEX_TEMPLATE_DIR/pipeline.json" "$codex_home/pipeline.json"
 
   merge_marked_file "$codex_home/AGENTS.md" "$CODEX_TEMPLATE_DIR/AGENTS.md" "multi-sdd-team"
@@ -164,7 +171,9 @@ install_codex_project() {
   local codex_dir="$project_dir/.codex"
 
   mkdir -p "$codex_dir/agents"
+  mkdir -p "$codex_dir/governance/schemas/v1"
   cp "$CODEX_TEMPLATE_DIR"/agents/*.toml "$codex_dir/agents/"
+  cp "$GOVERNANCE_SCHEMA_DIR"/*.schema.json "$codex_dir/governance/schemas/v1/"
   cp "$CODEX_TEMPLATE_DIR/pipeline.json" "$project_dir/pipeline.json"
 
   merge_marked_file "$project_dir/AGENTS.md" "$CODEX_TEMPLATE_DIR/AGENTS.md" "multi-sdd-team"

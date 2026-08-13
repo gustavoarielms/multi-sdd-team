@@ -39,6 +39,23 @@ If the user says "sos el orquestador", "actua como orchestrator", or similar, tr
 - `tester_reviewer`: report-only static/E2E validation.
 - `hacker`: passive security audit only when explicitly requested or when security review is required by the task.
 
+## Structured Review Gates
+
+`architecture_reviewer`, `tester_reviewer`, and `hacker` must return exactly one
+JSON object conforming to `.codex/governance/schemas/v1/agent-result.schema.json`.
+Their handoffs contain no Markdown or surrounding prose.
+
+Before accepting one of these handoffs, the main session must run deterministic
+validation with the installed package validator, preserving the handoff unchanged:
+
+`sdd-codegraph validate-result - --agent <agent_name> --runtime codex`
+
+An invalid document, mismatched role/runtime, missing gate decision, or broken
+reference is a failed handoff. Do not interpret it as a pass and do not continue
+to a dependent stage. Ask the same review agent to emit a corrected envelope.
+After validation, the main session may render a concise human-readable summary;
+the JSON remains the canonical handoff.
+
 ## Strategy Options
 
 - `INLINE`

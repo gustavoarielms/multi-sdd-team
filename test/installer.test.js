@@ -59,6 +59,33 @@ test("Pi and Codex expose the same governed agent roles", async () => {
   assert.deepEqual(codexNames.sort(), expected);
 });
 
+test("Pi and Codex review gates require pure governance JSON", async () => {
+  const root = new URL("../", import.meta.url);
+  const reviewAgents = [
+    ["architecture-reviewer", "architecture_reviewer", "architecture"],
+    ["tester-reviewer", "tester_reviewer", "quality"],
+    ["hacker", "hacker", "security"],
+  ];
+
+  for (const [fileName, role, gateType] of reviewAgents) {
+    const piPrompt = await fs.readFile(new URL(`agents/${fileName}.md`, root), "utf8");
+    const codexPrompt = await fs.readFile(new URL(`codex/agents/${fileName}.toml`, root), "utf8");
+    for (const content of [piPrompt, codexPrompt]) {
+      assert.match(content, /exactamente un objeto JSON/);
+      assert.match(content, /sin Markdown/);
+      assert.match(content, new RegExp(`producer\\.role.{0,10}${role}`));
+      assert.match(content, new RegExp(`gate_type.{0,10}${gateType}`));
+    }
+    assert.match(piPrompt, /producer\.runtime.{0,10}pi/);
+    assert.match(codexPrompt, /producer\.runtime.{0,10}codex/);
+  }
+
+  const runtime = await fs.readFile(new URL("extensions/multi-team-sdd/subagent-tool.ts", root), "utf8");
+  assert.match(runtime, /isStructuredReviewAgent\(agent\.name\)/);
+  assert.match(runtime, /validateAgentResultText/);
+  assert.match(runtime, /expectedRuntime: "pi"/);
+});
+
 test("pipeline routes review remediation through implementer and architecture revalidation", async () => {
   const pipeline = JSON.parse(await fs.readFile(new URL("../codex/pipeline.json", import.meta.url), "utf8"));
   const sdd = pipeline.strategies.SDD_SUBAGENTS.sequence;
@@ -108,11 +135,16 @@ test("installProject is idempotent and preserves project-specific content", asyn
     path.join(project, ".codex", "agents", "architecture-reviewer.toml"),
     "utf8",
   );
+  const agentResultSchema = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "governance", "schemas", "v1", "agent-result.schema.json"),
+    "utf8",
+  ));
   const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
   assert.match(agents, /<!-- multi-sdd-team: begin -->/);
   assert.match(architectureReviewer, /name = "architecture_reviewer"/);
+  assert.equal(agentResultSchema.title, "Governance Agent Result v1");
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);

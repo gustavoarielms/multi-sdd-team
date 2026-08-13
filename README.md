@@ -111,6 +111,7 @@ Install both global and project config:
 The Codex setup installs:
 
 - `~/.codex/agents/*.toml` or `<project>/.codex/agents/*.toml`
+- governance v1 schemas under the matching `.codex/governance/schemas/v1/` directory
 - `pipeline.json`
 - `AGENTS.md` instructions with a managed `multi-sdd-team` block
 - `service_tier = "fast"` and `[features].fast_mode = true`
@@ -154,6 +155,14 @@ examples, negative cases, and referential integrity with:
 
 ```bash
 npm run check:governance
+```
+
+Architecture, quality, and security reviewers emit pure JSON. Pi validates
+those handoffs automatically. For Codex or CI, validate a handoff before using
+it:
+
+```bash
+sdd-codegraph validate-result result.json --agent architecture_reviewer --runtime codex
 ```
 
 ## License

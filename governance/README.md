@@ -5,7 +5,8 @@
 - Contract version: `1.0.0`
 - Schema dialect: [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
 - Validator used by this repository: Ajv 8 in strict mode
-- Runtime emission, persistence, rule catalog, and dashboard integration: not implemented yet
+- Structured emission and handoff validation: implemented for architecture, quality, and security review gates
+- Persistence, rule catalog, metrics, and dashboard integration: not implemented yet
 
 ## Purpose
 
@@ -72,8 +73,8 @@ that could leak sensitive data.
 
 ## Referential integrity
 
-JSON Schema validates individual document structure. Repository tests add the
-cross-document rules that JSON Schema alone cannot express conveniently:
+JSON Schema validates individual document structure. The runtime validator adds
+the cross-document rules that JSON Schema alone cannot express conveniently:
 
 - every referenced evidence and finding exists in the execution envelope;
 - blocking findings belong to the gate's finding set;
@@ -87,6 +88,29 @@ Run:
 npm run check:governance
 ```
 
+Validate an agent handoff from a file or stdin:
+
+```bash
+sdd-codegraph validate-result result.json --agent architecture_reviewer --runtime codex
+sdd-codegraph validate-result - --agent tester_reviewer --runtime codex
+```
+
+The parser accepts exactly one JSON object. Markdown fences and surrounding
+prose fail closed. Validation errors describe only the failed constraint and do
+not echo rejected values.
+
+## Runtime enforcement
+
+- Pi automatically validates the final output of `architecture-reviewer`,
+  `tester-reviewer`, and `hacker` before the subagent tool accepts the handoff.
+- Codex agent configuration supplies the JSON-only contract, while the main
+  session policy requires the deterministic CLI validator before accepting a
+  review handoff.
+- Project and global Codex installers copy the v1 schemas under
+  `.codex/governance/schemas/v1/` or `$CODEX_HOME/governance/schemas/v1/`.
+- The main session may render a human-readable summary only after validation;
+  the validated JSON remains canonical.
+
 ## Versioning
 
 - Compatible additions use a new `1.x` contract version while retaining the v1 directory.
@@ -96,6 +120,6 @@ npm run check:governance
 
 ## Next integration step
 
-The next phase will make review agents emit this envelope, validate it before a
-handoff is accepted, and fail closed when required structured output is invalid.
-Persistence and dashboard metrics remain separate later phases.
+The next phase will define the approved rule catalog and connect deterministic
+checks to stable rule IDs. Persistence, trend metrics, and the dashboard remain
+separate later phases.

@@ -11,7 +11,8 @@
     "The orchestrator must not inspect, scaffold, implement, or validate locally while subagents are running unless the user explicitly authorizes parallel local work.",
     "Demo-fast mode: run agents in fast mode and skip hacker by default.",
     "Review findings return to the implementer, then deterministic checks and the originating gate run again.",
-    "Architecture rules and exceptions require approval by the user or a designated human authority."
+    "Architecture rules and exceptions require approval by the user or a designated human authority.",
+    "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues."
   ],
   "strategies": {
     "INLINE": {
@@ -180,6 +181,8 @@
     "In demo-fast mode, skip hacker unless explicitly requested by the user or required by sensitive security scope.",
     "The main session never fixes review findings while acting as orchestrator; route them to implementer and revalidate.",
     "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",
+    "Reject any architecture_reviewer, tester_reviewer, or hacker handoff that is not valid agent-result JSON for the expected role and runtime.",
+    "Never treat invalid structured review output as a passing gate or continue to a dependent stage.",
     "If a dependency is optional and skipped, note why it was skipped before continuing."
   ]
 }

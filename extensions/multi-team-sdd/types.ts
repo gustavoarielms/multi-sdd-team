@@ -50,6 +50,7 @@ export interface SingleResult {
   model?: string;
   stopReason?: string;
   errorMessage?: string;
+  governanceResult?: Record<string, unknown>;
   step?: number;
 }
 

@@ -9,6 +9,7 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Container, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { isStructuredReviewAgent, validateAgentResultText } from "../../src/governance-validator.js";
 import { discoverAgents } from "./agent-registry.js";
 import { getRuntimeState } from "./state.js";
 import type { AgentConfig, AgentScope, SecurityMode, SingleResult, SubagentDetails, UsageStats } from "./types.js";
@@ -19,6 +20,7 @@ const MAX_DEPTH = 2;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const childGuardrailsExtensionPath = path.resolve(here, "./child-guardrails.ts");
+const governanceSchemaPath = path.resolve(here, "../../governance/schemas/v1/agent-result.schema.json");
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
@@ -150,7 +152,10 @@ async function runSingleAgent(
 
   try {
     if (agent.systemPrompt.trim()) {
-      const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
+      const governanceContext = isStructuredReviewAgent(agent.name)
+        ? `\n\nBefore producing your final response, read and follow the governance schema at: ${governanceSchemaPath}`
+        : "";
+      const tmp = await writePromptToTempFile(agent.name, `${agent.systemPrompt}${governanceContext}`);
       tmpPromptDir = tmp.dir;
       tmpPromptPath = tmp.filePath;
       args.push("--append-system-prompt", tmpPromptPath);
@@ -252,6 +257,26 @@ async function runSingleAgent(
 
     currentResult.exitCode = exitCode;
     if (wasAborted) throw new Error("Subagent was aborted");
+
+    if (exitCode === 0 && isStructuredReviewAgent(agent.name)) {
+      try {
+        const validation = await validateAgentResultText(getFinalOutput(currentResult.messages as Message[]), {
+          expectedAgent: agent.name,
+          expectedRuntime: "pi",
+        });
+        if (validation.ok) {
+          currentResult.governanceResult = validation.value;
+        } else {
+          currentResult.exitCode = 1;
+          currentResult.stopReason = "error";
+          currentResult.errorMessage = `Invalid governance result: ${validation.errors.join("; ")}`;
+        }
+      } catch {
+        currentResult.exitCode = 1;
+        currentResult.stopReason = "error";
+        currentResult.errorMessage = "Governance result validation could not run.";
+      }
+    }
 
     return currentResult;
   } finally {
