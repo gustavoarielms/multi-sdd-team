@@ -19,12 +19,19 @@ async function temporaryProject() {
 
 test("package is configured for public MIT publication", async () => {
   const packagePath = new URL("../package.json", import.meta.url);
+  const lockPath = new URL("../package-lock.json", import.meta.url);
   const metadata = JSON.parse(await fs.readFile(packagePath, "utf8"));
+  const lock = JSON.parse(await fs.readFile(lockPath, "utf8"));
   assert.equal("private" in metadata, false);
   assert.equal(metadata.license, "MIT");
   assert.equal(metadata.publishConfig.access, "public");
-  assert.equal("prepublishOnly" in metadata.scripts, false);
-  assert.equal(metadata.version, "0.2.0");
+  for (const hook of ["prepublish", "prepare", "prepublishOnly", "prepack", "postpack", "publish", "postpublish"]) {
+    assert.equal(hook in metadata.scripts, false, `unexpected publication lifecycle hook: ${hook}`);
+  }
+  assert.equal(metadata.version, "0.3.0");
+  assert.equal(lock.version, metadata.version);
+  assert.equal(lock.packages[""].version, metadata.version);
+  assert.equal(metadata.engines.node, ">=22.14.0");
   assert.deepEqual(metadata.files, [
     "README.md",
     "NOTICE.md",
@@ -48,6 +55,99 @@ test("package is configured for public MIT publication", async () => {
     "governance",
     "cli",
   ]);
+});
+
+test("README publication status does not embed a release version", async () => {
+  const readme = await fs.readFile(new URL("../README.md", import.meta.url), "utf8");
+  const lines = readme.split("\n");
+  const statusLine = lines.findIndex((line) => line.includes("Publication status:"));
+  assert.notEqual(statusLine, -1);
+  const publicationStatus = lines.slice(statusLine, statusLine + 3).join("\n");
+  assert.match(publicationStatus, /@gustavoarielms\/sdd-codegraph-cli/);
+  assert.doesNotMatch(publicationStatus, /\b\d+\.\d+\.\d+\b/);
+});
+
+test("publish workflow requires npm 11.5.1 or newer", async () => {
+  const workflow = await fs.readFile(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8");
+  const guard = workflow.match(/node -e '([^'\n]+)' "\$npm_version"/);
+  assert.ok(guard, "missing executable npm version guard");
+
+  for (const version of ["11.5.1", "11.17.0"]) {
+    const result = spawnSync(process.execPath, ["-e", guard[1], version]);
+    assert.equal(result.status, 0, `expected npm ${version} to be accepted`);
+  }
+
+  const belowMinimum = spawnSync(process.execPath, ["-e", guard[1], "11.5.0"]);
+  assert.notEqual(belowMinimum.status, 0, "expected npm 11.5.0 to be rejected");
+});
+
+test("publish workflow ignores lifecycle scripts for install, pack, and publish", async () => {
+  const workflow = await fs.readFile(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8");
+  const runCommands = [...workflow.matchAll(/^\s+- run: (.+)$/gm)].map((match) => match[1]);
+
+  for (const command of [
+    "npm ci --ignore-scripts",
+    "npm pack --dry-run --json --ignore-scripts",
+    "npm publish --ignore-scripts",
+  ]) {
+    assert.ok(runCommands.includes(command), `missing fail-closed publish command: ${command}`);
+  }
+});
+
+test("npm package contains only the supported Codex distribution", async (context) => {
+  const npmCache = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-codegraph-npm-cache-"));
+  context.after(() => fs.rm(npmCache, { recursive: true, force: true }));
+
+  const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+    cwd: new URL("../", import.meta.url).pathname,
+    encoding: "utf8",
+    env: { ...process.env, NPM_CONFIG_CACHE: npmCache },
+  });
+  const [pack] = JSON.parse(output);
+  const paths = pack.files.map((file) => file.path).sort();
+  const expected = [
+    "LICENSE",
+    "NOTICE.md",
+    "README.md",
+    "bin/sdd-codegraph.js",
+    "codex/AGENTS.md",
+    "codex/agents/architecture-reviewer.toml",
+    "codex/agents/documentator.toml",
+    "codex/agents/explorer.toml",
+    "codex/agents/hacker.toml",
+    "codex/agents/implementer.toml",
+    "codex/agents/orchestrator.toml",
+    "codex/agents/planner.toml",
+    "codex/agents/tester-reviewer.toml",
+    "codex/pipeline.json",
+    "docs/agent-governance-responsibility-map.md",
+    "governance/README.md",
+    "governance/checks/v1/registry.json",
+    "governance/examples/v1/active-rule-exception.json",
+    "governance/examples/v1/approved-architecture-rule.json",
+    "governance/examples/v1/architecture-review-result.json",
+    "governance/examples/v1/governance-check-result.json",
+    "governance/rules/v1/catalog.json",
+    "governance/schemas/v1/agent-result.schema.json",
+    "governance/schemas/v1/check-registry.schema.json",
+    "governance/schemas/v1/common.schema.json",
+    "governance/schemas/v1/evidence.schema.json",
+    "governance/schemas/v1/exception.schema.json",
+    "governance/schemas/v1/finding.schema.json",
+    "governance/schemas/v1/gate-decision.schema.json",
+    "governance/schemas/v1/governance-check-result.schema.json",
+    "governance/schemas/v1/rule-catalog.schema.json",
+    "governance/schemas/v1/rule.schema.json",
+    "package.json",
+    "setup.sh",
+    "src/governance-checks.js",
+    "src/governance-trust.js",
+    "src/governance-validator.d.ts",
+    "src/governance-validator.js",
+    "src/installer.js",
+  ].sort();
+
+  assert.deepEqual(paths, expected);
 });
 
 test("package source contains only the Codex runtime surface", async () => {
@@ -176,7 +276,7 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.equal(registry.checks[0].check_id, "governance_catalog_integrity");
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.3.0");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);
 });
 

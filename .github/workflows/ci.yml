@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - 22.14.0
+          - 24.19.0
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run check
+
+  policy-and-package:
+    name: Policy and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run governance
+      - run: npm audit --omit=dev
+      - name: Check source syntax
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(git ls-files -z '*.js')
+          bash -n setup.sh
+      - name: Validate JSON and TOML
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import tomllib
+
+          root = Path(".")
+          json_files = sorted(path for path in root.rglob("*.json") if ".git" not in path.parts and "node_modules" not in path.parts)
+          toml_files = sorted(path for path in root.rglob("*.toml") if ".git" not in path.parts and "node_modules" not in path.parts)
+          for path in json_files:
+              json.loads(path.read_text())
+          for path in toml_files:
+              tomllib.loads(path.read_text())
+          print(f"Validated {len(json_files)} JSON and {len(toml_files)} TOML files.")
+          PY
+      - run: git diff --check
+      - run: npm pack --dry-run --json
+      - name: Reject retired runtime surface
+        shell: bash
+        run: |
+          runtime="p""i"
+          child="P""I_SUBAGENT_CHILD"
+          vendor="@mario""zechner"
+          pattern="(^|[^[:alnum:]_])${runtime}([^[:alnum:]_]|$)|${child}|${vendor}|${runtime}\.(extensions|prompts)|(^|/)extensions/|(^|/)agents/.*\.md|(^|/)prompts/"
+          if git grep -nI -i -E "$pattern" -- .; then
+            echo "Retired runtime surface found." >&2
+            exit 1
+          fi
