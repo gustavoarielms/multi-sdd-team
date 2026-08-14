@@ -28,10 +28,13 @@
   "keywords": [
     "codex",
     "codegraph",
-    "derivative",
     "sdd",
+    "software-development",
+    "multi-agent",
     "subagents",
-    "multi-agent"
+    "orchestration",
+    "governance",
+    "cli"
   ],
   "files": [
     "README.md",

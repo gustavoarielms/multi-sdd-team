@@ -37,7 +37,17 @@ test("package is configured for public MIT publication", async () => {
   ]);
   assert.equal("peerDependencies" in metadata, false);
   assert.equal("peerDependenciesMeta" in metadata, false);
-  assert.deepEqual(metadata.keywords, ["codex", "codegraph", "derivative", "sdd", "subagents", "multi-agent"]);
+  assert.deepEqual(metadata.keywords, [
+    "codex",
+    "codegraph",
+    "sdd",
+    "software-development",
+    "multi-agent",
+    "subagents",
+    "orchestration",
+    "governance",
+    "cli",
+  ]);
 });
 
 test("package source contains only the Codex runtime surface", async () => {
