@@ -1,13 +1,13 @@
 {
   "name": "@gustavoarielms/sdd-codegraph-cli",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "CLI for installing Codex multi-agent SDD configuration with optional external CodeGraph integration, derived from ram4-dev/multi-sdd-team",
   "type": "module",
   "bin": {
     "sdd-codegraph": "bin/sdd-codegraph.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.14.0"
   },
   "license": "MIT",
   "author": "rcarnicer (original project)",

@@ -1,0 +1,50 @@
+name: Publish npm
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish npm package
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify release identity and publishing toolchain
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          expected_tag="v$(node -p "require('./package.json').version")"
+          test "$RELEASE_TAG" = "$expected_tag"
+          git fetch --no-tags --depth=1 origin main
+          test "$(git rev-parse HEAD^{commit})" = "$(git rev-parse FETCH_HEAD^{commit})"
+          npm_version="$(npm --version)"
+          node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) process.exit(1)' "$npm_version"
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run governance
+      - run: npm audit --omit=dev
+      - run: git diff --check
+      - run: npm pack --dry-run --json --ignore-scripts
+      - run: npm publish --ignore-scripts

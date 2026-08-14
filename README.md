@@ -3,11 +3,11 @@
 MIT-licensed derivative package for multi-agent orchestration with SDD-aware
 routing and optional integration with the external CodeGraph tool.
 
-> **Publication status:** version `0.1.0` is publicly available as
+> **Publication status:** the package is publicly available as
 > [`@gustavoarielms/sdd-codegraph-cli`](https://www.npmjs.com/package/@gustavoarielms/sdd-codegraph-cli).
 >
 > **Implementation status:** the cross-platform CLI is implemented for Node.js
-> 20 or newer. `setup.sh` provides an explicit Codex-only global or project
+> 22.14.0 or newer. `setup.sh` provides an explicit Codex-only global or project
 > installation path.
 
 ## Origin and attribution
