@@ -7,8 +7,8 @@ routing and optional integration with the external CodeGraph tool.
 > [`@gustavoarielms/sdd-codegraph-cli`](https://www.npmjs.com/package/@gustavoarielms/sdd-codegraph-cli).
 >
 > **Implementation status:** the cross-platform CLI is implemented for Node.js
-> 20 or newer. The existing `setup.sh` installer remains available for backward
-> compatibility.
+> 20 or newer. `setup.sh` provides an explicit Codex-only global or project
+> installation path.
 
 ## Origin and attribution
 
@@ -59,11 +59,11 @@ npx @gustavoarielms/sdd-codegraph-cli check-governance
 The target path defaults to the current working directory. CodeGraph must be
 installed separately and available in `PATH`.
 
-## Includes
+## Codex runtime
 
-- Orchestrator policy injected into system prompt
-- `subagent` tool with `single`, `parallel`, and `chain` modes
-- Specialized agents:
+- Managed orchestrator policy in `AGENTS.md`
+- Native Codex multi-agent strategies declared in `pipeline.json`
+- Specialized Codex agents:
   - `orchestrator`
   - `explorer`
   - `documentator`
@@ -72,44 +72,27 @@ installed separately and available in `PATH`.
   - `implementer`
   - `tester-reviewer`
   - `hacker`
-- Horizontal subagent cards widget on startup (name + short description + color)
-- Commands:
-  - `/subagents`
-  - `/orchestrator-status`
-  - `/security-mode passive|active`
-
-## Install (local path)
-
-```bash
-pi install /absolute/path/to/multi-team-sdd
-```
-
-Temporary run:
-
-```bash
-pi -e /absolute/path/to/multi-team-sdd
-```
 
 ## Setup Codex
 
-This repo also ships Codex-native agent configuration.
+This repository supports Codex-native agent configuration only.
 
 Install globally:
 
 ```bash
-./setup.sh codex --global
+./setup.sh --global
 ```
 
 Install into a specific project:
 
 ```bash
-./setup.sh codex --project /absolute/path/to/project
+./setup.sh --project /absolute/path/to/project
 ```
 
 Install both global and project config:
 
 ```bash
-./setup.sh codex --global --project /absolute/path/to/project
+./setup.sh --global --project /absolute/path/to/project
 ```
 
 The Codex setup installs:
@@ -131,28 +114,24 @@ Codex demo-fast behavior:
 
 ## Quick usage
 
-- Ask normally; the orchestrator policy is injected automatically.
-- Force delegation explicitly with tool usage, for example:
+- Ask normally; the main session follows the managed orchestrator policy.
+- Request delegation explicitly with native Codex agent tools, for example:
   - single: explorer
   - chain: explorer -> planner -> implementer -> tester-reviewer
-- Show active catalog: `/subagents`
-- Check mode/status: `/orchestrator-status`
-- Change security mode: `/security-mode passive|active`
 
 ## Notes
 
 - `documentator` is constrained to `./docs/**` write/edit operations.
 - `architecture-reviewer` is report-only and cannot approve new architecture policy or exceptions.
 - `tester-reviewer` is report-only in v1.
-- `hacker` supports passive and active modes. Active mode allows high-risk commands and requires explicit opt-in (`/security-mode active`).
-- Startup UI renders horizontal cards with each specialized subagent (name + short description + role color).
+- `hacker` is passive by default. Intrusive or high-risk validation requires explicit human authorization.
 
 ## Governance baseline
 
 [`docs/agent-governance-responsibility-map.md`](docs/agent-governance-responsibility-map.md)
 defines the approved responsibility and authority model used to derive agent
-prompts, pipeline policy, parity tests, and enforcement contracts. It is a
-design source, not a file automatically loaded by Pi, Codex, or CI.
+prompts, pipeline policy, catalog tests, and enforcement contracts. It is a
+design source, not a file automatically loaded by Codex or CI.
 
 The versioned machine-readable contract is documented in
 [`governance/README.md`](governance/README.md). Validate its modular JSON Schemas,
@@ -163,12 +142,11 @@ npm run check:governance
 npm run governance
 ```
 
-Architecture, quality, and security reviewers emit pure JSON. Pi validates
-those handoffs automatically. For Codex or CI, validate a handoff before using
-it:
+Architecture, quality, and security reviewers emit pure JSON. Validate every
+handoff before using it:
 
 ```bash
-sdd-codegraph validate-result result.json --agent architecture_reviewer --runtime codex
+sdd-codegraph validate-result result.json --agent architecture_reviewer
 ```
 
 ## License

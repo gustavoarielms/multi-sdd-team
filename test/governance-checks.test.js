@@ -13,7 +13,7 @@ const cli = new URL("../bin/sdd-codegraph.js", import.meta.url);
 
 async function copyRepositoryFixture() {
   const target = await fs.mkdtemp(path.join(os.tmpdir(), "governance-checks-test-"));
-  for (const relative of ["agents", "codex", "extensions", "governance", "src"]) {
+  for (const relative of ["codex", "governance", "src"]) {
     await fs.cp(path.join(repositoryRoot, relative), path.join(target, relative), { recursive: true });
   }
   return target;
@@ -108,17 +108,17 @@ test("pipeline governance rejects missing mandatory stages and dependencies", as
   }
 });
 
-test("reviewer report-only governance rejects Pi write tools and conditional Codex write exceptions", async (context) => {
-  const piWrite = await copyRepositoryFixture();
+test("reviewer report-only governance rejects Codex write capability and conditional exceptions", async (context) => {
+  const writableSandbox = await copyRepositoryFixture();
   const codexException = await copyRepositoryFixture();
   context.after(() => Promise.all([
-    fs.rm(piWrite, { recursive: true, force: true }),
+    fs.rm(writableSandbox, { recursive: true, force: true }),
     fs.rm(codexException, { recursive: true, force: true }),
   ]));
 
-  const piPath = path.join(piWrite, "agents", "hacker.md");
-  const pi = await fs.readFile(piPath, "utf8");
-  await fs.writeFile(piPath, pi.replace("tools: read, grep, find, ls", "tools: read, grep, find, ls, write"), "utf8");
+  const sandboxPath = path.join(writableSandbox, "codex", "agents", "hacker.toml");
+  const sandbox = await fs.readFile(sandboxPath, "utf8");
+  await fs.writeFile(sandboxPath, sandbox.replace('sandbox_mode = "read-only"', 'sandbox_mode = "workspace-write"'), "utf8");
 
   const codexPath = path.join(codexException, "codex", "agents", "hacker.toml");
   const codex = await fs.readFile(codexPath, "utf8");
@@ -127,10 +127,82 @@ test("reviewer report-only governance rejects Pi write tools and conditional Cod
     "Reglas:\n- Podés modificar archivos si el agente padre te reasigna.",
   ), "utf8");
 
-  for (const fixture of [piWrite, codexException]) {
+  for (const fixture of [writableSandbox, codexException]) {
     const result = await runGovernanceChecks(fixture);
     assert.equal(
       result.document.results.find((check) => check.check_id === "reviewer_report_only").status,
+      "fail",
+    );
+  }
+});
+
+test("Codex role catalog governance rejects missing or undeclared roles", async (context) => {
+  const missing = await copyRepositoryFixture();
+  const undeclared = await copyRepositoryFixture();
+  context.after(() => Promise.all([
+    fs.rm(missing, { recursive: true, force: true }),
+    fs.rm(undeclared, { recursive: true, force: true }),
+  ]));
+
+  await fs.rm(path.join(missing, "codex", "agents", "planner.toml"));
+  const plannerPath = path.join(undeclared, "codex", "agents", "planner.toml");
+  const planner = await fs.readFile(plannerPath, "utf8");
+  await fs.writeFile(plannerPath, planner.replace('name = "planner"', 'name = ""'), "utf8");
+
+  for (const fixture of [missing, undeclared]) {
+    const result = await runGovernanceChecks(fixture);
+    assert.equal(result.blocking, true);
+    assert.equal(
+      result.document.results.find((check) => check.check_id === "codex_role_catalog").status,
+      "fail",
+    );
+  }
+});
+
+test("review handoff governance rejects a stale runtime selector in the installed policy", async (context) => {
+  const fixture = await copyRepositoryFixture();
+  context.after(() => fs.rm(fixture, { recursive: true, force: true }));
+  const policyPath = path.join(fixture, "codex", "AGENTS.md");
+  const policy = await fs.readFile(policyPath, "utf8");
+  await fs.writeFile(
+    policyPath,
+    policy.replace("validate-result - --agent <agent_name>", "validate-result - --agent <agent_name> --runtime codex"),
+    "utf8",
+  );
+
+  const result = await runGovernanceChecks(fixture);
+  assert.equal(result.blocking, true);
+  assert.equal(
+    result.document.results.find((check) => check.check_id === "review_handoff_contract").status,
+    "fail",
+  );
+});
+
+test("project and global governance validate the active managed policy", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "governance-active-policy-"));
+  const project = path.join(root, "project");
+  const globalCodex = path.join(root, "global-codex");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  await installProject(project);
+  const globalSetup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "--global"], {
+    encoding: "utf8",
+    env: { ...process.env, CODEX_HOME: globalCodex },
+  });
+  assert.equal(globalSetup.status, 0, globalSetup.stderr);
+
+  for (const target of [project, globalCodex]) {
+    const policyPath = path.join(target, "AGENTS.md");
+    const policy = await fs.readFile(policyPath, "utf8");
+    await fs.writeFile(
+      policyPath,
+      policy.replace("validate-result - --agent <agent_name>", "validate-result - --agent <agent_name> --runtime codex"),
+      "utf8",
+    );
+    const result = await runGovernanceChecks(target);
+    assert.equal(result.blocking, true);
+    assert.equal(
+      result.document.results.find((check) => check.check_id === "review_handoff_contract").status,
       "fail",
     );
   }
@@ -210,11 +282,11 @@ test("check-governance passes for Node and shell project installations", async (
   context.after(() => fs.rm(root, { recursive: true, force: true }));
 
   await installProject(nodeProject);
-  const setup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "codex", "--project", shellProject], {
+  const setup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "--project", shellProject], {
     encoding: "utf8",
   });
   assert.equal(setup.status, 0, setup.stderr);
-  const globalSetup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "codex", "--global"], {
+  const globalSetup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "--global"], {
     encoding: "utf8",
     env: { ...process.env, CODEX_HOME: globalCodex },
   });
@@ -253,7 +325,7 @@ test("source, project, and global layouts reject governance symlink escapes", as
   ]));
 
   await installProject(project);
-  const setup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "codex", "--global"], {
+  const setup = spawnSync("bash", [path.join(repositoryRoot, "setup.sh"), "--global"], {
     encoding: "utf8",
     env: { ...process.env, CODEX_HOME: globalCodex },
   });

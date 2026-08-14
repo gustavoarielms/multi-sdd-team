@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,13 +24,40 @@ test("package is configured for public MIT publication", async () => {
   assert.equal(metadata.license, "MIT");
   assert.equal(metadata.publishConfig.access, "public");
   assert.equal("prepublishOnly" in metadata.scripts, false);
-  assert.ok(metadata.files.includes("governance"));
+  assert.equal(metadata.version, "0.2.0");
+  assert.deepEqual(metadata.files, [
+    "README.md",
+    "NOTICE.md",
+    "bin",
+    "docs",
+    "codex",
+    "governance",
+    "src",
+    "setup.sh",
+  ]);
+  assert.equal("peerDependencies" in metadata, false);
+  assert.equal("peerDependenciesMeta" in metadata, false);
+  assert.deepEqual(metadata.keywords, [
+    "codex",
+    "codegraph",
+    "sdd",
+    "software-development",
+    "multi-agent",
+    "subagents",
+    "orchestration",
+    "governance",
+    "cli",
+  ]);
 });
 
-test("Pi and Codex expose the same governed agent roles", async () => {
+test("package source contains only the Codex runtime surface", async () => {
+  for (const relative of ["agents", "extensions", "prompts"]) {
+    await assert.rejects(fs.access(new URL(`../${relative}/`, import.meta.url)), { code: "ENOENT" });
+  }
+});
+
+test("Codex exposes the complete governed agent catalog", async () => {
   const root = new URL("../", import.meta.url);
-  const piAgentFiles = (await fs.readdir(new URL("agents/", root)))
-    .filter((name) => name.endsWith(".md"));
   const codexAgentFiles = (await fs.readdir(new URL("codex/agents/", root)))
     .filter((name) => name.endsWith(".toml"));
 
@@ -43,7 +70,6 @@ test("Pi and Codex expose the same governed agent roles", async () => {
     }),
   );
 
-  const piNames = await readDeclaredNames("agents", piAgentFiles, /^name:\s*([^\s]+)$/m);
   const codexNames = await readDeclaredNames("codex/agents", codexAgentFiles, /^name\s*=\s*"([^"]+)"$/m);
   const expected = [
     "architecture_reviewer",
@@ -56,11 +82,10 @@ test("Pi and Codex expose the same governed agent roles", async () => {
     "tester_reviewer",
   ];
 
-  assert.deepEqual(piNames.sort(), expected);
   assert.deepEqual(codexNames.sort(), expected);
 });
 
-test("Pi and Codex review gates require pure governance JSON", async () => {
+test("Codex review gates require pure governance JSON", async () => {
   const root = new URL("../", import.meta.url);
   const reviewAgents = [
     ["architecture-reviewer", "architecture_reviewer", "architecture"],
@@ -69,22 +94,13 @@ test("Pi and Codex review gates require pure governance JSON", async () => {
   ];
 
   for (const [fileName, role, gateType] of reviewAgents) {
-    const piPrompt = await fs.readFile(new URL(`agents/${fileName}.md`, root), "utf8");
     const codexPrompt = await fs.readFile(new URL(`codex/agents/${fileName}.toml`, root), "utf8");
-    for (const content of [piPrompt, codexPrompt]) {
-      assert.match(content, /exactamente un objeto JSON/);
-      assert.match(content, /sin Markdown/);
-      assert.match(content, new RegExp(`producer\\.role.{0,10}${role}`));
-      assert.match(content, new RegExp(`gate_type.{0,10}${gateType}`));
-    }
-    assert.match(piPrompt, /producer\.runtime.{0,10}pi/);
+    assert.match(codexPrompt, /exactamente un objeto JSON/);
+    assert.match(codexPrompt, /sin Markdown/);
+    assert.match(codexPrompt, new RegExp(`producer\\.role.{0,10}${role}`));
+    assert.match(codexPrompt, new RegExp(`gate_type.{0,10}${gateType}`));
     assert.match(codexPrompt, /producer\.runtime.{0,10}codex/);
   }
-
-  const runtime = await fs.readFile(new URL("extensions/multi-team-sdd/subagent-tool.ts", root), "utf8");
-  assert.match(runtime, /isStructuredReviewAgent\(agent\.name\)/);
-  assert.match(runtime, /validateAgentResultText/);
-  assert.match(runtime, /expectedRuntime: "pi"/);
 });
 
 test("pipeline routes review remediation through implementer and architecture revalidation", async () => {
@@ -152,13 +168,39 @@ test("installProject is idempotent and preserves project-specific content", asyn
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
   assert.match(agents, /<!-- multi-sdd-team: begin -->/);
+  assert.match(agents, /sdd-codegraph validate-result - --agent <agent_name>/);
+  assert.doesNotMatch(agents, /validate-result[^\n]*--runtime/);
   assert.match(architectureReviewer, /name = "architecture_reviewer"/);
   assert.equal(agentResultSchema.title, "Governance Agent Result v1");
   assert.equal(catalog.rules[0].rule_id, "GOV-CATALOG-INTEGRITY-001");
   assert.equal(registry.checks[0].check_id, "governance_catalog_integrity");
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
+  assert.equal(manifest.version, "0.2.0");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);
+});
+
+test("installProject rejects managed directory, file, and broken symlinks", async (context) => {
+  const root = await temporaryProject();
+  const external = path.join(root, "external");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(external);
+
+  const cases = [
+    ["directory", ".codex", external],
+    ["file", "AGENTS.md", path.join(external, "agents.md")],
+    ["broken", "pipeline.json", path.join(external, "missing.json")],
+  ];
+  await fs.writeFile(path.join(external, "agents.md"), "sentinel\n", "utf8");
+  for (const [name, managedPath, linkTarget] of cases) {
+    const project = path.join(root, name);
+    await fs.mkdir(project);
+    await fs.symlink(linkTarget, path.join(project, managedPath));
+    await assert.rejects(installProject(project), /managed path contains a symbolic link/i);
+  }
+
+  assert.equal(await fs.readFile(path.join(external, "agents.md"), "utf8"), "sentinel\n");
+  assert.deepEqual(await fs.readdir(external), ["agents.md"]);
 });
 
 test("shell project and global installers copy equivalent governance contracts", async (context) => {
@@ -167,7 +209,7 @@ test("shell project and global installers copy equivalent governance contracts",
   const codexHome = path.join(root, "global-codex");
   context.after(() => fs.rm(root, { recursive: true, force: true }));
 
-  execFileSync("bash", [new URL("../setup.sh", import.meta.url).pathname, "codex", "--global", "--project", project], {
+  execFileSync("bash", [new URL("../setup.sh", import.meta.url).pathname, "--global", "--project", project], {
     env: { ...process.env, CODEX_HOME: codexHome },
   });
 
@@ -181,6 +223,58 @@ test("shell project and global installers copy equivalent governance contracts",
     const projectContent = await fs.readFile(path.join(project, ".codex", "governance", relative), "utf8");
     assert.equal(projectContent, globalContent, relative);
   }
+});
+
+test("shell installers reject managed symlinks without writing outside their roots", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  const codexHome = path.join(root, "global-codex");
+  const externalProject = path.join(root, "external-project.md");
+  const externalGlobal = path.join(root, "external-global.json");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(project);
+  await fs.mkdir(codexHome);
+  await fs.writeFile(externalProject, "project sentinel\n", "utf8");
+  await fs.writeFile(externalGlobal, "global sentinel\n", "utf8");
+  await fs.symlink(externalProject, path.join(project, "AGENTS.md"));
+  await fs.symlink(externalGlobal, path.join(codexHome, "pipeline.json"));
+
+  const projectSetup = spawnSync("bash", [
+    new URL("../setup.sh", import.meta.url).pathname,
+    "--project",
+    project,
+  ], { encoding: "utf8" });
+  const globalSetup = spawnSync("bash", [
+    new URL("../setup.sh", import.meta.url).pathname,
+    "--global",
+  ], { encoding: "utf8", env: { ...process.env, CODEX_HOME: codexHome } });
+
+  assert.equal(projectSetup.status, 1);
+  assert.match(projectSetup.stderr, /managed path contains a symbolic link/i);
+  assert.equal(globalSetup.status, 1);
+  assert.match(globalSetup.stderr, /managed path contains a symbolic link/i);
+  assert.equal(await fs.readFile(externalProject, "utf8"), "project sentinel\n");
+  assert.equal(await fs.readFile(externalGlobal, "utf8"), "global sentinel\n");
+});
+
+test("shell setup rejects the removed target selector", () => {
+  const execution = spawnSync("bash", [new URL("../setup.sh", import.meta.url).pathname, "codex", "--global"], {
+    encoding: "utf8",
+  });
+  assert.equal(execution.status, 1);
+  assert.match(execution.stderr, /Unknown setup option/);
+});
+
+test("shell setup requires an explicit installation scope", async (context) => {
+  const codexHome = await temporaryProject();
+  context.after(() => fs.rm(codexHome, { recursive: true, force: true }));
+  const execution = spawnSync("bash", [new URL("../setup.sh", import.meta.url).pathname], {
+    encoding: "utf8",
+    env: { ...process.env, CODEX_HOME: codexHome },
+  });
+  assert.equal(execution.status, 1);
+  assert.match(execution.stderr, /Usage:/);
+  assert.deepEqual(await fs.readdir(codexHome), []);
 });
 
 test("checkProjectFiles reports managed drift", async (context) => {

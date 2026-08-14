@@ -74,7 +74,7 @@ export async function validateGovernanceDocument(schemaName, value) {
   return validator.validate(schemaName, value);
 }
 
-function validateAgentResultIntegrity(result, expectedAgent, expectedRuntime) {
+function validateAgentResultIntegrity(result, expectedAgent) {
   const errors = [];
   const evidenceIds = new Set();
   const findingIds = new Set();
@@ -86,10 +86,6 @@ function validateAgentResultIntegrity(result, expectedAgent, expectedRuntime) {
   }
   if (normalizedAgent && normalizeAgentName(result.producer.id) !== normalizedAgent) {
     errors.push("producer identifier does not match the expected agent");
-  }
-
-  if (expectedRuntime && result.producer.runtime !== expectedRuntime) {
-    errors.push("producer runtime does not match the expected runtime");
   }
 
   if (normalizedAgent && reviewGateTypes.has(normalizedAgent) && result.gate_decisions.length !== 1) {
@@ -143,6 +139,13 @@ function validateAgentResultIntegrity(result, expectedAgent, expectedRuntime) {
       for (const evidenceId of finding.evidence_ids) {
         if (!gate.evidence_ids.includes(evidenceId)) errors.push("gate omits finding evidence");
       }
+      const mustBlock = finding.rule_status === "approved"
+        && finding.validation_status === "verified"
+        && finding.status === "open"
+        && finding.recommended_gate_effect === "block";
+      if (mustBlock && !gate.blocking_finding_ids.includes(finding.finding_id)) {
+        errors.push("gate omits an eligible blocking finding");
+      }
     }
     for (const evidenceId of gate.evidence_ids) {
       if (!evidenceIds.has(evidenceId)) errors.push("gate references missing evidence");
@@ -167,11 +170,11 @@ function validateAgentResultIntegrity(result, expectedAgent, expectedRuntime) {
   return errors;
 }
 
-export async function validateAgentResult(value, { expectedAgent, expectedRuntime } = {}) {
+export async function validateAgentResult(value, { expectedAgent } = {}) {
   const structural = await validateGovernanceDocument(agentResultSchemaName, value);
   if (!structural.valid) return { ok: false, errors: structural.errors };
 
-  const errors = validateAgentResultIntegrity(value, expectedAgent, expectedRuntime);
+  const errors = validateAgentResultIntegrity(value, expectedAgent);
   return errors.length === 0
     ? { ok: true, value, errors: [] }
     : { ok: false, errors };
@@ -243,8 +246,7 @@ export async function validateGovernanceCatalog(catalog, registry) {
 
   for (const rule of catalog.rules.filter((candidate) => candidate.status === "approved")) {
     const trusted = APPROVED_GOVERNANCE_RULES[rule.rule_id];
-    if (rule.approval.approved_by.id !== GOVERNANCE_APPROVAL_AUTHORITY.id
-      || rule.approval.reference !== GOVERNANCE_APPROVAL_AUTHORITY.reference) {
+    if (rule.approval.approved_by.id !== GOVERNANCE_APPROVAL_AUTHORITY.id) {
       errors.push("approved rule authority does not match trusted code");
     }
     if (!trusted) {

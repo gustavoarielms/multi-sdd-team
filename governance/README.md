@@ -11,8 +11,8 @@
 
 ## Purpose
 
-These schemas are the runtime-neutral contract for evidence and governance
-results produced by Pi agents, Codex agents, deterministic checks, and human
+These schemas are the shared contract for evidence and governance results
+produced by Codex agents, deterministic checks, and human
 approvals. They translate the responsibility model in
 `docs/agent-governance-responsibility-map.md` into machine-validatable data.
 
@@ -102,8 +102,8 @@ npm run governance
 Validate an agent handoff from a file or stdin:
 
 ```bash
-sdd-codegraph validate-result result.json --agent architecture_reviewer --runtime codex
-sdd-codegraph validate-result - --agent tester_reviewer --runtime codex
+sdd-codegraph validate-result result.json --agent architecture_reviewer
+sdd-codegraph validate-result - --agent tester_reviewer
 ```
 
 The parser accepts exactly one JSON object. Markdown fences and surrounding
@@ -114,7 +114,7 @@ not echo rejected values.
 `governance-check-result` document to stdout. It exits nonzero only when a
 failed result has approved `block` effect; failed `warn` or `none` results stay
 machine-readable without failing the process. The initial checks cover catalog
-integrity, Pi/Codex role parity, reviewer report-only constraints, structured
+integrity, the Codex role catalog, reviewer report-only constraints, structured
 review handoffs, and pipeline dependency ordering with fail-closed policy.
 If the catalog or registry loads as JSON but fails its schema or referential
 integrity, execution stops before registry dispatch and emits one bounded,
@@ -125,20 +125,16 @@ item to carry the same `check_id` as its result.
 The command resolves three layouts: this source checkout, a project installation
 under `.codex/`, and a global Codex home containing `governance/`, `agents/`,
 and `pipeline.json`. Installed layouts use their installed Codex definitions and
-pipeline while Pi parity and runtime validation are checked against the
-canonical definitions shipped by this package. Unknown or incomplete layouts
-fail closed with a bounded machine-readable result.
+pipeline while validation code comes from the executing package. Unknown or
+incomplete layouts fail closed with a bounded machine-readable result.
 
 ## Runtime enforcement
 
-- Pi automatically validates the final output of `architecture-reviewer`,
-  `tester-reviewer`, and `hacker` before the subagent tool accepts the handoff.
-- Pi reviewers consume files and deterministic evidence supplied by the
-  orchestrator. Their runtime tool policy permits only direct inspection tools;
-  shell, write, edit, and unrecognized tools are rejected fail closed.
 - Codex agent configuration supplies the JSON-only contract, while the main
   session policy requires the deterministic CLI validator before accepting a
   review handoff.
+- Codex reviewer sandboxes are read-only and their prompts prohibit implementation
+  ownership or conditional write exceptions.
 - Project and global Codex installers copy the v1 schemas, canonical catalog,
   and check registry under `.codex/governance/` or `$CODEX_HOME/governance/`.
 - The main session may render a human-readable summary only after validation;
@@ -147,9 +143,9 @@ fail closed with a bounded machine-readable result.
 ## Versioning
 
 - Compatible additions use a new `1.x` contract version while retaining the v1 directory.
-- Breaking field or semantic changes require `schemas/v2/` and parallel migration support.
-- Existing stored documents retain the schema version they were validated against.
-- Prompts and runtimes must not emit a new contract version until parity tests cover both Pi and Codex.
+- The v1 envelope shape remains stable; agent producers are fixed to the supported Codex runtime.
+- Unsupported agent-runtime values fail closed. This narrowing is a breaking package-level change.
+- Future breaking field or envelope changes require a new schema directory and an explicit migration decision.
 
 ## Deliberate boundary
 
@@ -160,10 +156,11 @@ Those capabilities remain separate later phases.
 ## Local trust boundary
 
 Approval trust is checker-owned code in `src/governance-trust.js`, not a claim
-made by the catalog being validated. It fixes the human authority and approval
-reference, the exact five check-to-rule implementation bindings, and each
+made by the catalog being validated. It fixes the human authority, the exact
+five check-to-rule implementation bindings, and each
 approved `rule_id` plus version and canonical SHA-256 content digest. Proposed
-rules do not require a trust binding. Changing an approved rule therefore
+rules do not require a trust binding. Each approved rule's digest includes its
+approval reference. Changing an approved rule therefore
 requires both a newly approved catalog change and an explicit trust-code update.
 Installed projects do not copy a second trust file: validation uses the trust
 module shipped with the executing package.

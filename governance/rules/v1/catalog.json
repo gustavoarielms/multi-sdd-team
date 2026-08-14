@@ -23,26 +23,26 @@
     },
     {
       "schema_version": "1.0.0",
-      "rule_id": "GOV-RUNTIME-PARITY-001",
+      "rule_id": "GOV-CODEX-ROLE-CATALOG-001",
       "version": 1,
-      "title": "Pi and Codex must expose equivalent governed roles",
-      "description": "Both supported runtimes must declare the same governed agent roles so orchestration contracts do not drift by runtime.",
+      "title": "Codex must expose the complete governed role catalog",
+      "description": "The supported Codex runtime must declare exactly the eight governed roles required by the canonical orchestration contract.",
       "category": "governance",
       "status": "approved",
       "owner": "governance_gate",
       "default_severity": "high",
-      "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "runtime_role_parity" } },
-      "scope": { "description": "Pi agent declarations and Codex agent templates." },
+      "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "codex_role_catalog" } },
+      "scope": { "description": "Codex agent templates in source, project, and global layouts." },
       "exceptions_allowed": false,
       "source_refs": ["docs/agent-governance-responsibility-map.md", "test/installer.test.js"],
       "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Normalized Pi and Codex role sets."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved while both runtimes remain supported.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "evidence_requirements": ["Normalized Codex role set matched to the canonical governed role inventory."],
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved for the Codex-only governed role catalog.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-REVIEW-REPORTONLY-001",
-      "version": 1,
+      "version": 2,
       "title": "Independent reviewers must remain report-only",
       "description": "Architecture, quality, and security reviewers must not receive write capability or implementation ownership.",
       "category": "governance",
@@ -50,17 +50,17 @@
       "owner": "governance_gate",
       "default_severity": "critical",
       "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "reviewer_report_only" } },
-      "scope": { "description": "Pi and Codex architecture, quality, and security reviewer declarations." },
+      "scope": { "description": "Codex architecture, quality, and security reviewer declarations." },
       "exceptions_allowed": false,
       "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents/tester-reviewer.toml"],
       "responsible_gate": "governance_gate",
       "evidence_requirements": ["Reviewer capability declarations and explicit report-only instructions."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved to preserve independent review ownership.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved to preserve independent Codex review ownership.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-REVIEW-HANDOFF-001",
-      "version": 1,
+      "version": 2,
       "title": "Review handoffs must use the validated governance envelope",
       "description": "Reviewers must emit one pure JSON result with correct role, runtime, gate type, bounded evidence, and referential integrity.",
       "category": "governance",
@@ -68,12 +68,12 @@
       "owner": "governance_gate",
       "default_severity": "high",
       "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "review_handoff_contract" } },
-      "scope": { "description": "Pi and Codex structured review prompts and runtime validation integration." },
+      "scope": { "description": "Codex structured review prompts, schema validation, and fail-closed pipeline integration." },
       "exceptions_allowed": false,
       "source_refs": ["src/governance-validator.js", "governance/schemas/v1/agent-result.schema.json"],
       "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Prompt contract parity and active validator integration."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved to fail closed on invalid independent review handoffs.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "evidence_requirements": ["Codex prompt contracts, schema validation, and fail-closed pipeline integration."],
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved to fail closed on invalid Codex independent review handoffs.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
@@ -132,7 +132,7 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-ROLE-CAPABILITY-001",
-      "version": 1,
+      "version": 2,
       "title": "Role capabilities must match approved ownership",
       "description": "Explorer and planner remain read-only, documentator writes only specifications, implementer owns code changes, and independent reviewers remain report-only.",
       "category": "governance",
@@ -140,12 +140,12 @@
       "owner": "governance_gate",
       "default_severity": "high",
       "enforcement": { "mode": "agent_review", "gate_effect": "block" },
-      "scope": { "description": "Pi and Codex role declarations and capabilities." },
+      "scope": { "description": "Codex role declarations and capabilities." },
       "exceptions_allowed": false,
-      "source_refs": ["docs/DESIGN.md", "docs/agent-governance-responsibility-map.md", "agents", "codex/agents"],
+      "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents"],
       "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Role tools, sandbox, and prompt ownership constraints for both runtimes."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved in the cross-runtime responsibility design.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "evidence_requirements": ["Role sandboxes and prompt ownership constraints for Codex."],
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved in the Codex-only responsibility design.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
@@ -168,7 +168,7 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-SECURITY-ACTIVE-001",
-      "version": 1,
+      "version": 2,
       "title": "Active security validation requires explicit authorization",
       "description": "Security review is passive by default; intrusive, destructive, or high-risk validation requires explicit human or parent authorization before execution.",
       "category": "security",
@@ -178,15 +178,15 @@
       "enforcement": { "mode": "human_review", "gate_effect": "block" },
       "scope": { "description": "Active or high-risk security validation." },
       "exceptions_allowed": false,
-      "source_refs": ["agents/hacker.md", "codex/agents/hacker.toml", "codex/pipeline.json"],
+      "source_refs": ["codex/agents/hacker.toml", "codex/pipeline.json"],
       "responsible_gate": "security_gate",
       "evidence_requirements": ["The explicit authorization reference and the bounded active validation scope."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved as the active security authorization boundary.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved as the Codex active security authorization boundary.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
       "rule_id": "ENG-IMPLEMENTER-TDD-001",
-      "version": 1,
+      "version": 2,
       "title": "Testable implementation follows strict TDD",
       "description": "The implementer demonstrates RED, implements the minimum GREEN change, refactors safely, and reports final test evidence.",
       "category": "testing",
@@ -196,10 +196,10 @@
       "enforcement": { "mode": "agent_review", "gate_effect": "warn" },
       "scope": { "description": "Testable code and contract changes." },
       "exceptions_allowed": true,
-      "source_refs": ["docs/DESIGN.md", "agents/implementer.md", "codex/agents/implementer.toml"],
+      "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents/implementer.toml"],
       "responsible_gate": "quality_gate",
       "evidence_requirements": ["Failing regression evidence before implementation and passing evidence after implementation."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved with warning effect pending stronger cross-runtime TDD automation.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved with warning effect because testability and RED evidence still require review judgment.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",

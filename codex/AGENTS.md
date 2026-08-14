@@ -48,7 +48,7 @@ Their handoffs contain no Markdown or surrounding prose.
 Before accepting one of these handoffs, the main session must run deterministic
 validation with the installed package validator, preserving the handoff unchanged:
 
-`sdd-codegraph validate-result - --agent <agent_name> --runtime codex`
+`sdd-codegraph validate-result - --agent <agent_name>`
 
 An invalid document, mismatched role/runtime, missing gate decision, or broken
 reference is a failed handoff. Do not interpret it as a pass and do not continue

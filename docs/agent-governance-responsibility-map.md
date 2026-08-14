@@ -4,13 +4,13 @@
 
 - Phase: 4 — Deterministic Governance Enforcement
 - Status: approved catalog and initial checks implemented
-- Scope: the existing roles plus the approved architecture reviewer in both Pi and Codex
+- Scope: the Codex roles and the approved architecture reviewer
 - Out of scope: persistence, metrics storage, dashboard design, publication, and deployment
 
 ## Approved decisions
 
-1. Pi and Codex remain supported runtimes.
-2. A runtime-neutral governance contract will be the canonical source for both runtimes.
+1. Codex is the only supported agent runtime.
+2. The governance contract is the canonical source for Codex agents, deterministic checks, and human approvals.
 3. The active/main session is the orchestration authority. A separate orchestrator agent is not part of the normal execution path.
 4. Review agents remain report-only.
 5. Findings that require code changes return to the implementer and must be revalidated by the gate that raised them.
@@ -28,7 +28,7 @@ rule to one implementation and stable `check_id`.
 The initial blocking checks are:
 
 - `governance_catalog_integrity` for schemas, unique IDs, human authority, and links;
-- `runtime_role_parity` for normalized Pi/Codex role sets;
+- `codex_role_catalog` for the complete normalized Codex role set;
 - `reviewer_report_only` for independent reviewer mutation constraints;
 - `review_handoff_contract` for strict reviewer JSON contracts and validation;
 - `pipeline_dependency_order` for dependency existence, order, cycles, and fail-closed policy.
@@ -51,20 +51,20 @@ not actually run.
 ## How this document is used
 
 This document is the approved governance design baseline. It is not loaded or
-executed automatically by Pi, Codex, the installer, or CI.
+executed automatically by Codex, the installer, or CI.
 
 It has four concrete consumers:
 
 1. Agent contracts: responsibilities and limits defined here are translated into
-   `agents/*.md` and `codex/agents/*.toml`.
+   `codex/agents/*.toml`.
 2. Pipeline policy: authority, ordering, and remediation rules are translated into
-   `codex/pipeline.json`, `codex/AGENTS.md`, and the Pi orchestrator policy.
-3. Contract and parity tests: automated checks must verify that both runtimes expose
-   the required roles and do not reintroduce prohibited ownership.
+   `codex/pipeline.json` and `codex/AGENTS.md`.
+3. Contract and catalog tests: automated checks must verify that Codex exposes the
+   required roles and does not reintroduce prohibited ownership.
 4. Future enforcement and metrics: rule, finding, evidence, exception, and gate
    schemas will be derived from this baseline rather than invented independently.
 
-When runtime behavior differs from this document, the runtime behavior is the
+When Codex behavior differs from this document, Codex behavior is the
 current operational fact and the difference is governance drift to be fixed. This
 document does not override executable behavior by itself.
 
@@ -559,7 +559,7 @@ Evaluate objective rules and produce reproducible results independently of agent
 
 - Agents and deterministic tools may propose a rule with supporting evidence.
 - The main session may maintain the catalog operationally: identifiers, formatting,
-  traceability, and propagation to Pi, Codex, tests, and CI.
+  traceability, and propagation to Codex, tests, and CI.
 - Only the user or a designated human authority may approve, change, deprecate, or
   waive a material architecture or engineering rule.
 - An exception must name its approving authority, affected rule, scope, reason,
@@ -619,7 +619,6 @@ No single agent can satisfy all eight conditions alone.
 2. Tester/reviewer, architecture reviewer, and hacker all perform static analysis;
    their authority must remain separated by quality, architecture, and security rule category.
 3. Tester/reviewer combines test execution, code review, and acceptance verification.
-4. Pi, Codex agent TOMLs, the Codex policy, and the Pi runtime policy duplicate parts of the orchestration contract.
 
 ## Current responsibility gaps
 
@@ -630,13 +629,10 @@ No single agent can satisfy all eight conditions alone.
 
 These gaps must be resolved before assigning architecture or governance approval to an existing agent.
 
-## Known runtime divergences to remove in later phases
+## Remaining contract gaps
 
-1. Pi and Codex prompts do not contain identical responsibilities and limits.
-2. The standalone Codex orchestrator agent has routing rules that differ from the Pi runtime policy.
-3. TDD is unconditional in Pi but conditional on testability in Codex.
-4. Security active-mode language and enforcement differ between the two runtimes.
-5. Structured output is aligned for the architecture, quality, and security review gates; the remaining agent roles still use role-specific handoffs.
+1. The standalone Codex orchestrator agent and main-session policy must remain aligned.
+2. Structured output is enforced for the architecture, quality, and security review gates; the remaining agent roles still use role-specific handoffs.
 
 ## Governance contract v1
 
@@ -649,8 +645,7 @@ The modular Draft 2020-12 schemas under `governance/schemas/v1/` now define:
 - strict evidence redaction metadata;
 - human approval for rules and exceptions.
 
-Pi now validates architecture, quality, and security review handoffs before
-acceptance. Codex uses the same JSON-only prompts and a mandatory deterministic
-CLI validation policy because its custom-agent configuration does not itself
-enforce the repository schema. Invalid output fails closed. Approved rule
+Codex uses JSON-only prompts and a mandatory deterministic CLI validation policy
+because its custom-agent configuration does not itself enforce the repository
+schema. Invalid output fails closed. Approved rule
 automation, persistence, metrics, and dashboard work remain later phases.
