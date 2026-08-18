@@ -1,50 +1,77 @@
 # @gustavoarielms/sdd-codegraph-cli
 
-MIT-licensed derivative package for multi-agent orchestration with SDD-aware
-routing and optional integration with the external CodeGraph tool.
+A Codex-only installer and governance pack for teams that want an opinionated,
+sequential Software Design and Development workflow with specialized agents,
+machine-validated review handoffs, and optional CodeGraph integration.
+
+It installs managed Codex configuration into a project or global Codex home:
+agent definitions, orchestration policy, pipeline strategies, governance
+schemas, deterministic checks, and review contracts.
 
 > **Publication status:** the package is publicly available as
 > [`@gustavoarielms/sdd-codegraph-cli`](https://www.npmjs.com/package/@gustavoarielms/sdd-codegraph-cli).
 >
-> **Implementation status:** the cross-platform CLI is implemented for Node.js
-> 22.14.0 or newer. `setup.sh` provides an explicit Codex-only global or project
-> installation path.
+> **Runtime requirement:** the cross-platform Node.js CLI requires Node.js
+> 22.14.0 or newer. The repository checkout also provides a Bash setup script
+> for explicit Codex-only global or project installation.
 
-## Origin and attribution
+## What this package is for
 
-This repository is a fork of
-[`ram4-dev/multi-sdd-team`](https://github.com/ram4-dev/multi-sdd-team), whose
-package metadata identifies `rcarnicer` as the original author.
+- Bootstrapping a consistent Codex multi-agent workflow in a repository.
+- Routing substantial work through sequential exploration, specification,
+  planning, implementation, and report-only review stages.
+- Keeping architecture, quality, and security reviewer handoffs
+  machine-validatable.
+- Updating managed Codex files without overwriting unrelated project content.
+- Optionally initializing and checking an external CodeGraph index.
 
-- The fork maintainer does not claim ownership of SDD as a methodology.
-- The fork maintainer does not claim ownership of CodeGraph.
-- CodeGraph is an external tool and is not bundled with this package.
-- References to CodeGraph describe optional configuration and bootstrap
-  integration only.
-- The package name distinguishes this derivative distribution from the original
-  project; it does not imply authorship of the underlying concepts or tools.
+## What this package is not
 
-See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for licensing and detailed
-attribution.
+- It is not an AI agent runtime or scheduler; Codex executes the agents.
+- It is not a generic or configurable SDD framework; it ships one opinionated
+  workflow and governance model.
+- It is not CodeGraph and does not install CodeGraph.
+- It is not a project or application code generator.
+- It does not build, test, merge, deploy, or release consuming applications.
+- It does not replace human approval for architecture rules, exceptions,
+  destructive operations, merges, or releases.
+- It does not provide compatibility with the retired Pi runtime.
+
+## Requirements and installation paths
+
+- Node.js 22.14.0 or newer is required.
+- Codex is the runtime that reads the installed agent and orchestration
+  configuration.
+- CodeGraph is external and optional for the setup script and governance-only
+  commands. It must be installed separately and available in `PATH` when using
+  `init`, `update`, or `check`, because those commands initialize, sync, or
+  inspect its index.
+
+There are two installation surfaces:
+
+- The npm CLI installs or updates project-scoped managed configuration and can
+  coordinate the external CodeGraph CLI.
+- `setup.sh`, run from a repository checkout, installs project-scoped, global,
+  or both Codex configurations without installing CodeGraph.
 
 ## CLI
 
-Run from a local checkout:
+From npm:
+
+```bash
+npx @gustavoarielms/sdd-codegraph-cli init /absolute/path/to/project
+npx @gustavoarielms/sdd-codegraph-cli update /absolute/path/to/project
+npx @gustavoarielms/sdd-codegraph-cli check /absolute/path/to/project
+npx @gustavoarielms/sdd-codegraph-cli check-governance /absolute/path/to/repository
+```
+
+From a local checkout, the equivalent commands are:
 
 ```bash
 node ./bin/sdd-codegraph.js init /absolute/path/to/project
 node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
-```
-
-From npm, the equivalent package commands are:
-
-```bash
-npx @gustavoarielms/sdd-codegraph-cli init
-npx @gustavoarielms/sdd-codegraph-cli update
-npx @gustavoarielms/sdd-codegraph-cli check
-npx @gustavoarielms/sdd-codegraph-cli check-governance
 ```
 
 - `init` installs the managed Codex SDD configuration and initializes or syncs
@@ -56,8 +83,7 @@ npx @gustavoarielms/sdd-codegraph-cli check-governance
 - `check-governance` emits canonical JSON and exits nonzero only for failed
   deterministic checks whose approved catalog effect is `block`.
 
-The target path defaults to the current working directory. CodeGraph must be
-installed separately and available in `PATH`.
+The target path defaults to the current working directory.
 
 ## Codex runtime
 
@@ -73,7 +99,7 @@ installed separately and available in `PATH`.
   - `tester-reviewer`
   - `hacker`
 
-## Setup Codex
+## Setup from a repository checkout
 
 This repository supports Codex-native agent configuration only.
 
@@ -114,10 +140,16 @@ Codex demo-fast behavior:
 
 ## Quick usage
 
-- Ask normally; the main session follows the managed orchestrator policy.
-- Request delegation explicitly with native Codex agent tools, for example:
-  - single: explorer
-  - chain: explorer -> planner -> implementer -> tester-reviewer
+After installation, open the target project in Codex and describe the outcome
+and delivery boundaries. For example:
+
+> Add rate limiting to the public API. Use the full sequential SDD flow,
+> include passive security review, and stop before merge or deployment.
+
+The main Codex session reads the managed orchestrator policy and selects an
+inline, single-agent, chained, or full SDD strategy. You can also request a
+specific native Codex delegation sequence, for example
+`explorer -> planner -> implementer -> tester-reviewer`.
 
 ## Notes
 
@@ -148,6 +180,23 @@ handoff before using it:
 ```bash
 sdd-codegraph validate-result result.json --agent architecture_reviewer
 ```
+
+## Origin and attribution
+
+This repository is a fork of
+[`ram4-dev/multi-sdd-team`](https://github.com/ram4-dev/multi-sdd-team), whose
+package metadata identifies `rcarnicer` as the original author.
+
+- The fork maintainer does not claim ownership of SDD as a methodology.
+- The fork maintainer does not claim ownership of CodeGraph.
+- CodeGraph is an external tool and is not bundled with this package.
+- References to CodeGraph describe optional configuration and bootstrap
+  integration only.
+- The package name distinguishes this derivative distribution from the original
+  project; it does not imply authorship of the underlying concepts or tools.
+
+See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for licensing and detailed
+attribution.
 
 ## License
 
