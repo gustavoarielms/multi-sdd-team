@@ -67,6 +67,23 @@ test("README publication status does not embed a release version", async () => {
   assert.doesNotMatch(publicationStatus, /\b\d+\.\d+\.\d+\b/);
 });
 
+test("README clearly defines the package purpose and non-goals", async () => {
+  const readme = await fs.readFile(new URL("../README.md", import.meta.url), "utf8");
+  const purpose = readme.indexOf("## What this package is for");
+  const nonGoals = readme.indexOf("## What this package is not");
+  const attribution = readme.indexOf("## Origin and attribution");
+
+  assert.notEqual(purpose, -1);
+  assert.notEqual(nonGoals, -1);
+  assert.ok(purpose < attribution, "purpose should precede attribution");
+  assert.ok(nonGoals < attribution, "non-goals should precede attribution");
+  assert.match(readme, /Codex-only installer and governance pack/);
+  assert.match(readme, /not an AI agent runtime or scheduler/i);
+  assert.match(readme, /does not install CodeGraph/i);
+  assert.match(readme, /does not provide compatibility layers for earlier\s+non-Codex runtimes/i);
+  assert.match(readme, /does not build, test, merge, deploy, or release consuming applications/i);
+});
+
 test("publish workflow requires npm 11.5.1 or newer", async () => {
   const workflow = await fs.readFile(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8");
   const guard = workflow.match(/node -e '([^'\n]+)' "\$npm_version"/);
