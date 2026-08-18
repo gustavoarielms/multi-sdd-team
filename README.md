@@ -35,7 +35,8 @@ schemas, deterministic checks, and review contracts.
 - It does not build, test, merge, deploy, or release consuming applications.
 - It does not replace human approval for architecture rules, exceptions,
   destructive operations, merges, or releases.
-- It does not provide compatibility with the retired Pi runtime.
+- It is Codex-only and does not provide compatibility layers for earlier
+  non-Codex runtimes.
 
 ## Requirements and installation paths
 

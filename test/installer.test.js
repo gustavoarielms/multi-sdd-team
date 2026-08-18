@@ -80,7 +80,7 @@ test("README clearly defines the package purpose and non-goals", async () => {
   assert.match(readme, /Codex-only installer and governance pack/);
   assert.match(readme, /not an AI agent runtime or scheduler/i);
   assert.match(readme, /does not install CodeGraph/i);
-  assert.match(readme, /does not provide compatibility with the retired Pi runtime/i);
+  assert.match(readme, /does not provide compatibility layers for earlier\s+non-Codex runtimes/i);
   assert.match(readme, /does not build, test, merge, deploy, or release consuming applications/i);
 });
 
