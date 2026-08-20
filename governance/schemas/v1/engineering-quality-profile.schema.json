@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/schemas/v1/engineering-quality-profile.schema.json",
+  "title": "Engineering Quality Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "profile_version",
+    "status",
+    "rule_ids",
+    "metrics",
+    "comparison",
+    "adapter",
+    "approval"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "profile_id": { "const": "engineering-quality-v1" },
+    "profile_version": { "$ref": "#/$defs/semanticVersion" },
+    "status": { "const": "approved" },
+    "rule_ids": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "uniqueItems": true,
+      "items": { "$ref": "common.schema.json#/$defs/ruleId" }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lint", "cyclomatic_complexity", "tests", "coverage", "architecture"],
+      "properties": {
+        "lint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_id", "error_diagnostics", "warnings"],
+          "properties": {
+            "rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+            "error_diagnostics": { "const": 0 },
+            "warnings": { "const": "informational" }
+          }
+        },
+        "cyclomatic_complexity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_id", "measure", "scope", "maximum"],
+          "properties": {
+            "rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+            "measure": { "const": "classic_mccabe" },
+            "scope": { "const": "per_function" },
+            "maximum": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "tests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "all_test_files_classified",
+            "missing_suite",
+            "zero_tests",
+            "skipped_or_todo",
+            "unit",
+            "integration"
+          ],
+          "properties": {
+            "classification": { "const": "directory" },
+            "all_test_files_classified": { "const": true },
+            "missing_suite": { "const": "error" },
+            "zero_tests": { "const": "error" },
+            "skipped_or_todo": { "const": "error" },
+            "unit": { "$ref": "#/$defs/requiredSuite" },
+            "integration": { "$ref": "#/$defs/requiredSuite" }
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engine",
+            "comparison",
+            "global_rule_id",
+            "changed_rule_id",
+            "repository_wide",
+            "changed_code",
+            "per_suite_evidence",
+            "empty_production_denominator",
+            "no_applicable_changed_items"
+          ],
+          "properties": {
+            "engine": { "const": "c8_v8_istanbul" },
+            "comparison": { "const": "exact_counts" },
+            "global_rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+            "changed_rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+            "repository_wide": { "$ref": "#/$defs/coverageThresholds" },
+            "changed_code": { "$ref": "#/$defs/coverageThresholds" },
+            "per_suite_evidence": { "const": "informational" },
+            "empty_production_denominator": { "const": "error" },
+            "no_applicable_changed_items": { "const": "not_applicable" }
+          }
+        },
+        "architecture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rules"],
+          "properties": {
+            "rules": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "prefixItems": [
+                { "$ref": "#/$defs/noCyclesRule" },
+                { "$ref": "#/$defs/productionNoTestRule" },
+                { "$ref": "#/$defs/sourceNoBinRule" },
+                { "$ref": "#/$defs/importResolutionRule" },
+                { "$ref": "#/$defs/productionNoDevDependenciesRule" }
+              ],
+              "items": false
+            }
+          }
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "input", "effective_base", "snapshot", "deleted_code"],
+      "properties": {
+        "required": { "const": true },
+        "input": { "const": "full_commit_sha" },
+        "effective_base": { "const": "merge_base" },
+        "snapshot": { "const": "working_tree_including_non_ignored_untracked" },
+        "deleted_code": { "const": "excluded" }
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapter_id",
+        "adapter_version",
+        "node_versions",
+        "scopes",
+        "tools",
+        "target_configuration",
+        "inline_suppressions",
+        "network_access"
+      ],
+      "properties": {
+        "adapter_id": { "const": "node-v1" },
+        "adapter_version": { "$ref": "#/$defs/semanticVersion" },
+        "node_versions": {
+          "type": "array",
+          "prefixItems": [{ "const": "22.14.0" }, { "const": "24.19.0" }],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "scopes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maintained_javascript",
+            "production_coverage",
+            "unit_tests",
+            "integration_tests",
+            "production_architecture_roots"
+          ],
+          "properties": {
+            "maintained_javascript": { "$ref": "#/$defs/pathSet" },
+            "production_coverage": { "$ref": "#/$defs/pathSet" },
+            "unit_tests": { "$ref": "#/$defs/pathSet" },
+            "integration_tests": { "$ref": "#/$defs/pathSet" },
+            "production_architecture_roots": { "$ref": "#/$defs/pathSet" }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "prefixItems": [
+            { "$ref": "#/$defs/eslintTool" },
+            { "$ref": "#/$defs/nodeTestTool" },
+            { "$ref": "#/$defs/c8Tool" },
+            { "$ref": "#/$defs/dependencyCruiserTool" }
+          ],
+          "items": false
+        },
+        "target_configuration": { "const": "disabled" },
+        "inline_suppressions": { "const": "rejected" },
+        "network_access": { "const": "forbidden" }
+      }
+    },
+    "approval": { "$ref": "#/$defs/approval" }
+  },
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 32
+    },
+    "pathSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+      }
+    },
+    "requiredSuite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "required", "blocking"],
+      "properties": {
+        "rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+        "required": { "const": true },
+        "blocking": { "const": true }
+      }
+    },
+    "coverageThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines", "branches", "functions", "statements"],
+      "properties": {
+        "lines": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "branches": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "functions": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "statements": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "architectureRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "condition"],
+      "properties": {
+        "rule_id": { "$ref": "common.schema.json#/$defs/ruleId" },
+        "condition": { "$ref": "common.schema.json#/$defs/referenceId" }
+      }
+    },
+    "noCyclesRule": {
+      "allOf": [
+        { "$ref": "#/$defs/architectureRule" },
+        { "type": "object", "properties": { "condition": { "const": "no_production_cycles" } } }
+      ]
+    },
+    "productionNoTestRule": {
+      "allOf": [
+        { "$ref": "#/$defs/architectureRule" },
+        { "type": "object", "properties": { "condition": { "const": "production_must_not_import_tests" } } }
+      ]
+    },
+    "sourceNoBinRule": {
+      "allOf": [
+        { "$ref": "#/$defs/architectureRule" },
+        { "type": "object", "properties": { "condition": { "const": "src_must_not_import_bin" } } }
+      ]
+    },
+    "importResolutionRule": {
+      "allOf": [
+        { "$ref": "#/$defs/architectureRule" },
+        { "type": "object", "properties": { "condition": { "const": "production_imports_resolve" } } }
+      ]
+    },
+    "productionNoDevDependenciesRule": {
+      "allOf": [
+        { "$ref": "#/$defs/architectureRule" },
+        { "type": "object", "properties": { "condition": { "const": "production_must_not_import_dev_dependencies" } } }
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_id", "version_binding", "machine_output"],
+      "properties": {
+        "tool_id": { "$ref": "common.schema.json#/$defs/referenceId" },
+        "version_binding": { "enum": ["exact_package_dependency", "supported_runtime_version"] },
+        "machine_output": { "const": true }
+      }
+    },
+    "eslintTool": {
+      "allOf": [{ "$ref": "#/$defs/tool" }, { "type": "object", "properties": { "tool_id": { "const": "eslint" }, "version_binding": { "const": "exact_package_dependency" } } }]
+    },
+    "nodeTestTool": {
+      "allOf": [{ "$ref": "#/$defs/tool" }, { "type": "object", "properties": { "tool_id": { "const": "node_test_runner" }, "version_binding": { "const": "supported_runtime_version" } } }]
+    },
+    "c8Tool": {
+      "allOf": [{ "$ref": "#/$defs/tool" }, { "type": "object", "properties": { "tool_id": { "const": "c8" }, "version_binding": { "const": "exact_package_dependency" } } }]
+    },
+    "dependencyCruiserTool": {
+      "allOf": [{ "$ref": "#/$defs/tool" }, { "type": "object", "properties": { "tool_id": { "const": "dependency_cruiser" }, "version_binding": { "const": "exact_package_dependency" } } }]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved_by", "approved_at", "rationale", "reference"],
+      "properties": {
+        "approved_by": {
+          "allOf": [
+            { "$ref": "common.schema.json#/$defs/producer" },
+            { "type": "object", "properties": { "kind": { "const": "human" } } }
+          ]
+        },
+        "approved_at": { "$ref": "common.schema.json#/$defs/utcTimestamp" },
+        "rationale": { "$ref": "common.schema.json#/$defs/longText" },
+        "reference": { "$ref": "common.schema.json#/$defs/shortText" }
+      }
+    }
+  }
+}

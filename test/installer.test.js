@@ -98,13 +98,13 @@ test("publish workflow requires npm 11.5.1 or newer", async () => {
   assert.notEqual(belowMinimum.status, 0, "expected npm 11.5.0 to be rejected");
 });
 
-test("publish workflow ignores lifecycle scripts for install, pack, and publish", async () => {
+test("publish workflow dogfoods gates and ignores lifecycle scripts for install and publish", async () => {
   const workflow = await fs.readFile(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8");
   const runCommands = [...workflow.matchAll(/^\s+- run: (.+)$/gm)].map((match) => match[1]);
 
   for (const command of [
     "npm ci --ignore-scripts",
-    "npm pack --dry-run --json --ignore-scripts",
+    "npm run --silent gates -- --comparison-base \"$(git rev-parse HEAD^{commit})\"",
     "npm publish --ignore-scripts",
   ]) {
     assert.ok(runCommands.includes(command), `missing fail-closed publish command: ${command}`);
@@ -144,10 +144,16 @@ test("npm package contains only the supported Codex distribution", async (contex
     "governance/examples/v1/approved-architecture-rule.json",
     "governance/examples/v1/architecture-review-result.json",
     "governance/examples/v1/governance-check-result.json",
+    "governance/gates/v1/registry.json",
+    "governance/profiles/v1/engineering-quality-profile.json",
     "governance/rules/v1/catalog.json",
     "governance/schemas/v1/agent-result.schema.json",
     "governance/schemas/v1/check-registry.schema.json",
     "governance/schemas/v1/common.schema.json",
+    "governance/schemas/v1/engineering-gate-config.schema.json",
+    "governance/schemas/v1/engineering-gate-registry.schema.json",
+    "governance/schemas/v1/engineering-gate-run.schema.json",
+    "governance/schemas/v1/engineering-quality-profile.schema.json",
     "governance/schemas/v1/evidence.schema.json",
     "governance/schemas/v1/exception.schema.json",
     "governance/schemas/v1/finding.schema.json",
@@ -157,6 +163,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "governance/schemas/v1/rule.schema.json",
     "package.json",
     "setup.sh",
+    "src/engineering-gates.js",
     "src/governance-checks.js",
     "src/governance-trust.js",
     "src/governance-validator.d.ts",
@@ -281,6 +288,14 @@ test("installProject is idempotent and preserves project-specific content", asyn
     path.join(project, ".codex", "governance", "checks", "v1", "registry.json"),
     "utf8",
   ));
+  const gateRegistry = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "governance", "gates", "v1", "registry.json"),
+    "utf8",
+  ));
+  const qualityProfile = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "governance", "profiles", "v1", "engineering-quality-profile.json"),
+    "utf8",
+  ));
   const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
@@ -291,6 +306,8 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.equal(agentResultSchema.title, "Governance Agent Result v1");
   assert.equal(catalog.rules[0].rule_id, "GOV-CATALOG-INTEGRITY-001");
   assert.equal(registry.checks[0].check_id, "governance_catalog_integrity");
+  assert.equal(gateRegistry.executors[0].executor_id, "javascript_syntax");
+  assert.equal(qualityProfile.metrics.cyclomatic_complexity.maximum, 15);
   assert.match(config, /custom = true/);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal(manifest.version, "0.3.0");
@@ -333,8 +350,11 @@ test("shell project and global installers copy equivalent governance contracts",
   for (const relative of [
     path.join("schemas", "v1", "rule-catalog.schema.json"),
     path.join("schemas", "v1", "governance-check-result.schema.json"),
+    path.join("schemas", "v1", "engineering-gate-run.schema.json"),
     path.join("rules", "v1", "catalog.json"),
     path.join("checks", "v1", "registry.json"),
+    path.join("gates", "v1", "registry.json"),
+    path.join("profiles", "v1", "engineering-quality-profile.json"),
   ]) {
     const globalContent = await fs.readFile(path.join(codexHome, "governance", relative), "utf8");
     const projectContent = await fs.readFile(path.join(project, ".codex", "governance", relative), "utf8");

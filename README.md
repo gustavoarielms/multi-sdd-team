@@ -64,6 +64,7 @@ npx @gustavoarielms/sdd-codegraph-cli init /absolute/path/to/project
 npx @gustavoarielms/sdd-codegraph-cli update /absolute/path/to/project
 npx @gustavoarielms/sdd-codegraph-cli check /absolute/path/to/project
 npx @gustavoarielms/sdd-codegraph-cli check-governance /absolute/path/to/repository
+npx @gustavoarielms/sdd-codegraph-cli run-gates /absolute/path/to/repository
 ```
 
 From a local checkout, the equivalent commands are:
@@ -73,6 +74,7 @@ node ./bin/sdd-codegraph.js init /absolute/path/to/project
 node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
+node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
 ```
 
 - `init` installs the managed Codex SDD configuration and initializes or syncs
@@ -83,8 +85,62 @@ node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
   is missing or stale.
 - `check-governance` emits canonical JSON and exits nonzero only for failed
   deterministic checks whose approved catalog effect is `block`.
+- `run-gates` runs the six approved deterministic engineering executors and
+  emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
+  for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
+  or untrustworthy run.
 
 The target path defaults to the current working directory.
+
+`run-gates` requires this target-owned configuration:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "quality_profile": {
+    "profile_id": "engineering-quality-v1",
+    "profile_version": "1.0.0",
+    "adapter_id": "node-v1",
+    "adapter_version": "1.0.0"
+  },
+  "executors": [
+    "javascript_syntax",
+    "test_suite",
+    "governance",
+    "production_dependency_audit",
+    "npm_package_surface",
+    "forbidden_references"
+  ]
+}
+```
+
+Store it at `.sdd-codegraph/gates.json`. The quality profile, adapter, order,
+and complete executor allowlist are fixed in v1. Unknown properties, omitted
+or additional executors, threshold overrides, arbitrary commands, baselines,
+exceptions, and plugins are rejected. The installer does not create this
+target-owned file.
+
+The selected profile has blocking changed-code coverage, so its comparison
+base is required and must be a full lowercase commit SHA:
+
+```bash
+sdd-codegraph run-gates /absolute/path/to/repository \
+  --comparison-base 0123456789abcdef0123456789abcdef01234567
+```
+
+The runner resolves source, project-local package, and global package
+invocations against the same target contract. It uses fixed package executors,
+no shell, real-path containment, per-executor timeouts, bounded child output,
+and redaction-safe summaries. Approved gate effects come only from the shipped
+human-approved governance catalog; target configuration and report-only
+reviewers cannot weaken deterministic results. See
+[`governance/README.md`](governance/README.md) for the result contract.
+
+The package also ships the approved `engineering-quality-v1` profile and its
+explicit `node-v1` adapter contract. The profile fixes complexity `15`, global
+coverage `85/80/85/85`, changed-code coverage `90/85/90/90`, required unit and
+integration semantics, and five architecture boundaries. The actual analyzer
+executors remain deliberately assigned to #10, #11, and #12.
 
 ## Codex runtime
 
@@ -125,8 +181,9 @@ Install both global and project config:
 The Codex setup installs:
 
 - `~/.codex/agents/*.toml` or `<project>/.codex/agents/*.toml`
-- governance v1 schemas, rule catalog, and check registry under the matching
-  `.codex/governance/` directory
+- governance v1 schemas, rule catalog, check registry, engineering gate
+  registry, and quality profile under the matching `.codex/governance/`
+  directory
 - `pipeline.json`
 - `AGENTS.md` instructions with a managed `multi-sdd-team` block
 - `service_tier = "fast"` and `[features].fast_mode = true`

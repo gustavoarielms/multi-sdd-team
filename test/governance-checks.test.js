@@ -71,6 +71,28 @@ test("a structurally invalid registry fails closed with a valid machine-readable
   assert.equal((await validateGovernanceCheckResult(result.document)).ok, true);
 });
 
+test("an altered installed engineering quality profile fails governance closed", async (context) => {
+  const fixture = await copyRepositoryFixture();
+  context.after(() => fs.rm(fixture, { recursive: true, force: true }));
+  const profilePath = path.join(
+    fixture,
+    "governance",
+    "profiles",
+    "v1",
+    "engineering-quality-profile.json",
+  );
+  const profile = JSON.parse(await fs.readFile(profilePath, "utf8"));
+  profile.metrics.cyclomatic_complexity.maximum = 16;
+  await fs.writeFile(profilePath, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
+
+  const result = await runGovernanceChecks(fixture);
+  assert.equal(result.trusted, false);
+  assert.equal(result.blocking, true);
+  assert.equal(result.document.outcome, "failed");
+  assert.deepEqual(result.document.results.map((check) => check.rule_id), ["GOV-CATALOG-INTEGRITY-001"]);
+  assert.equal((await validateGovernanceCheckResult(result.document)).ok, true);
+});
+
 test("pipeline governance rejects missing mandatory stages and dependencies", async (context) => {
   const missingStage = await copyRepositoryFixture();
   const missingDependency = await copyRepositoryFixture();

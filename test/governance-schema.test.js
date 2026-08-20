@@ -8,6 +8,7 @@ import {
   validateGovernanceCatalog,
   validateGovernanceCheckResult,
   validateGovernanceDocument,
+  validateEngineeringQualityProfile,
 } from "../src/governance-validator.js";
 
 const root = new URL("../", import.meta.url);
@@ -15,6 +16,7 @@ const schemasUrl = new URL("governance/schemas/v1/", root);
 const examplesUrl = new URL("governance/examples/v1/", root);
 const catalogUrl = new URL("governance/rules/v1/catalog.json", root);
 const registryUrl = new URL("governance/checks/v1/registry.json", root);
+const qualityProfileUrl = new URL("governance/profiles/v1/engineering-quality-profile.json", root);
 
 async function readJson(url) {
   return JSON.parse(await fs.readFile(url, "utf8"));
@@ -29,6 +31,36 @@ test("all governance schemas compile in strict Draft 2020-12 mode", async () => 
     const result = await validateGovernanceDocument(file, {});
     assert.equal(typeof result.valid, "boolean", file);
   }
+});
+
+test("canonical Engineering Quality Profile v1 is strict, approved, and trust-bound", async () => {
+  const profile = await readJson(qualityProfileUrl);
+  assert.equal((await validateEngineeringQualityProfile(profile)).ok, true);
+  assert.equal(profile.metrics.cyclomatic_complexity.maximum, 15);
+  assert.deepEqual(profile.metrics.coverage.repository_wide, {
+    lines: 85,
+    branches: 80,
+    functions: 85,
+    statements: 85,
+  });
+  assert.deepEqual(profile.metrics.coverage.changed_code, {
+    lines: 90,
+    branches: 85,
+    functions: 90,
+    statements: 90,
+  });
+
+  const weakened = structuredClone(profile);
+  weakened.metrics.cyclomatic_complexity.maximum = 16;
+  assert.equal((await validateEngineeringQualityProfile(weakened)).ok, false);
+
+  const unsupported = structuredClone(profile);
+  unsupported.profile_version = "2.0.0";
+  assert.equal((await validateEngineeringQualityProfile(unsupported)).ok, false);
+
+  const extra = structuredClone(profile);
+  extra.baseline = "legacy";
+  assert.equal((await validateEngineeringQualityProfile(extra)).ok, false);
 });
 
 test("governance examples satisfy their schemas and cross-reference integrity", async () => {
@@ -223,6 +255,22 @@ test("versioned governance catalog and check registry are valid and linked", asy
       "GOV-REVIEW-REPORTONLY-001",
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
+      "ENG-SOURCE-SYNTAX-001",
+      "ENG-TEST-SUITE-001",
+      "SEC-PRODUCTION-DEPS-001",
+      "ENG-PACKAGE-SURFACE-001",
+      "GOV-FORBIDDEN-SURFACE-001",
+      "ENG-LINT-ERRORS-001",
+      "ENG-CYCLOMATIC-COMPLEXITY-001",
+      "TEST-UNIT-SUITE-001",
+      "TEST-INTEGRATION-SUITE-001",
+      "TEST-COVERAGE-GLOBAL-001",
+      "TEST-COVERAGE-CHANGED-001",
+      "ARCH-NO-CYCLES-001",
+      "ARCH-PROD-NO-TEST-001",
+      "ARCH-SRC-NO-BIN-001",
+      "ARCH-IMPORT-RESOLUTION-001",
+      "ARCH-PROD-NO-DEV-DEPS-001",
     ],
   );
   assert.equal(
@@ -260,6 +308,16 @@ test("versioned governance catalog and check registry are valid and linked", asy
     .every((ruleId) => catalog.rules.find((rule) => rule.rule_id === ruleId).enforcement.gate_effect === "block"));
   assert.ok(catalog.rules.filter((rule) => rule.status === "proposed")
     .every((rule) => rule.enforcement.gate_effect === "none"));
+});
+
+test("engineering gate registry safety limits are exact trusted bindings", async () => {
+  const catalog = await readJson(catalogUrl);
+  const registry = await readJson(registryUrl);
+  const gateRegistry = await readJson(new URL("governance/gates/v1/registry.json", root));
+  gateRegistry.executors[0].timeout_ms += 1;
+  const validation = await validateGovernanceCatalog(catalog, registry, gateRegistry);
+  assert.equal(validation.ok, false);
+  assert.ok(validation.errors.includes("engineering gate registry binding does not match trusted code"));
 });
 
 test("catalog integrity rejects invalid documents, duplicate rules, proposed blocks, missing human approval, and orphan checks", async () => {

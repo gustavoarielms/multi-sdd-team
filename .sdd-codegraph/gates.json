@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "quality_profile": {
+    "profile_id": "engineering-quality-v1",
+    "profile_version": "1.0.0",
+    "adapter_id": "node-v1",
+    "adapter_version": "1.0.0"
+  },
+  "executors": [
+    "javascript_syntax",
+    "test_suite",
+    "governance",
+    "production_dependency_audit",
+    "npm_package_surface",
+    "forbidden_references"
+  ]
+}

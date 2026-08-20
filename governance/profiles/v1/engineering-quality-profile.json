@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0.0",
+  "profile_id": "engineering-quality-v1",
+  "profile_version": "1.0.0",
+  "status": "approved",
+  "rule_ids": [
+    "ENG-LINT-ERRORS-001",
+    "ENG-CYCLOMATIC-COMPLEXITY-001",
+    "TEST-UNIT-SUITE-001",
+    "TEST-INTEGRATION-SUITE-001",
+    "TEST-COVERAGE-GLOBAL-001",
+    "TEST-COVERAGE-CHANGED-001",
+    "ARCH-NO-CYCLES-001",
+    "ARCH-PROD-NO-TEST-001",
+    "ARCH-SRC-NO-BIN-001",
+    "ARCH-IMPORT-RESOLUTION-001",
+    "ARCH-PROD-NO-DEV-DEPS-001"
+  ],
+  "metrics": {
+    "lint": {
+      "rule_id": "ENG-LINT-ERRORS-001",
+      "error_diagnostics": 0,
+      "warnings": "informational"
+    },
+    "cyclomatic_complexity": {
+      "rule_id": "ENG-CYCLOMATIC-COMPLEXITY-001",
+      "measure": "classic_mccabe",
+      "scope": "per_function",
+      "maximum": 15
+    },
+    "tests": {
+      "classification": "directory",
+      "all_test_files_classified": true,
+      "missing_suite": "error",
+      "zero_tests": "error",
+      "skipped_or_todo": "error",
+      "unit": {
+        "rule_id": "TEST-UNIT-SUITE-001",
+        "required": true,
+        "blocking": true
+      },
+      "integration": {
+        "rule_id": "TEST-INTEGRATION-SUITE-001",
+        "required": true,
+        "blocking": true
+      }
+    },
+    "coverage": {
+      "engine": "c8_v8_istanbul",
+      "comparison": "exact_counts",
+      "global_rule_id": "TEST-COVERAGE-GLOBAL-001",
+      "changed_rule_id": "TEST-COVERAGE-CHANGED-001",
+      "repository_wide": {
+        "lines": 85,
+        "branches": 80,
+        "functions": 85,
+        "statements": 85
+      },
+      "changed_code": {
+        "lines": 90,
+        "branches": 85,
+        "functions": 90,
+        "statements": 90
+      },
+      "per_suite_evidence": "informational",
+      "empty_production_denominator": "error",
+      "no_applicable_changed_items": "not_applicable"
+    },
+    "architecture": {
+      "rules": [
+        { "rule_id": "ARCH-NO-CYCLES-001", "condition": "no_production_cycles" },
+        { "rule_id": "ARCH-PROD-NO-TEST-001", "condition": "production_must_not_import_tests" },
+        { "rule_id": "ARCH-SRC-NO-BIN-001", "condition": "src_must_not_import_bin" },
+        { "rule_id": "ARCH-IMPORT-RESOLUTION-001", "condition": "production_imports_resolve" },
+        { "rule_id": "ARCH-PROD-NO-DEV-DEPS-001", "condition": "production_must_not_import_dev_dependencies" }
+      ]
+    }
+  },
+  "comparison": {
+    "required": true,
+    "input": "full_commit_sha",
+    "effective_base": "merge_base",
+    "snapshot": "working_tree_including_non_ignored_untracked",
+    "deleted_code": "excluded"
+  },
+  "adapter": {
+    "adapter_id": "node-v1",
+    "adapter_version": "1.0.0",
+    "node_versions": ["22.14.0", "24.19.0"],
+    "scopes": {
+      "maintained_javascript": ["bin/**/*.js", "src/**/*.js", "test/**/*.js"],
+      "production_coverage": ["bin/**/*.js", "src/**/*.js"],
+      "unit_tests": ["test/unit/**/*.test.js"],
+      "integration_tests": ["test/integration/**/*.test.js"],
+      "production_architecture_roots": ["bin/", "src/"]
+    },
+    "tools": [
+      { "tool_id": "eslint", "version_binding": "exact_package_dependency", "machine_output": true },
+      { "tool_id": "node_test_runner", "version_binding": "supported_runtime_version", "machine_output": true },
+      { "tool_id": "c8", "version_binding": "exact_package_dependency", "machine_output": true },
+      { "tool_id": "dependency_cruiser", "version_binding": "exact_package_dependency", "machine_output": true }
+    ],
+    "target_configuration": "disabled",
+    "inline_suppressions": "rejected",
+    "network_access": "forbidden"
+  },
+  "approval": {
+    "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" },
+    "approved_at": "2026-08-20T18:06:08Z",
+    "rationale": "Approved as the complete Engineering Quality Profile v1 contract in Issue #9.",
+    "reference": "issue:9"
+  }
+}

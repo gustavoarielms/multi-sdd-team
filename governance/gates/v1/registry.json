@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0.0",
+  "registry_id": "multi_sdd_engineering_gates",
+  "executors": [
+    {
+      "executor_id": "javascript_syntax",
+      "implementation": "javascript_syntax",
+      "rule_ids": ["ENG-SOURCE-SYNTAX-001"],
+      "timeout_ms": 30000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "test_suite",
+      "implementation": "test_suite",
+      "rule_ids": ["ENG-TEST-SUITE-001"],
+      "timeout_ms": 120000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "governance",
+      "implementation": "governance",
+      "rule_ids": [
+        "GOV-CATALOG-INTEGRITY-001",
+        "GOV-CODEX-ROLE-CATALOG-001",
+        "GOV-REVIEW-REPORTONLY-001",
+        "GOV-REVIEW-HANDOFF-001",
+        "GOV-PIPELINE-ORDER-001"
+      ],
+      "timeout_ms": 30000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "production_dependency_audit",
+      "implementation": "production_dependency_audit",
+      "rule_ids": ["SEC-PRODUCTION-DEPS-001"],
+      "timeout_ms": 60000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "npm_package_surface",
+      "implementation": "npm_package_surface",
+      "rule_ids": ["ENG-PACKAGE-SURFACE-001"],
+      "timeout_ms": 60000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "forbidden_references",
+      "implementation": "forbidden_references",
+      "rule_ids": ["GOV-FORBIDDEN-SURFACE-001"],
+      "timeout_ms": 30000,
+      "max_output_bytes": 262144
+    }
+  ]
+}

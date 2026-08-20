@@ -11,6 +11,7 @@ import {
 } from "../src/installer.js";
 import { validateAgentResultText } from "../src/governance-validator.js";
 import { runGovernanceChecks } from "../src/governance-checks.js";
+import { runEngineeringGates } from "../src/engineering-gates.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -22,6 +23,7 @@ Usage:
   sdd-codegraph update [path]
   sdd-codegraph check [path]
   sdd-codegraph check-governance [path]
+  sdd-codegraph run-gates [path] [--comparison-base <full-commit-sha>]
   sdd-codegraph validate-result [file|-] [--agent <name>]
   sdd-codegraph --version
 
@@ -31,6 +33,8 @@ Commands:
   check     Verify managed files and CodeGraph state without making changes.
   check-governance
             Run deterministic governance checks and emit one canonical JSON result.
+  run-gates
+            Run the fail-closed deterministic engineering gates and emit one canonical JSON result.
   validate-result
             Validate one governance agent-result JSON document. Reads stdin by default.
 
@@ -72,6 +76,26 @@ function parseValidationArguments(args) {
   return { file, expectedAgent };
 }
 
+function parseRunGateArguments(args) {
+  let target = process.cwd();
+  let comparisonBase;
+  let hasTarget = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--comparison-base") {
+      comparisonBase = args[index + 1];
+      if (!comparisonBase) throw new Error("--comparison-base requires a value");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--")) throw new Error(`Unexpected argument: ${argument}`);
+    if (hasTarget) throw new Error(`Unexpected argument: ${argument}`);
+    target = argument;
+    hasTarget = true;
+  }
+  return { target, comparisonBase };
+}
+
 async function run() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -107,6 +131,14 @@ async function run() {
     const result = await runGovernanceChecks(target);
     process.stdout.write(`${JSON.stringify(result.document)}\n`);
     if (result.blocking) process.exitCode = 1;
+    return;
+  }
+
+  if (command === "run-gates") {
+    const { target, comparisonBase } = parseRunGateArguments(args);
+    const result = await runEngineeringGates(target, { comparisonBase });
+    process.stdout.write(`${JSON.stringify(result.document)}\n`);
+    process.exitCode = result.exitCode;
     return;
   }
 
