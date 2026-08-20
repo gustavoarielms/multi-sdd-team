@@ -104,5 +104,19 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "properties": { "run_error": true },
+          "required": ["run_error"]
+        }
+      },
+      "then": {
+        "properties": { "comparison_base": true },
+        "required": ["comparison_base"]
+      }
+    }
+  ]
 }

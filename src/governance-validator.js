@@ -417,6 +417,12 @@ function strongestGateEffect(ruleIds, rulesById) {
   }, "none");
 }
 
+function matchesDeterministicProducer(producer, id) {
+  return producer?.kind === "deterministic"
+    && producer.id === id
+    && producer.runtime === "ci";
+}
+
 export async function validateEngineeringGateRun(value) {
   const structural = await validateGovernanceDocument(engineeringGateRunSchemaName, value);
   if (!structural.valid) return { ok: false, errors: structural.errors };
@@ -436,6 +442,9 @@ export async function validateEngineeringGateRun(value) {
   };
   if (JSON.stringify(value.quality_profile) !== JSON.stringify(expectedProfileContext)) {
     errors.push("engineering run quality profile does not match trusted code");
+  }
+  if (!matchesDeterministicProducer(value.producer, "sdd_engineering_gates")) {
+    errors.push("engineering run producer does not match the canonical runner");
   }
   const rulesById = new Map(catalog.rules.map((rule) => [rule.rule_id, rule]));
   const evidenceIds = new Set();
@@ -473,7 +482,17 @@ export async function validateEngineeringGateRun(value) {
       referencedEvidenceCounts.set(evidenceId, (referencedEvidenceCounts.get(evidenceId) ?? 0) + 1);
       const evidence = value.evidence.find((candidate) => candidate.evidence_id === evidenceId);
       if (!evidence) errors.push("engineering result references missing evidence");
-      else if (!allowedCheckIds.has(evidence.check_id)) errors.push("engineering evidence belongs to another executor");
+      else {
+        if (!allowedCheckIds.has(evidence.check_id)) errors.push("engineering evidence belongs to another executor");
+        const governanceCheckEvidence = result.executor_id === "governance"
+          && (result.checks ?? []).some((check) => check.check_id === evidence.check_id);
+        const expectedProducerId = governanceCheckEvidence
+          ? "sdd_governance_checker"
+          : "sdd_engineering_gates";
+        if (!matchesDeterministicProducer(evidence.collected_by, expectedProducerId)) {
+          errors.push("engineering evidence producer does not match its canonical collector");
+        }
+      }
     }
 
     if (result.executor_id !== "governance" && result.checks) {

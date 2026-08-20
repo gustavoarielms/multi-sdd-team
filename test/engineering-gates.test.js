@@ -217,6 +217,35 @@ test("result validation enforces complete governance details and evidence owners
   const target = await configuredTarget(t);
   const result = await runConfiguredGates(target, { executors: executorSet() });
 
+  const missingComparisonBase = structuredClone(result.document);
+  delete missingComparisonBase.comparison_base;
+  const missingComparisonBaseValidation = await validateEngineeringGateRun(missingComparisonBase);
+  assert.equal(missingComparisonBaseValidation.ok, false);
+  assert.equal(missingComparisonBaseValidation.errors.some((error) => error.includes("comparison_base")), true);
+
+  const wrongRunProducer = structuredClone(result.document);
+  wrongRunProducer.producer.id = "arbitrary_producer";
+  assert.equal((await validateEngineeringGateRun(wrongRunProducer)).ok, false);
+
+  const wrongRunProducerRuntime = structuredClone(result.document);
+  wrongRunProducerRuntime.producer.runtime = "manual";
+  assert.equal((await validateEngineeringGateRun(wrongRunProducerRuntime)).ok, false);
+
+  const wrongExecutorEvidenceProducer = structuredClone(result.document);
+  wrongExecutorEvidenceProducer.evidence[0].collected_by = {
+    kind: "human",
+    id: "arbitrary_collector",
+    runtime: "manual",
+  };
+  assert.equal((await validateEngineeringGateRun(wrongExecutorEvidenceProducer)).ok, false);
+
+  const wrongGovernanceEvidenceProducer = structuredClone(result.document);
+  const governanceEvidence = wrongGovernanceEvidenceProducer.evidence.find(
+    (evidence) => evidence.check_id === "governance_catalog_integrity",
+  );
+  governanceEvidence.collected_by.runtime = "manual";
+  assert.equal((await validateEngineeringGateRun(wrongGovernanceEvidenceProducer)).ok, false);
+
   const missingGovernanceCheck = structuredClone(result.document);
   missingGovernanceCheck.results[2].checks = [{
     check_id: "governance_catalog_integrity",
