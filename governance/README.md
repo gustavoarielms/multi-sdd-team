@@ -28,6 +28,10 @@ The contract is modular:
 | `rule-catalog.schema.json` | Canonical versioned collection of governance rules |
 | `check-registry.schema.json` | Deterministic check-to-rule registry |
 | `governance-check-result.schema.json` | Deterministic results with bounded evidence |
+| `engineering-gate-config.schema.json` | Strict target-owned executor selection |
+| `engineering-gate-registry.schema.json` | Package-owned executor, rule, and safety bindings |
+| `engineering-gate-run.schema.json` | Aggregate deterministic engineering run and exit semantics |
+| `engineering-quality-profile.schema.json` | Approved generic metrics, thresholds, and node-v1 adapter contract |
 | `exception.schema.json` | Human-approved, scoped, time-bounded exception |
 | `common.schema.json` | Shared identifiers, actors, locations, and enums |
 
@@ -35,7 +39,9 @@ Schemas live under `governance/schemas/v1/`. Examples live under
 `governance/examples/v1/`.
 
 The canonical rule catalog is `governance/rules/v1/catalog.json`; the check
-registry is `governance/checks/v1/registry.json`. An approved rule records its
+registry is `governance/checks/v1/registry.json`; and the engineering executor
+registry is `governance/gates/v1/registry.json`. The canonical quality profile
+is `governance/profiles/v1/engineering-quality-profile.json`. An approved rule records its
 human approval reference, responsible gate, source references, and evidence
 requirements. Session-only recommendations remain `proposed` with a `none`
 gate effect until a versioned authority approves them.
@@ -128,6 +134,68 @@ and `pipeline.json`. Installed layouts use their installed Codex definitions and
 pipeline while validation code comes from the executing package. Unknown or
 incomplete layouts fail closed with a bounded machine-readable result.
 
+## Deterministic engineering gates
+
+`sdd-codegraph run-gates [target]` reads the target's
+`.sdd-codegraph/gates.json`, validates the exact v1 executor allowlist, runs the
+package-owned executors in registry order, validates the complete result, and
+writes one `engineering-gate-run` JSON document to stdout. The six executors
+cover tracked JavaScript and shell syntax, the repository test suite, the five
+individual governance checks, production dependency audit, npm package
+surface, and approved forbidden references.
+
+Executor states are deliberately distinct:
+
+- `pass`: trustworthy execution satisfied the approved rule;
+- `fail`: trustworthy execution found a functional rule violation;
+- `error`: the executor could not produce a trustworthy result;
+- `not_run`: a prior executor error stopped later execution.
+
+The aggregate outcome and process exit code are `passed`/`0`, `failed`/`1`, or
+`blocked`/`2`. Functional failures do not hide later functional findings, but
+an executor error stops the remaining executors and records each as `not_run`.
+Missing or invalid configuration, unsafe paths, unsupported layouts, spawn
+failures, timeouts, output overflow, and invalid generated results are blocked
+runs.
+
+Gate effects and executor bindings are exact package trust, not project input.
+The configuration cannot supply commands, plugins, effects, exceptions, or
+baselines, and a reviewer cannot override a deterministic failure or error.
+Child processes use fixed argument arrays without a shell, target paths are
+real-path contained, output and time are bounded by the executor registry, and
+only normalized reason codes, counts, summaries, and redaction metadata enter
+the canonical document. The npm executors use a disposable cache so a broken
+user cache cannot change the gate result.
+
+## Engineering Quality Profile v1
+
+The package-owned `engineering-quality-v1` profile is schema-valid, approved,
+and bound by exact profile and adapter versions plus a trusted content digest.
+`gates.json` selects `engineering-quality-v1@1.0.0` with
+`node-v1@1.0.0`; it cannot redefine thresholds, scopes, tools, suppressions,
+effects, baselines, or exceptions.
+
+The generic profile fixes these blocking semantics:
+
+- zero approved lint errors; warnings are informational;
+- classic McCabe cyclomatic complexity no greater than `15` per function;
+- required, non-overlapping unit and integration suites with no skipped or todo tests;
+- repository coverage of `85%` lines, `80%` branches, `85%` functions, and `85%` statements;
+- changed/new coverage of `90%` lines, `85%` branches, `90%` functions, and `90%` statements;
+- no production cycles, no production-to-test or src-to-bin dependencies,
+  reliable import resolution, and no production imports from development-only dependencies.
+
+The embedded `node-v1` adapter contract fixes source and test roots, supported
+Node versions, tool identities, disabled target configuration, rejected inline
+suppressions, and offline execution. Analyzer versions become exact package
+dependencies when #10, #11, and #12 implement their respective adapters; the
+built-in test runner remains bound to the supported Node runtime. This profile
+foundation does not execute those analyzers early.
+
+Because changed-code coverage is blocking, `run-gates` requires an explicit
+full comparison commit and records both the supplied SHA and effective merge
+base. Missing or untrustworthy comparison history blocks the run with exit `2`.
+
 ## Runtime enforcement
 
 - Codex agent configuration supplies the JSON-only contract, while the main
@@ -136,7 +204,8 @@ incomplete layouts fail closed with a bounded machine-readable result.
 - Codex reviewer sandboxes are read-only and their prompts prohibit implementation
   ownership or conditional write exceptions.
 - Project and global Codex installers copy the v1 schemas, canonical catalog,
-  and check registry under `.codex/governance/` or `$CODEX_HOME/governance/`.
+  check registry, engineering gate registry, and quality profile under
+  `.codex/governance/` or `$CODEX_HOME/governance/`.
 - The main session may render a human-readable summary only after validation;
   the validated JSON remains canonical.
 
@@ -157,10 +226,13 @@ Those capabilities remain separate later phases.
 
 Approval trust is checker-owned code in `src/governance-trust.js`, not a claim
 made by the catalog being validated. It fixes the human authority, the exact
-five check-to-rule implementation bindings, and each
+governance and engineering executor bindings, and each
 approved `rule_id` plus version and canonical SHA-256 content digest. Proposed
 rules do not require a trust binding. Each approved rule's digest includes its
 approval reference. Changing an approved rule therefore
 requires both a newly approved catalog change and an explicit trust-code update.
+The approved engineering quality profile is independently bound by exact
+profile ID/version, adapter ID/version, approval authority, and canonical
+SHA-256 content digest.
 Installed projects do not copy a second trust file: validation uses the trust
 module shipped with the executing package.

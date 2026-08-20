@@ -10,6 +10,8 @@ const TEMPLATE_ROOT = path.join(PACKAGE_ROOT, "codex");
 const GOVERNANCE_SCHEMAS_ROOT = path.join(PACKAGE_ROOT, "governance", "schemas", "v1");
 const GOVERNANCE_RULES_ROOT = path.join(PACKAGE_ROOT, "governance", "rules", "v1");
 const GOVERNANCE_CHECKS_ROOT = path.join(PACKAGE_ROOT, "governance", "checks", "v1");
+const GOVERNANCE_GATES_ROOT = path.join(PACKAGE_ROOT, "governance", "gates", "v1");
+const GOVERNANCE_PROFILES_ROOT = path.join(PACKAGE_ROOT, "governance", "profiles", "v1");
 const MANAGED_MARKER = "multi-sdd-team";
 const MANIFEST_NAME = ".sdd-codegraph.json";
 
@@ -158,6 +160,8 @@ async function loadTemplates() {
     assertReadable(GOVERNANCE_SCHEMAS_ROOT),
     assertReadable(GOVERNANCE_RULES_ROOT),
     assertReadable(GOVERNANCE_CHECKS_ROOT),
+    assertReadable(GOVERNANCE_GATES_ROOT),
+    assertReadable(GOVERNANCE_PROFILES_ROOT),
   ]);
 
   const agentNames = (await fs.readdir(agentsRoot))
@@ -187,12 +191,22 @@ async function loadTemplates() {
   for (const name of (await fs.readdir(GOVERNANCE_CHECKS_ROOT)).filter((item) => item.endsWith(".json")).sort()) {
     governanceChecks.set(name, await fs.readFile(path.join(GOVERNANCE_CHECKS_ROOT, name), "utf8"));
   }
+  const governanceGates = new Map();
+  for (const name of (await fs.readdir(GOVERNANCE_GATES_ROOT)).filter((item) => item.endsWith(".json")).sort()) {
+    governanceGates.set(name, await fs.readFile(path.join(GOVERNANCE_GATES_ROOT, name), "utf8"));
+  }
+  const governanceProfiles = new Map();
+  for (const name of (await fs.readdir(GOVERNANCE_PROFILES_ROOT)).filter((item) => item.endsWith(".json")).sort()) {
+    governanceProfiles.set(name, await fs.readFile(path.join(GOVERNANCE_PROFILES_ROOT, name), "utf8"));
+  }
 
   return {
     agents,
     governanceSchemas,
     governanceRules,
     governanceChecks,
+    governanceGates,
+    governanceProfiles,
     pipeline: await fs.readFile(pipelinePath, "utf8"),
     agentsPolicy: await fs.readFile(agentsPath, "utf8"),
   };
@@ -213,6 +227,12 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   }
   for (const [name, content] of templates.governanceChecks) {
     files.set(path.join(codexPrefix, "governance", "checks", "v1", name), content);
+  }
+  for (const [name, content] of templates.governanceGates) {
+    files.set(path.join(codexPrefix, "governance", "gates", "v1", name), content);
+  }
+  for (const [name, content] of templates.governanceProfiles) {
+    files.set(path.join(codexPrefix, "governance", "profiles", "v1", name), content);
   }
 
   files.set("pipeline.json", templates.pipeline);

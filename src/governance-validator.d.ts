@@ -30,7 +30,20 @@ export function validateAgentResultText(
 export function validateGovernanceCatalog(
   catalog: unknown,
   registry: unknown,
+  engineeringGateRegistry?: unknown,
+  engineeringQualityProfile?: unknown,
 ): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
 export function validateGovernanceCheckResult(
   value: unknown,
 ): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
+export function validateEngineeringGateConfiguration(
+  value: unknown,
+): Promise<{ valid: boolean; errors: string[] }>;
+export function validateEngineeringGateRun(
+  value: unknown,
+): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
+export function validateEngineeringQualityProfile(
+  value: unknown,
+  catalogValue?: unknown,
+): Promise<GovernanceValidationSuccess | GovernanceValidationFailure>;
+export function engineeringExecutorIds(): string[];

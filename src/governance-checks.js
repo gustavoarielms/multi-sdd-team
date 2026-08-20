@@ -41,6 +41,8 @@ async function buildLayout(rootReal, values, canonicalTargetProvided) {
     values.agentsPolicyPath,
     path.join(values.governanceRoot, "rules", "v1", "catalog.json"),
     path.join(values.governanceRoot, "checks", "v1", "registry.json"),
+    path.join(values.governanceRoot, "gates", "v1", "registry.json"),
+    path.join(values.governanceRoot, "profiles", "v1", "engineering-quality-profile.json"),
   ];
   try {
     await Promise.all(artifacts.map((artifact) => containedRealPath(rootReal, artifact)));
@@ -117,8 +119,8 @@ async function readJson(filePath, boundary) {
   return JSON.parse(await readText(filePath, boundary));
 }
 
-async function checkCatalogIntegrity({ catalog, registry }) {
-  const validation = await validateGovernanceCatalog(catalog, registry);
+async function checkCatalogIntegrity({ catalog, registry, gateRegistry, qualityProfile }) {
+  const validation = await validateGovernanceCatalog(catalog, registry, gateRegistry, qualityProfile);
   return validation.ok
     ? { pass: true, summary: "Catalog schemas, approvals, identifiers, and check links are valid." }
     : { pass: false, summary: `Catalog integrity failed with ${validation.errors.length} constraint violation(s).` };
@@ -316,6 +318,7 @@ function catalogFailure(startedAt, summary) {
       }],
     },
     blocking: true,
+    trusted: false,
   };
 }
 
@@ -330,16 +333,20 @@ export async function runGovernanceChecks(targetPath) {
   if (!layout) return catalogFailure(startedAt, "The target does not contain a recognized governance layout.");
   let catalog;
   let registry;
+  let gateRegistry;
+  let qualityProfile;
   try {
-    [catalog, registry] = await Promise.all([
+    [catalog, registry, gateRegistry, qualityProfile] = await Promise.all([
       readJson(path.join(layout.governanceRoot, "rules", "v1", "catalog.json"), layout.targetBoundary),
       readJson(path.join(layout.governanceRoot, "checks", "v1", "registry.json"), layout.targetBoundary),
+      readJson(path.join(layout.governanceRoot, "gates", "v1", "registry.json"), layout.targetBoundary),
+      readJson(path.join(layout.governanceRoot, "profiles", "v1", "engineering-quality-profile.json"), layout.targetBoundary),
     ]);
   } catch {
-    return catalogFailure(startedAt, "The canonical governance catalog or check registry could not be loaded.");
+    return catalogFailure(startedAt, "The canonical governance policy could not be loaded.");
   }
 
-  const catalogValidation = await validateGovernanceCatalog(catalog, registry);
+  const catalogValidation = await validateGovernanceCatalog(catalog, registry, gateRegistry, qualityProfile);
   if (!catalogValidation.ok) {
     return catalogFailure(startedAt, `Catalog integrity failed with ${catalogValidation.errors.length} constraint violation(s).`);
   }
@@ -353,7 +360,7 @@ export async function runGovernanceChecks(targetPath) {
     let execution;
     try {
       execution = implementation
-        ? await implementation({ layout, catalog, registry })
+        ? await implementation({ layout, catalog, registry, gateRegistry, qualityProfile })
         : { pass: false, summary: "Registered check has no implementation." };
     } catch {
       execution = { pass: false, summary: "Governance check could not complete." };
@@ -399,5 +406,6 @@ export async function runGovernanceChecks(targetPath) {
   return {
     document,
     blocking: hasBlockingGovernanceFailures(results),
+    trusted: true,
   };
 }

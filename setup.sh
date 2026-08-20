@@ -6,6 +6,8 @@ CODEX_TEMPLATE_DIR="$ROOT_DIR/codex"
 GOVERNANCE_SCHEMA_DIR="$ROOT_DIR/governance/schemas/v1"
 GOVERNANCE_RULE_DIR="$ROOT_DIR/governance/rules/v1"
 GOVERNANCE_CHECK_DIR="$ROOT_DIR/governance/checks/v1"
+GOVERNANCE_GATE_DIR="$ROOT_DIR/governance/gates/v1"
+GOVERNANCE_PROFILE_DIR="$ROOT_DIR/governance/profiles/v1"
 
 usage() {
   cat <<'USAGE'
@@ -46,6 +48,14 @@ require_codex_templates() {
   fi
   if [[ ! -f "$GOVERNANCE_RULE_DIR/catalog.json" || ! -f "$GOVERNANCE_CHECK_DIR/registry.json" ]]; then
     echo "Missing governance catalog or check registry" >&2
+    exit 1
+  fi
+  if [[ ! -f "$GOVERNANCE_GATE_DIR/registry.json" ]]; then
+    echo "Missing engineering gate registry" >&2
+    exit 1
+  fi
+  if [[ ! -f "$GOVERNANCE_PROFILE_DIR/engineering-quality-profile.json" ]]; then
+    echo "Missing engineering quality profile" >&2
     exit 1
   fi
 }
