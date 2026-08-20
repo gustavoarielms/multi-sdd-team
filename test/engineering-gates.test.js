@@ -329,6 +329,24 @@ test("executor exceptions are bounded and redaction-safe", async (t) => {
   assert.equal(invalid.document.results[0].reason_code, "EXECUTOR_INVALID_RESULT");
 });
 
+test("the orchestrator times out an executor that never resolves", async (t) => {
+  const target = await configuredTarget(t);
+  const executors = executorSet();
+  executors.production_dependency_audit = () => new Promise(() => {});
+  const nativeSetTimeout = globalThis.setTimeout;
+  t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
+    nativeSetTimeout(callback, delay === 60000 ? 20 : delay, ...args)
+  ));
+
+  const result = await runConfiguredGates(target, { executors });
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.document.outcome, "blocked");
+  assert.equal(result.document.results[3].status, "error");
+  assert.equal(result.document.results[3].reason_code, "EXECUTOR_TIMEOUT");
+  assert.equal(result.document.results.slice(4).every((item) => item.status === "not_run"), true);
+  assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+});
+
 test("bounded command execution distinguishes timeout, overflow, and functional exit", async () => {
   const timedOut = await runBoundedCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     cwd: repositoryRoot,

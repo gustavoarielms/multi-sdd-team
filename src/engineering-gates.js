@@ -142,6 +142,24 @@ export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "forbidden_references",
 ]);
 
+async function runExecutorWithTimeout(implementation, context, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => implementation(context)),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({
+          status: "error",
+          reason_code: "EXECUTOR_TIMEOUT",
+          summary: "The executor exceeded its package-owned time limit.",
+        }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function runBoundedCommand(executable, args, options) {
   const { cwd, timeoutMs, maxOutputBytes, env = process.env } = options;
   return new Promise((resolve) => {
@@ -597,7 +615,7 @@ export async function runEngineeringGates(targetPath, options = {}) {
     try {
       const implementation = implementations[registration.implementation];
       execution = implementation
-        ? await implementation({
+        ? await runExecutorWithTimeout(implementation, {
           target,
           comparisonBase: comparison.comparisonBase,
           qualityProfile: policy.profileContext,
@@ -605,7 +623,7 @@ export async function runEngineeringGates(targetPath, options = {}) {
             timeoutMs: registration.timeout_ms,
             maxOutputBytes: registration.max_output_bytes,
           },
-        })
+        }, registration.timeout_ms)
         : { status: "error", reason_code: "EXECUTOR_MISSING" };
       if (!execution || typeof execution !== "object") {
         execution = { status: "error", reason_code: "EXECUTOR_INVALID_RESULT" };
