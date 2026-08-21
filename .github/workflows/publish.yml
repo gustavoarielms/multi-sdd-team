@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+env:
+  DEBUG: ""
+  ESLINT_FLAGS: ""
+  NODE_OPTIONS: ""
+  NODE_PATH: ""
+  TIMING: ""
+
 jobs:
   publish:
     name: Publish npm package
@@ -43,6 +50,6 @@ jobs:
           node -e 'const [major, minor, patch] = process.argv[1].split(".").map(Number); if (major < 11 || (major === 11 && (minor < 5 || (minor === 5 && patch < 1)))) process.exit(1)' "$npm_version"
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - run: npm run --silent gates -- --comparison-base "$(git rev-parse HEAD^{commit})"
+      - run: env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$(git rev-parse HEAD^{commit})"
       - run: git diff --check
       - run: npm publish --ignore-scripts

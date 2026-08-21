@@ -31,7 +31,13 @@ test("package is configured for public MIT publication", async () => {
   assert.equal(metadata.version, "0.3.0");
   assert.equal(lock.version, metadata.version);
   assert.equal(lock.packages[""].version, metadata.version);
-  assert.equal(metadata.engines.node, ">=22.14.0");
+  assert.equal(metadata.engines.node, "^22.14.0 || >=24.0.0");
+  assert.deepEqual(metadata.dependencies, {
+    "@eslint/js": "10.0.1",
+    ajv: "8.20.0",
+    eslint: "10.8.1",
+    globals: "17.11.0",
+  });
   assert.deepEqual(metadata.files, [
     "README.md",
     "NOTICE.md",
@@ -104,10 +110,27 @@ test("publish workflow dogfoods gates and ignores lifecycle scripts for install 
 
   for (const command of [
     "npm ci --ignore-scripts",
-    "npm run --silent gates -- --comparison-base \"$(git rev-parse HEAD^{commit})\"",
+    "env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base \"$(git rev-parse HEAD^{commit})\"",
     "npm publish --ignore-scripts",
   ]) {
     assert.ok(runCommands.includes(command), `missing fail-closed publish command: ${command}`);
+  }
+});
+
+test("CI and publish workflows sanitize Node and ESLint control variables", async () => {
+  const expectedGateCommands = new Map([
+    ["ci.yml", 'env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"'],
+    ["publish.yml", 'env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$(git rev-parse HEAD^{commit})"'],
+  ]);
+
+  for (const [workflow, expectedGateCommand] of expectedGateCommands) {
+    const source = await fs.readFile(new URL(`../.github/workflows/${workflow}`, import.meta.url), "utf8");
+    const runCommands = [...source.matchAll(/^\s+- run: (.+)$/gm)].map((match) => match[1]);
+    for (const variable of ["DEBUG", "ESLINT_FLAGS", "NODE_OPTIONS", "NODE_PATH", "TIMING"]) {
+      assert.match(source, new RegExp(`^  ${variable}: ["']{2}$`, "m"), `${workflow} does not sanitize ${variable}`);
+    }
+    assert.ok(runCommands.includes(expectedGateCommand), `${workflow} does not invoke gates with the sanitized direct launcher`);
+    assert.doesNotMatch(source, /^\s+- run: npm run .*gates/m);
   }
 });
 
@@ -163,12 +186,16 @@ test("npm package contains only the supported Codex distribution", async (contex
     "governance/schemas/v1/rule.schema.json",
     "package.json",
     "setup.sh",
+    "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
     "src/governance-checks.js",
     "src/governance-trust.js",
     "src/governance-validator.d.ts",
     "src/governance-validator.js",
     "src/installer.js",
+    "src/node-eslint-policy.js",
+    "src/node-lint-complexity-adapter.js",
+    "src/node-lint-complexity-worker.js",
   ].sort();
 
   assert.deepEqual(paths, expected);

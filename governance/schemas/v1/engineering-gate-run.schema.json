@@ -49,13 +49,13 @@
     },
     "evidence": {
       "type": "array",
-      "minItems": 6,
+      "minItems": 7,
       "items": { "$ref": "evidence.schema.json" }
     },
     "results": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
       "items": {
         "type": "object",
         "additionalProperties": false,

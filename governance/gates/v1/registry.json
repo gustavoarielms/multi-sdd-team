@@ -10,6 +10,13 @@
       "max_output_bytes": 262144
     },
     {
+      "executor_id": "node_lint_complexity",
+      "implementation": "node_lint_complexity",
+      "rule_ids": ["ENG-LINT-ERRORS-001", "ENG-CYCLOMATIC-COMPLEXITY-001"],
+      "timeout_ms": 60000,
+      "max_output_bytes": 262144
+    },
+    {
       "executor_id": "test_suite",
       "implementation": "test_suite",
       "rule_ids": ["ENG-TEST-SUITE-001"],

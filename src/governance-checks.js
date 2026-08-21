@@ -172,7 +172,7 @@ async function checkReviewerReportOnly({ layout }) {
   return { pass: true, summary: "Codex architecture, quality, and security reviewers are report-only." };
 }
 
-async function checkReviewHandoffContract({ layout }) {
+async function reviewPromptsMatchContract(layout) {
   const reviewers = [
     ["architecture-reviewer", "architecture_reviewer", "architecture"],
     ["tester-reviewer", "tester_reviewer", "quality"],
@@ -184,8 +184,25 @@ async function checkReviewHandoffContract({ layout }) {
       || !new RegExp(`producer\\.role.{0,15}${role}`).test(codex)
       || !/producer\.runtime.{0,15}codex/.test(codex)
       || !new RegExp(`gate_type.{0,15}${gate}`).test(codex)) {
-      return { pass: false, summary: "At least one review prompt lacks its strict governance handoff contract." };
+      return false;
     }
+  }
+  return true;
+}
+
+function reviewHandoffFilesMatch(commonSchema, validator, pipeline, policy) {
+  const runtimeContract = commonSchema?.$defs?.producer?.allOf?.[0]?.then?.properties?.runtime;
+  return runtimeContract?.const === "codex"
+    && /review agents must emit exactly one gate decision/.test(validator)
+    && typeof policy === "string"
+    && /sdd-codegraph validate-result - --agent <agent_name>/.test(policy)
+    && !/validate-result[^\n]*--runtime/.test(policy)
+    && /invalid structured review output.*passing gate/i.test(pipeline);
+}
+
+async function checkReviewHandoffContract({ layout }) {
+  if (!await reviewPromptsMatchContract(layout)) {
+    return { pass: false, summary: "At least one review prompt lacks its strict governance handoff contract." };
   }
   const commonSchema = await readJson(
     path.join(layout.governanceRoot, "schemas", "v1", "common.schema.json"),
@@ -198,13 +215,7 @@ async function checkReviewHandoffContract({ layout }) {
     /<!-- multi-sdd-team: begin -->([\s\S]*?)<!-- multi-sdd-team: end -->/,
   )?.[1];
   const policy = layout.managedAgentsPolicy ? managedPolicy : policyFile;
-  const runtimeContract = commonSchema?.$defs?.producer?.allOf?.[0]?.then?.properties?.runtime;
-  const pass = runtimeContract?.const === "codex"
-    && /review agents must emit exactly one gate decision/.test(validator)
-    && typeof policy === "string"
-    && /sdd-codegraph validate-result - --agent <agent_name>/.test(policy)
-    && !/validate-result[^\n]*--runtime/.test(policy)
-    && /invalid structured review output.*passing gate/i.test(pipeline);
+  const pass = reviewHandoffFilesMatch(commonSchema, validator, pipeline, policy);
   return pass
     ? { pass: true, summary: "Review prompts and runtime validation enforce the strict handoff contract." }
     : { pass: false, summary: "Structured review runtime validation is incomplete." };
@@ -326,41 +337,24 @@ export function hasBlockingGovernanceFailures(results) {
   return results.some((result) => result.status === "fail" && result.gate_effect === "block");
 }
 
-export async function runGovernanceChecks(targetPath) {
-  const root = path.resolve(targetPath);
-  const startedAt = timestamp();
-  const layout = await resolveGovernanceLayout(root);
-  if (!layout) return catalogFailure(startedAt, "The target does not contain a recognized governance layout.");
-  let catalog;
-  let registry;
-  let gateRegistry;
-  let qualityProfile;
-  try {
-    [catalog, registry, gateRegistry, qualityProfile] = await Promise.all([
-      readJson(path.join(layout.governanceRoot, "rules", "v1", "catalog.json"), layout.targetBoundary),
-      readJson(path.join(layout.governanceRoot, "checks", "v1", "registry.json"), layout.targetBoundary),
-      readJson(path.join(layout.governanceRoot, "gates", "v1", "registry.json"), layout.targetBoundary),
-      readJson(path.join(layout.governanceRoot, "profiles", "v1", "engineering-quality-profile.json"), layout.targetBoundary),
-    ]);
-  } catch {
-    return catalogFailure(startedAt, "The canonical governance policy could not be loaded.");
-  }
+function loadGovernanceInputs(layout) {
+  return Promise.all([
+    readJson(path.join(layout.governanceRoot, "rules", "v1", "catalog.json"), layout.targetBoundary),
+    readJson(path.join(layout.governanceRoot, "checks", "v1", "registry.json"), layout.targetBoundary),
+    readJson(path.join(layout.governanceRoot, "gates", "v1", "registry.json"), layout.targetBoundary),
+    readJson(path.join(layout.governanceRoot, "profiles", "v1", "engineering-quality-profile.json"), layout.targetBoundary),
+  ]);
+}
 
-  const catalogValidation = await validateGovernanceCatalog(catalog, registry, gateRegistry, qualityProfile);
-  if (!catalogValidation.ok) {
-    return catalogFailure(startedAt, `Catalog integrity failed with ${catalogValidation.errors.length} constraint violation(s).`);
-  }
-
-  const rulesById = new Map(catalog.rules?.map((rule) => [rule.rule_id, rule]) ?? []);
-  const registered = Array.isArray(registry.checks) ? registry.checks : [];
+async function executeGovernanceChecks(registrations, context, rulesById) {
   const results = [];
   const evidence = [];
-  for (const registration of registered) {
+  for (const registration of registrations) {
     const implementation = checks[registration.check_id];
     let execution;
     try {
       execution = implementation
-        ? await implementation({ layout, catalog, registry, gateRegistry, qualityProfile })
+        ? await implementation(context)
         : { pass: false, summary: "Registered check has no implementation." };
     } catch {
       execution = { pass: false, summary: "Governance check could not complete." };
@@ -389,6 +383,38 @@ export async function runGovernanceChecks(targetPath) {
       evidence_ids: [evidenceId],
     });
   }
+  return { results, evidence };
+}
+
+export async function runGovernanceChecks(targetPath) {
+  const root = path.resolve(targetPath);
+  const startedAt = timestamp();
+  const layout = await resolveGovernanceLayout(root);
+  if (!layout) return catalogFailure(startedAt, "The target does not contain a recognized governance layout.");
+  let catalog;
+  let registry;
+  let gateRegistry;
+  let qualityProfile;
+  try {
+    [catalog, registry, gateRegistry, qualityProfile] = await loadGovernanceInputs(layout);
+  } catch {
+    return catalogFailure(startedAt, "The canonical governance policy could not be loaded.");
+  }
+
+  const catalogValidation = await validateGovernanceCatalog(catalog, registry, gateRegistry, qualityProfile);
+  if (!catalogValidation.ok) {
+    return catalogFailure(startedAt, `Catalog integrity failed with ${catalogValidation.errors.length} constraint violation(s).`);
+  }
+
+  const rulesById = new Map(catalog.rules?.map((rule) => [rule.rule_id, rule]) ?? []);
+  const registered = Array.isArray(registry.checks) ? registry.checks : [];
+  const { results, evidence } = await executeGovernanceChecks(registered, {
+    layout,
+    catalog,
+    registry,
+    gateRegistry,
+    qualityProfile,
+  }, rulesById);
 
   const completedAt = timestamp();
   const document = {

@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -17,6 +16,14 @@ import {
   validateGovernanceCatalog,
   validateGovernanceDocument,
 } from "./governance-validator.js";
+import {
+  isContained,
+  listTrackedFiles,
+  runBoundedCommand,
+} from "./engineering-gate-runtime.js";
+import { runNodeLintComplexity } from "./node-lint-complexity-adapter.js";
+
+export { runBoundedCommand } from "./engineering-gate-runtime.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const CONFIGURATION_PATH = path.join(".sdd-codegraph", "gates.json");
@@ -36,10 +43,14 @@ const REQUIRED_PACKAGE_ASSETS = Object.freeze([
   "governance/schemas/v1/engineering-gate-registry.schema.json",
   "governance/schemas/v1/engineering-gate-run.schema.json",
   "governance/schemas/v1/engineering-quality-profile.schema.json",
+  "src/engineering-gate-runtime.js",
   "src/engineering-gates.js",
   "src/governance-checks.js",
   "src/governance-trust.js",
   "src/governance-validator.js",
+  "src/node-eslint-policy.js",
+  "src/node-lint-complexity-adapter.js",
+  "src/node-lint-complexity-worker.js",
 ]);
 
 let policyPromise;
@@ -49,13 +60,14 @@ function timestamp() {
 }
 
 function boundedSummary(value, fallback) {
-  const normalized = String(value ?? fallback).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  const normalized = [...String(value ?? fallback)]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127 ? " " : character;
+    })
+    .join("")
+    .trim();
   return (normalized || fallback).slice(0, 500);
-}
-
-function isContained(root, target) {
-  const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
 function evidenceOutcome(status) {
@@ -135,6 +147,7 @@ function fallbackPolicy() {
 
 export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "javascript_syntax",
+  "node_lint_complexity",
   "test_suite",
   "governance",
   "production_dependency_audit",
@@ -158,98 +171,6 @@ async function runExecutorWithTimeout(implementation, context, timeoutMs) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-export function runBoundedCommand(executable, args, options) {
-  const { cwd, timeoutMs, maxOutputBytes, env = process.env } = options;
-  return new Promise((resolve) => {
-    const started = Date.now();
-    let settled = false;
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let outputBytes = 0;
-    let reason;
-    let child;
-    let timer;
-
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ ...result, duration_ms: Math.max(0, Date.now() - started) });
-    };
-
-    const capture = (stream, chunk) => {
-      if (settled || reason) return;
-      outputBytes += chunk.length;
-      if (outputBytes > maxOutputBytes) {
-        reason = "COMMAND_OUTPUT_LIMIT";
-        child.kill("SIGKILL");
-        return;
-      }
-      if (stream === "stdout") stdout = Buffer.concat([stdout, chunk]);
-      else stderr = Buffer.concat([stderr, chunk]);
-    };
-
-    try {
-      child = spawn(executable, args, {
-        cwd,
-        env,
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch {
-      finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" });
-      return;
-    }
-
-    timer = setTimeout(() => {
-      if (settled || reason) return;
-      reason = "COMMAND_TIMEOUT";
-      child.kill("SIGKILL");
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk) => capture("stdout", chunk));
-    child.stderr.on("data", (chunk) => capture("stderr", chunk));
-    child.on("error", () => finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" }));
-    child.on("close", (code, signal) => {
-      if (reason) {
-        finish({ status: "error", reason_code: reason });
-        return;
-      }
-      if (signal) {
-        finish({ status: "error", reason_code: "COMMAND_SIGNALLED" });
-        return;
-      }
-      finish({
-        status: "completed",
-        exit_code: code ?? 1,
-        stdout: stdout.toString("utf8"),
-        stderr: stderr.toString("utf8"),
-      });
-    });
-  });
-}
-
-async function listTrackedFiles(target, patterns, limits) {
-  const command = await runBoundedCommand("git", ["-C", target, "ls-files", "-z", "--", ...patterns], {
-    cwd: target,
-    ...limits,
-  });
-  if (command.status === "error") return command;
-  if (command.exit_code !== 0) return { status: "error", reason_code: "TRACKED_FILES_UNAVAILABLE" };
-  const files = command.stdout.split("\0").filter(Boolean).sort();
-  for (const relative of files) {
-    const absolute = path.resolve(target, relative);
-    if (!isContained(target, absolute)) return { status: "error", reason_code: "SOURCE_UNSAFE_PATH" };
-    try {
-      const real = await fs.realpath(absolute);
-      if (!isContained(target, real)) return { status: "error", reason_code: "SOURCE_UNSAFE_PATH" };
-    } catch {
-      return { status: "error", reason_code: "SOURCE_UNAVAILABLE" };
-    }
-  }
-  return { status: "completed", files };
 }
 
 async function javascriptSyntax(context) {
@@ -383,6 +304,7 @@ async function forbiddenReferences(context) {
 
 const DEFAULT_EXECUTORS = Object.freeze({
   javascript_syntax: javascriptSyntax,
+  node_lint_complexity: runNodeLintComplexity,
   test_suite: testSuite,
   governance,
   production_dependency_audit: productionDependencyAudit,
@@ -549,49 +471,14 @@ async function resolveComparisonBase(target, supplied, limits, required) {
   return { comparisonBase: { supplied_sha: supplied, effective_merge_base_sha: effective } };
 }
 
-export async function runEngineeringGates(targetPath, options = {}) {
-  const startedAt = timestamp();
-  let policy;
-  try {
-    policy = await loadPolicy();
-  } catch {
-    return blockedRun(
-      startedAt,
-      fallbackPolicy(),
-      "POLICY_UNAVAILABLE",
-      "The package-owned engineering gate policy could not be loaded trustworthily.",
-    );
-  }
-  let target;
-  try {
-    target = await fs.realpath(path.resolve(targetPath));
-  } catch {
-    return blockedRun(startedAt, policy, "TARGET_UNAVAILABLE", "The target repository could not be resolved safely.");
-  }
+function selectedProfileMatches(selected, expected) {
+  return selected.profile_id === expected.profile_id
+    && selected.profile_version === expected.profile_version
+    && selected.adapter_id === expected.adapter_id
+    && selected.adapter_version === expected.adapter_version;
+}
 
-  const configuration = await readConfiguration(target);
-  if (configuration.error) return blockedRun(startedAt, policy, configuration.error, configuration.summary);
-  const selectedProfile = configuration.configuration.quality_profile;
-  const expectedSelection = policy.profileContext;
-  if (selectedProfile.profile_id !== expectedSelection.profile_id
-    || selectedProfile.profile_version !== expectedSelection.profile_version
-    || selectedProfile.adapter_id !== expectedSelection.adapter_id
-    || selectedProfile.adapter_version !== expectedSelection.adapter_version) {
-    return blockedRun(
-      startedAt,
-      policy,
-      "CONFIGURATION_PROFILE_MISMATCH",
-      "The selected quality profile or adapter does not match package-owned policy.",
-    );
-  }
-
-  const comparison = await resolveComparisonBase(target, options.comparisonBase, {
-    timeoutMs: 30000,
-    maxOutputBytes: 262144,
-  }, policy.profile?.comparison?.required === true);
-  if (comparison.error) return blockedRun(startedAt, policy, comparison.error, comparison.summary);
-
-  const implementations = options.executors ?? DEFAULT_EXECUTORS;
+async function executeEngineeringRegistrations(policy, implementations, context) {
   const results = [];
   const evidence = [];
   let blocked = false;
@@ -616,9 +503,7 @@ export async function runEngineeringGates(targetPath, options = {}) {
       const implementation = implementations[registration.implementation];
       execution = implementation
         ? await runExecutorWithTimeout(implementation, {
-          target,
-          comparisonBase: comparison.comparisonBase,
-          qualityProfile: policy.profileContext,
+          ...context,
           limits: {
             timeoutMs: registration.timeout_ms,
             maxOutputBytes: registration.max_output_bytes,
@@ -642,6 +527,54 @@ export async function runEngineeringGates(targetPath, options = {}) {
     evidence.push(...normalized.evidence);
     if (normalized.result.status === "error") blocked = true;
   }
+  return { results, evidence };
+}
+
+export async function runEngineeringGates(targetPath, options = {}) {
+  const startedAt = timestamp();
+  let policy;
+  try {
+    policy = await loadPolicy();
+  } catch {
+    return blockedRun(
+      startedAt,
+      fallbackPolicy(),
+      "POLICY_UNAVAILABLE",
+      "The package-owned engineering gate policy could not be loaded trustworthily.",
+    );
+  }
+  let target;
+  try {
+    target = await fs.realpath(path.resolve(targetPath));
+  } catch {
+    return blockedRun(startedAt, policy, "TARGET_UNAVAILABLE", "The target repository could not be resolved safely.");
+  }
+
+  const configuration = await readConfiguration(target);
+  if (configuration.error) return blockedRun(startedAt, policy, configuration.error, configuration.summary);
+  const selectedProfile = configuration.configuration.quality_profile;
+  const expectedSelection = policy.profileContext;
+  if (!selectedProfileMatches(selectedProfile, expectedSelection)) {
+    return blockedRun(
+      startedAt,
+      policy,
+      "CONFIGURATION_PROFILE_MISMATCH",
+      "The selected quality profile or adapter does not match package-owned policy.",
+    );
+  }
+
+  const comparison = await resolveComparisonBase(target, options.comparisonBase, {
+    timeoutMs: 30000,
+    maxOutputBytes: 262144,
+  }, policy.profile?.comparison?.required === true);
+  if (comparison.error) return blockedRun(startedAt, policy, comparison.error, comparison.summary);
+
+  const implementations = options.executors ?? DEFAULT_EXECUTORS;
+  const { results, evidence } = await executeEngineeringRegistrations(policy, implementations, {
+    target,
+    comparisonBase: comparison.comparisonBase,
+    qualityProfile: policy.profileContext,
+  });
 
   const document = assembleDocument(
     startedAt,

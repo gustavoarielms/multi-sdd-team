@@ -15,6 +15,7 @@ import {
   validateEngineeringGateConfiguration,
   validateEngineeringGateRun,
 } from "../src/governance-validator.js";
+import { runNodeLintComplexity } from "../src/node-lint-complexity-adapter.js";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const cliPath = path.join(repositoryRoot, "bin", "sdd-codegraph.js");
@@ -30,6 +31,7 @@ const validConfiguration = {
   },
   executors: [
     "javascript_syntax",
+    "node_lint_complexity",
     "test_suite",
     "governance",
     "production_dependency_audit",
@@ -123,6 +125,14 @@ function executorSet(statuses = {}) {
   ]));
 }
 
+function complexitySource(symbol, branches) {
+  const conditions = Array.from(
+    { length: branches },
+    (_, index) => `  if (values[${index}]) score += 1;`,
+  ).join("\n");
+  return `export function ${symbol}(values) {\n  let score = 0;\n${conditions}\n  return score;\n}\n`;
+}
+
 test("engineering gate configuration is strict and requires the exact executor allowlist", async () => {
   assert.equal((await validateEngineeringGateConfiguration(validConfiguration)).valid, true);
   assert.equal((await validateEngineeringGateConfiguration({ ...validConfiguration, command: "npm test" })).valid, false);
@@ -175,6 +185,52 @@ test("passing and functional-failure runs preserve canonical status and exit sem
   assert.equal(failed.document.outcome, "failed");
   assert.equal(failed.document.results.at(-1).status, "pass");
   assert.equal((await validateEngineeringGateRun(failed.document)).ok, true);
+});
+
+test("the real Node lint and complexity adapter preserves runner exit and evidence semantics", async (t) => {
+  const target = await configuredTarget(t);
+  await fs.mkdir(path.join(target, "src"));
+  await fs.writeFile(path.join(target, "src", "clean.js"), "export const clean = 1;\n");
+  assert.equal(spawnSync("git", ["-C", target, "add", "--", "src/clean.js"]).status, 0);
+  const executors = executorSet();
+  executors.node_lint_complexity = runNodeLintComplexity;
+
+  const passing = await runConfiguredGates(target, { executors });
+  assert.equal(passing.exitCode, 0);
+  assert.equal(passing.document.results[1].status, "pass");
+  assert.deepEqual(passing.document.results[1].rule_ids, [
+    "ENG-LINT-ERRORS-001",
+    "ENG-CYCLOMATIC-COMPLEXITY-001",
+  ]);
+
+  await fs.writeFile(path.join(target, "src", "too-complex.js"), complexitySource("tooComplex", 15));
+  assert.equal(spawnSync("git", ["-C", target, "add", "--", "src/too-complex.js"]).status, 0);
+  const failing = await runConfiguredGates(target, { executors });
+  assert.equal(failing.exitCode, 1);
+  assert.equal(failing.document.results[1].status, "fail");
+  assert.equal(
+    failing.document.evidence.some((item) => item.location?.symbol === "tooComplex" && item.outcome === "fail"),
+    true,
+  );
+  assert.equal((await validateEngineeringGateRun(failing.document)).ok, true);
+});
+
+test("a syntax failure remains completed when the real Node adapter observes the parse error", async (t) => {
+  const target = await configuredTarget(t);
+  await fs.mkdir(path.join(target, "src"));
+  await fs.writeFile(path.join(target, "src", "invalid.js"), "export function invalid( {\n");
+  assert.equal(spawnSync("git", ["-C", target, "add", "--", "src/invalid.js"]).status, 0);
+  const executors = executorSet({ javascript_syntax: "fail" });
+  executors.node_lint_complexity = runNodeLintComplexity;
+
+  const result = await runConfiguredGates(target, { executors });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.document.outcome, "failed");
+  assert.equal(result.document.results[0].status, "fail");
+  assert.equal(result.document.results[1].status, "fail");
+  assert.equal(result.document.results[2].status, "pass");
+  assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
 });
 
 test("executor output cannot weaken package-owned deterministic policy", async (t) => {
@@ -247,13 +303,13 @@ test("result validation enforces complete governance details and evidence owners
   assert.equal((await validateEngineeringGateRun(wrongGovernanceEvidenceProducer)).ok, false);
 
   const missingGovernanceCheck = structuredClone(result.document);
-  missingGovernanceCheck.results[2].checks = [{
+  missingGovernanceCheck.results[3].checks = [{
     check_id: "governance_catalog_integrity",
     rule_id: "GOV-CATALOG-INTEGRITY-001",
     status: "pass",
     gate_effect: "block",
     summary: "Incomplete governance detail.",
-    evidence_ids: missingGovernanceCheck.results[2].evidence_ids,
+    evidence_ids: missingGovernanceCheck.results[3].evidence_ids,
   }];
   assert.equal((await validateEngineeringGateRun(missingGovernanceCheck)).ok, false);
 
@@ -282,9 +338,56 @@ test("an executor error exits two and leaves following executors not_run", async
   assert.equal(result.document.outcome, "blocked");
   assert.deepEqual(
     result.document.results.map((item) => item.status),
-    ["pass", "pass", "pass", "error", "not_run", "not_run"],
+    ["pass", "pass", "pass", "pass", "error", "not_run", "not_run"],
   );
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+});
+
+test("lint warnings are observed evidence but primary executor evidence remains mandatory", async (t) => {
+  const target = await configuredTarget(t);
+  const executors = executorSet();
+  const collectedAt = new Date().toISOString();
+  executors.node_lint_complexity = async () => ({
+    status: "pass",
+    reason_code: "NODE_LINT_COMPLEXITY_PASSED",
+    summary: "Lint passed with one informational warning.",
+    evidence: [
+      {
+        schema_version: "1.0.0",
+        evidence_id: "evidence:node_lint_complexity_summary",
+        kind: "static_analysis",
+        level: "deterministic",
+        outcome: "pass",
+        summary: "Package-owned lint and complexity policy passed.",
+        check_id: "node_lint_complexity",
+        collected_at: collectedAt,
+        collected_by: { kind: "deterministic", id: "sdd_engineering_gates", runtime: "ci" },
+        redaction: { applied: false, categories: [] },
+      },
+      {
+        schema_version: "1.0.0",
+        evidence_id: "evidence:node_lint_complexity_warning_1",
+        kind: "source_location",
+        level: "deterministic",
+        outcome: "observed",
+        summary: "One package-owned informational warning was observed.",
+        location: { path: "src/example.js", line_start: 1 },
+        check_id: "node_lint_complexity",
+        collected_at: collectedAt,
+        collected_by: { kind: "deterministic", id: "sdd_engineering_gates", runtime: "ci" },
+        redaction: { applied: false, categories: [] },
+      },
+    ],
+  });
+  const result = await runConfiguredGates(target, { executors });
+  assert.equal(result.exitCode, 0);
+  assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+
+  const noPrimary = structuredClone(result.document);
+  noPrimary.evidence.find(
+    (item) => item.evidence_id === "evidence:node_lint_complexity_summary",
+  ).outcome = "observed";
+  assert.equal((await validateEngineeringGateRun(noPrimary)).ok, false);
 });
 
 test("missing, malformed, unknown, and unsafe configuration fail closed before execution", async (t) => {
@@ -327,6 +430,14 @@ test("executor exceptions are bounded and redaction-safe", async (t) => {
   const invalid = await runConfiguredGates(target, { executors: invalidExecutors });
   assert.equal(invalid.exitCode, 2);
   assert.equal(invalid.document.results[0].reason_code, "EXECUTOR_INVALID_RESULT");
+
+  const adapterExecutors = executorSet();
+  adapterExecutors.node_lint_complexity = async () => { throw new Error("token=adapter-sensitive-value"); };
+  const adapterException = await runConfiguredGates(target, { executors: adapterExecutors });
+  assert.equal(adapterException.exitCode, 2);
+  assert.equal(adapterException.document.results[1].reason_code, "EXECUTOR_EXCEPTION");
+  assert.equal(adapterException.document.results.slice(2).every((item) => item.status === "not_run"), true);
+  assert.doesNotMatch(JSON.stringify(adapterException.document), /adapter-sensitive-value/);
 });
 
 test("the orchestrator times out an executor that never resolves", async (t) => {
@@ -341,9 +452,9 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   const result = await runConfiguredGates(target, { executors });
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.outcome, "blocked");
-  assert.equal(result.document.results[3].status, "error");
-  assert.equal(result.document.results[3].reason_code, "EXECUTOR_TIMEOUT");
-  assert.equal(result.document.results.slice(4).every((item) => item.status === "not_run"), true);
+  assert.equal(result.document.results[4].status, "error");
+  assert.equal(result.document.results[4].reason_code, "EXECUTOR_TIMEOUT");
+  assert.equal(result.document.results.slice(5).every((item) => item.status === "not_run"), true);
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
 });
 
@@ -423,8 +534,8 @@ test("unsafe tracked source paths and unknown governance layouts block execution
   assert.equal(spawnSync("git", ["-C", target, "add", "-u"], { encoding: "utf8" }).status, 0);
   const unknown = await runConfiguredGates(target);
   assert.equal(unknown.exitCode, 2);
-  assert.equal(unknown.document.results[2].reason_code, "GOVERNANCE_UNTRUSTWORTHY");
-  assert.equal(unknown.document.results.slice(3).every((item) => item.status === "not_run"), true);
+  assert.equal(unknown.document.results[3].reason_code, "GOVERNANCE_UNTRUSTWORTHY");
+  assert.equal(unknown.document.results.slice(4).every((item) => item.status === "not_run"), true);
 });
 
 test("invalid generated evidence fails the complete result contract without leaking values", async (t) => {

@@ -20,11 +20,12 @@
     },
     "executors": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 7,
+      "maxItems": 7,
       "uniqueItems": true,
       "prefixItems": [
         { "const": "javascript_syntax" },
+        { "const": "node_lint_complexity" },
         { "const": "test_suite" },
         { "const": "governance" },
         { "const": "production_dependency_audit" },

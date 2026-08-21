@@ -12,7 +12,7 @@ schemas, deterministic checks, and review contracts.
 > [`@gustavoarielms/sdd-codegraph-cli`](https://www.npmjs.com/package/@gustavoarielms/sdd-codegraph-cli).
 >
 > **Runtime requirement:** the cross-platform Node.js CLI requires Node.js
-> 22.14.0 or newer. The repository checkout also provides a Bash setup script
+> 22.14.0 through 22.x, or 24.0.0 or newer. The repository checkout also provides a Bash setup script
 > for explicit Codex-only global or project installation.
 
 ## What this package is for
@@ -40,7 +40,7 @@ schemas, deterministic checks, and review contracts.
 
 ## Requirements and installation paths
 
-- Node.js 22.14.0 or newer is required.
+- Node.js 22.14.0 through 22.x, or Node.js 24.0.0 or newer, is required.
 - Codex is the runtime that reads the installed agent and orchestration
   configuration.
 - CodeGraph is external and optional for the setup script and governance-only
@@ -85,7 +85,7 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
   is missing or stale.
 - `check-governance` emits canonical JSON and exits nonzero only for failed
   deterministic checks whose approved catalog effect is `block`.
-- `run-gates` runs the six approved deterministic engineering executors and
+- `run-gates` runs the seven approved deterministic engineering executors and
   emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
   for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
   or untrustworthy run.
@@ -105,6 +105,7 @@ The target path defaults to the current working directory.
   },
   "executors": [
     "javascript_syntax",
+    "node_lint_complexity",
     "test_suite",
     "governance",
     "production_dependency_audit",
@@ -136,11 +137,29 @@ human-approved governance catalog; target configuration and report-only
 reviewers cannot weaken deterministic results. See
 [`governance/README.md`](governance/README.md) for the result contract.
 
+Run gates from a trusted launcher and keep the checkout immutable for the
+duration of the run. The package empties the analyzer child's environment, and
+the shipped CI workflows also clear Node and ESLint control variables. For a
+sanitized local POSIX invocation, use:
+
+```bash
+env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS \
+  sdd-codegraph run-gates /absolute/path/to/repository \
+  --comparison-base 0123456789abcdef0123456789abcdef01234567
+```
+
+A process already compromised before the CLI starts, or a concurrently mutable
+checkout, is outside the runner's trust boundary.
+
 The package also ships the approved `engineering-quality-v1` profile and its
-explicit `node-v1` adapter contract. The profile fixes complexity `15`, global
+explicit `node-v1` adapter contract. Its package-owned ESLint `10.8.1` executor
+analyzes only tracked JavaScript under `bin/`, `src/`, and `test/`, rejects
+inline directives, ignores target ESLint configuration, allows classic McCabe
+complexity `15`, and blocks each function measured at `16` or more. The profile
+also fixes global
 coverage `85/80/85/85`, changed-code coverage `90/85/90/90`, required unit and
-integration semantics, and five architecture boundaries. The actual analyzer
-executors remain deliberately assigned to #10, #11, and #12.
+integration semantics, and five architecture boundaries. The remaining test,
+coverage, and architecture analyzer executors stay assigned to #11 and #12.
 
 ## Codex runtime
 
