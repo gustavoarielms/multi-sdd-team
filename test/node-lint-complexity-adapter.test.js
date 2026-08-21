@@ -128,6 +128,22 @@ test("the package-owned lint policy covers ESM and Node globals under bin, src, 
   assert.match(result.summary, /3 tracked JavaScript file\(s\)/);
 });
 
+test("ESLint parse diagnostics remain functional lint failures", async (t) => {
+  const target = await temporaryRepository(t);
+  await trackedFiles(target, {
+    "src/invalid.js": "export function invalid( {\n",
+  });
+
+  const result = await runNodeLintComplexity({ target, limits });
+
+  assert.equal(result.status, "fail");
+  assert.equal(result.reason_code, "NODE_LINT_COMPLEXITY_FAILED");
+  const finding = result.evidence.find((item) => item.location?.path === "src/invalid.js");
+  assert.ok(finding);
+  assert.equal(finding.outcome, "fail");
+  assert.match(finding.summary, /eslint-parse-error/);
+});
+
 test("lint errors block while warnings remain observed and do not change status", async (t) => {
   const target = await temporaryRepository(t);
   await trackedFiles(target, {

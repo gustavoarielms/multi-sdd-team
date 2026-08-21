@@ -215,6 +215,24 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   assert.equal((await validateEngineeringGateRun(failing.document)).ok, true);
 });
 
+test("a syntax failure remains completed when the real Node adapter observes the parse error", async (t) => {
+  const target = await configuredTarget(t);
+  await fs.mkdir(path.join(target, "src"));
+  await fs.writeFile(path.join(target, "src", "invalid.js"), "export function invalid( {\n");
+  assert.equal(spawnSync("git", ["-C", target, "add", "--", "src/invalid.js"]).status, 0);
+  const executors = executorSet({ javascript_syntax: "fail" });
+  executors.node_lint_complexity = runNodeLintComplexity;
+
+  const result = await runConfiguredGates(target, { executors });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.document.outcome, "failed");
+  assert.equal(result.document.results[0].status, "fail");
+  assert.equal(result.document.results[1].status, "fail");
+  assert.equal(result.document.results[2].status, "pass");
+  assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+});
+
 test("executor output cannot weaken package-owned deterministic policy", async (t) => {
   const target = await configuredTarget(t);
   const executors = executorSet();

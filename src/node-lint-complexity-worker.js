@@ -10,6 +10,7 @@ import {
 } from "./node-eslint-policy.js";
 
 const MAX_DIAGNOSTICS_PER_KIND = 50;
+const PARSE_ERROR_RULE_ID = "eslint-parse-error";
 const COMPLEXITY_MESSAGE = /^(?<kind>.+) has a complexity of (?<value>[0-9]+)\. Maximum allowed is (?<threshold>[0-9]+)\.$/u;
 const NAMED_SYMBOL = /^(?:Async )?(?:Function|function|Generator function|generator function|Method|method) '(?<symbol>[^']+)'$/u;
 
@@ -29,11 +30,15 @@ function normalizeLocation(target, result, message) {
 }
 
 function normalizeMessage(target, result, message) {
-  if (!message.ruleId || !Number.isInteger(message.line) || !Number.isInteger(message.column)) {
+  const ruleId = message.ruleId === null && message.fatal === true
+    ? PARSE_ERROR_RULE_ID
+    : message.ruleId;
+  if (typeof ruleId !== "string" || ruleId.length === 0
+    || !Number.isInteger(message.line) || !Number.isInteger(message.column)) {
     throw new Error("malformed analyzer diagnostic");
   }
   return {
-    rule_id: message.ruleId,
+    rule_id: ruleId,
     ...(message.messageId ? { message_id: message.messageId } : {}),
     ...normalizeLocation(target, result, message),
   };
