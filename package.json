@@ -7,7 +7,7 @@
     "sdd-codegraph": "bin/sdd-codegraph.js"
   },
   "engines": {
-    "node": ">=22.14.0"
+    "node": "^22.14.0 || >=24.0.0"
   },
   "license": "MIT",
   "author": "rcarnicer (original project)",
@@ -47,7 +47,7 @@
     "setup.sh"
   ],
   "scripts": {
-    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/engineering-gates.js && npm test",
+    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/engineering-gate-runtime.js && node --check src/node-eslint-policy.js && node --check src/node-lint-complexity-worker.js && node --check src/node-lint-complexity-adapter.js && node --check src/engineering-gates.js && npm test",
     "check:governance": "node --test test/governance-schema.test.js test/governance-checks.test.js",
     "gates": "node bin/sdd-codegraph.js run-gates .",
     "governance": "node bin/sdd-codegraph.js check-governance .",
@@ -55,6 +55,9 @@
     "test": "node --test"
   },
   "dependencies": {
-    "ajv": "8.20.0"
+    "@eslint/js": "10.0.1",
+    "ajv": "8.20.0",
+    "eslint": "10.8.1",
+    "globals": "17.11.0"
   }
 }

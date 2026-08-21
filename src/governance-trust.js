@@ -27,6 +27,12 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
     timeout_ms: 30000,
     max_output_bytes: 262144,
   }),
+  node_lint_complexity: Object.freeze({
+    implementation: "node_lint_complexity",
+    rule_ids: Object.freeze(["ENG-LINT-ERRORS-001", "ENG-CYCLOMATIC-COMPLEXITY-001"]),
+    timeout_ms: 60000,
+    max_output_bytes: 262144,
+  }),
   test_suite: Object.freeze({
     implementation: "test_suite",
     rule_ids: Object.freeze(["ENG-TEST-SUITE-001"]),

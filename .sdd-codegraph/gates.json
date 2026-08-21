@@ -8,6 +8,7 @@
   },
   "executors": [
     "javascript_syntax",
+    "node_lint_complexity",
     "test_suite",
     "governance",
     "production_dependency_audit",

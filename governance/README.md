@@ -139,10 +139,11 @@ incomplete layouts fail closed with a bounded machine-readable result.
 `sdd-codegraph run-gates [target]` reads the target's
 `.sdd-codegraph/gates.json`, validates the exact v1 executor allowlist, runs the
 package-owned executors in registry order, validates the complete result, and
-writes one `engineering-gate-run` JSON document to stdout. The six executors
-cover tracked JavaScript and shell syntax, the repository test suite, the five
-individual governance checks, production dependency audit, npm package
-surface, and approved forbidden references.
+writes one `engineering-gate-run` JSON document to stdout. The seven executors
+cover tracked JavaScript and shell syntax, package-owned Node.js lint and
+per-function complexity, the repository test suite, the five individual
+governance checks, production dependency audit, npm package surface, and
+approved forbidden references.
 
 Executor states are deliberately distinct:
 
@@ -163,9 +164,18 @@ The configuration cannot supply commands, plugins, effects, exceptions, or
 baselines, and a reviewer cannot override a deterministic failure or error.
 Child processes use fixed argument arrays without a shell, target paths are
 real-path contained, output and time are bounded by the executor registry, and
-only normalized reason codes, counts, summaries, and redaction metadata enter
-the canonical document. The npm executors use a disposable cache so a broken
-user cache cannot change the gate result.
+only normalized reason codes, counts, bounded source locations, summaries, and
+redaction metadata enter the canonical document. The npm executors use a
+disposable cache so a broken user cache cannot change the gate result.
+
+The runner must start from a trusted launcher, and its checkout must remain
+immutable while gates execute. The package-owned analyzer child receives an
+empty environment, while the shipped CI and publish workflows explicitly clear
+Node and ESLint control variables. This prevents target or ambient
+`NODE_OPTIONS`, `NODE_PATH`, `TIMING`, `DEBUG`, and `ESLINT_FLAGS` values from
+changing analyzer execution or its JSON protocol. Compromise before the parent
+Node process starts and concurrent local mutation of the checkout remain
+outside the runner's trust boundary.
 
 ## Engineering Quality Profile v1
 
@@ -187,10 +197,12 @@ The generic profile fixes these blocking semantics:
 
 The embedded `node-v1` adapter contract fixes source and test roots, supported
 Node versions, tool identities, disabled target configuration, rejected inline
-suppressions, and offline execution. Analyzer versions become exact package
-dependencies when #10, #11, and #12 implement their respective adapters; the
-built-in test runner remains bound to the supported Node runtime. This profile
-foundation does not execute those analyzers early.
+suppressions, and offline execution. The lint and complexity executor uses the
+package dependency ESLint `10.8.1`, the recommended `@eslint/js` rules as
+errors, Node built-in globals, ESM source semantics, and classic McCabe maximum
+`15` for every function. Warnings remain informational evidence. The built-in
+test runner remains bound to the supported Node runtime; the #11 and #12
+analyzers remain future work.
 
 Because changed-code coverage is blocking, `run-gates` requires an explicit
 full comparison commit and records both the supplied SHA and effective merge

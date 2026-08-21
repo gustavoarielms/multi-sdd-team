@@ -9,6 +9,13 @@ on:
 permissions:
   contents: read
 
+env:
+  DEBUG: ""
+  ESLINT_FLAGS: ""
+  NODE_OPTIONS: ""
+  NODE_PATH: ""
+  TIMING: ""
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -51,7 +58,7 @@ jobs:
           node-version: 24.19.0
           package-manager-cache: false
       - run: npm ci
-      - run: npm run --silent gates -- --comparison-base "$COMPARISON_BASE"
+      - run: env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"
         env:
           COMPARISON_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       - name: Validate JSON and TOML
