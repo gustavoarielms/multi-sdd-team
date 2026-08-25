@@ -409,6 +409,19 @@ function validateApprovedRuleBindings(catalog, errors) {
   }
 }
 
+function validateDeprecatedRuleLifecycle(catalog, gateRegistry, errors) {
+  const activeRuleIds = new Set(gateRegistry.executors.flatMap((executor) => executor.rule_ids));
+  for (const rule of catalog.rules.filter((candidate) => candidate.status === "deprecated")) {
+    if (rule.enforcement.mode === "deterministic"
+      || rule.enforcement.gate_effect !== "none"
+      || rule.enforcement.automation
+      || activeRuleIds.has(rule.rule_id)
+      || APPROVED_GOVERNANCE_RULES[rule.rule_id]) {
+      errors.push("deprecated rule retains an active deterministic binding");
+    }
+  }
+}
+
 export async function validateGovernanceCatalog(catalog, registry, engineeringGateRegistry, engineeringQualityProfile) {
   const gateRegistry = engineeringGateRegistry ?? await loadEngineeringGateRegistry();
   const qualityProfile = engineeringQualityProfile ?? await loadEngineeringQualityProfile();
@@ -442,6 +455,7 @@ export async function validateGovernanceCatalog(catalog, registry, engineeringGa
 
   validateApprovedRuleSet(catalog, errors);
   validateApprovedRuleBindings(catalog, errors);
+  validateDeprecatedRuleLifecycle(catalog, gateRegistry, errors);
 
   return errors.length === 0
     ? { ok: true, value: catalog, errors: [] }
@@ -544,6 +558,56 @@ function validateGovernanceSubresults(result, value, checkRegistry, rulesById, e
   if (result.status !== expectedStatus) errors.push("governance executor status does not match its subresults");
 }
 
+function validateCoverageEvidence(check, result, value, errors) {
+  if (check.evidence_ids.length !== 1) errors.push("coverage subresult must own exactly one evidence item");
+  const evidenceId = check.evidence_ids[0];
+  if (!result.evidence_ids.includes(evidenceId)) errors.push("coverage subresult evidence is absent from its executor");
+  const evidence = value.evidence.find((candidate) => candidate.evidence_id === evidenceId);
+  if (evidence?.check_id !== check.check_id) errors.push("coverage evidence belongs to another subresult");
+  const notApplicable = check.check_id === "coverage_changed"
+    && check.status === "pass"
+    && check.gate_effect === "none"
+    && check.evidence_ids.length === 1
+    && evidence?.check_id === "coverage_changed"
+    && evidence.outcome === "not_applicable";
+  const expectedOutcome = check.status === "pass" ? "pass" : "fail";
+  if (!notApplicable && evidence?.outcome !== expectedOutcome) {
+    errors.push("coverage evidence outcome does not match its subresult");
+  }
+  return notApplicable;
+}
+
+function validateCoverageCheck(check, binding, result, value, errors) {
+  if (!binding || check.check_id !== binding[0] || check.rule_id !== binding[1]) {
+    errors.push("coverage subresult rule binding does not match canonical policy");
+  }
+  const notApplicable = validateCoverageEvidence(check, result, value, errors);
+  if (check.check_id === "coverage_global" && check.gate_effect !== "block") {
+    errors.push("global coverage must remain blocking");
+  }
+  if (check.check_id === "coverage_changed" && !notApplicable && check.gate_effect !== "block") {
+    errors.push("changed coverage must remain blocking unless it is exactly not applicable");
+  }
+}
+
+function validateCoverageSubresults(result, value, errors) {
+  const expected = [["coverage_global", "TEST-COVERAGE-GLOBAL-001"], ["coverage_changed", "TEST-COVERAGE-CHANGED-001"]];
+  const checks = result.checks ?? [];
+  if (checks.length !== expected.length) errors.push("coverage subresults do not match the canonical check order");
+  checks.forEach((check, index) => validateCoverageCheck(check, expected[index], result, value, errors));
+  const expectedEvidenceIds = [];
+  for (const check of checks) {
+    for (const evidenceId of check.evidence_ids) {
+      if (!expectedEvidenceIds.includes(evidenceId)) expectedEvidenceIds.push(evidenceId);
+    }
+  }
+  if (JSON.stringify(result.evidence_ids) !== JSON.stringify(expectedEvidenceIds)) {
+    errors.push("coverage executor evidence must equal the ordered deduplicated subresult union");
+  }
+  const expectedStatus = checks.every((check) => check.status === "pass") ? "pass" : "fail";
+  if (result.status !== expectedStatus) errors.push("coverage executor status does not match its subresults");
+}
+
 function validateExecutorEvidenceOutcomes(result, value, errors) {
   const expectedOutcome = result.status === "pass"
     ? "pass"
@@ -574,13 +638,19 @@ function validateEngineeringResult(result, expected, context, errorSeen) {
   }
   const nextErrorSeen = validateEngineeringExecutionOrder(result, value.run_error, errorSeen, errors);
   validateEngineeringEvidenceOwnership(result, value, referencedCounts, errors);
-  if (result.executor_id !== "governance" && result.checks) {
-    errors.push("only the governance executor may contain governance subresults");
+  if (!["governance", "coverage"].includes(result.executor_id) && result.checks) {
+    errors.push("executor contains unsupported subresults");
   }
   if (result.executor_id === "governance" && ["pass", "fail"].includes(result.status)) {
     validateGovernanceSubresults(result, value, checkRegistry, rulesById, errors);
   }
-  if (result.executor_id !== "governance" || !result.checks) {
+  if (result.executor_id === "coverage" && ["pass", "fail"].includes(result.status)) {
+    validateCoverageSubresults(result, value, errors);
+  }
+  if (result.executor_id === "coverage" && result.status === "error" && result.checks) {
+    errors.push("coverage error result cannot contain subresults");
+  }
+  if (!["governance", "coverage"].includes(result.executor_id) || !result.checks) {
     validateExecutorEvidenceOutcomes(result, value, errors);
   }
   return nextErrorSeen;

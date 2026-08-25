@@ -1,10 +1,64 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 export function isContained(root, target) {
   const relative = path.relative(root, target);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+const WINDOWS_TREE_KILL_TIMEOUT_MS = 5000;
+
+function windowsTreeKillerPath() {
+  const systemRoot = typeof process.env.SystemRoot === "string" && path.win32.isAbsolute(process.env.SystemRoot)
+    ? process.env.SystemRoot
+    : "C:\\Windows";
+  return path.win32.join(systemRoot, "System32", "taskkill.exe");
+}
+
+function validWindowsTreeKiller(executable) {
+  return typeof executable === "string"
+    && path.win32.isAbsolute(executable)
+    && path.win32.basename(executable).toLowerCase() === "taskkill.exe"
+    && path.win32.basename(path.win32.dirname(executable)).toLowerCase() === "system32";
+}
+
+async function terminateWindowsWithSystemTool({ executable, args }) {
+  spawnSync(executable, args, {
+    shell: false,
+    stdio: "ignore",
+    windowsHide: true,
+    timeout: WINDOWS_TREE_KILL_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+}
+
+function resolvedTerminationControl(injected) {
+  return {
+    platform: injected?.platform ?? process.platform,
+    windowsExecutable: injected?.windowsExecutable ?? windowsTreeKillerPath(),
+    terminateWindows: injected?.terminateWindows ?? terminateWindowsWithSystemTool,
+  };
+}
+
+async function terminateProcessTree(child, control) {
+  if (!child?.pid) return;
+  if (control.platform === "win32") {
+    if (!validWindowsTreeKiller(control.windowsExecutable)) throw new Error("unsafe Windows tree killer path");
+    await control.terminateWindows({
+      executable: control.windowsExecutable,
+      args: ["/pid", String(child.pid), "/t", "/f"],
+      pid: child.pid,
+      timeoutMs: WINDOWS_TREE_KILL_TIMEOUT_MS,
+    });
+    try { child.kill("SIGKILL"); } catch { /* The root already exited with its tree. */ }
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch { /* The process group already exited. */ }
+  }
 }
 
 export function runBoundedCommand(executable, args, options) {
@@ -14,7 +68,10 @@ export function runBoundedCommand(executable, args, options) {
     maxOutputBytes,
     env = process.env,
     input,
+    signal,
+    terminationControl: injectedTerminationControl,
   } = options;
+  const terminationControl = resolvedTerminationControl(injectedTerminationControl);
   return new Promise((resolve) => {
     const started = Date.now();
     let settled = false;
@@ -24,12 +81,27 @@ export function runBoundedCommand(executable, args, options) {
     let reason;
     let child;
     let timer;
+    let terminationPromise;
+
+    const terminate = () => {
+      terminationPromise ??= terminateProcessTree(child, terminationControl).catch(() => {
+        try { child?.kill("SIGKILL"); } catch { /* The root already exited. */ }
+      });
+      return terminationPromise;
+    };
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       resolve({ ...result, duration_ms: Math.max(0, Date.now() - started) });
+    };
+
+    const abort = () => {
+      if (settled || reason) return;
+      reason = "EXECUTOR_ABORTED";
+      terminate();
     };
 
     const capture = (stream, chunk) => {
@@ -37,7 +109,7 @@ export function runBoundedCommand(executable, args, options) {
       outputBytes += chunk.length;
       if (outputBytes > maxOutputBytes) {
         reason = "COMMAND_OUTPUT_LIMIT";
-        child.kill("SIGKILL");
+        terminate();
         return;
       }
       if (stream === "stdout") stdout = Buffer.concat([stdout, chunk]);
@@ -48,6 +120,7 @@ export function runBoundedCommand(executable, args, options) {
       child = spawn(executable, args, {
         cwd,
         env,
+        detached: process.platform !== "win32",
         shell: false,
         stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
@@ -59,14 +132,21 @@ export function runBoundedCommand(executable, args, options) {
     timer = setTimeout(() => {
       if (settled || reason) return;
       reason = "COMMAND_TIMEOUT";
-      child.kill("SIGKILL");
+      terminate();
     }, timeoutMs);
+
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.on("data", (chunk) => capture("stdout", chunk));
     child.stderr.on("data", (chunk) => capture("stderr", chunk));
-    child.on("error", () => finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" }));
-    child.on("close", (code, signal) => {
+    child.on("error", async () => {
+      if (reason) await terminationPromise;
+      finish({ status: "error", reason_code: reason ?? "COMMAND_SPAWN_FAILED" });
+    });
+    child.on("close", async (code, signal) => {
       if (reason) {
+        await terminationPromise;
         finish({ status: "error", reason_code: reason });
         return;
       }
@@ -89,13 +169,14 @@ export function runBoundedCommand(executable, args, options) {
 }
 
 export async function listTrackedFiles(target, patterns, limits) {
-  const command = await runBoundedCommand("git", ["-C", target, "ls-files", "-z", "--", ...patterns], {
-    cwd: target,
-    ...limits,
-  });
-  if (command.status === "error") return command;
-  if (command.exit_code !== 0) return { status: "error", reason_code: "TRACKED_FILES_UNAVAILABLE" };
-  const files = command.stdout.split("\0").filter(Boolean).sort();
+  const [command, deletedCommand] = await Promise.all([
+    runBoundedCommand("git", ["-C", target, "ls-files", "-z", "--", ...patterns], { cwd: target, ...limits }),
+    runBoundedCommand("git", ["-C", target, "ls-files", "-z", "--deleted", "--", ...patterns], { cwd: target, ...limits }),
+  ]);
+  if (command.status === "error" || deletedCommand.status === "error") return command.status === "error" ? command : deletedCommand;
+  if (command.exit_code !== 0 || deletedCommand.exit_code !== 0) return { status: "error", reason_code: "TRACKED_FILES_UNAVAILABLE" };
+  const deleted = new Set(deletedCommand.stdout.split("\0").filter(Boolean));
+  const files = command.stdout.split("\0").filter((relative) => relative && !deleted.has(relative)).sort();
   let realTarget;
   try {
     realTarget = await fs.realpath(target);

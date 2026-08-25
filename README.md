@@ -85,7 +85,7 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
   is missing or stale.
 - `check-governance` emits canonical JSON and exits nonzero only for failed
   deterministic checks whose approved catalog effect is `block`.
-- `run-gates` runs the seven approved deterministic engineering executors and
+- `run-gates` runs the nine approved deterministic engineering executors and
   emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
   for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
   or untrustworthy run.
@@ -106,7 +106,9 @@ The target path defaults to the current working directory.
   "executors": [
     "javascript_syntax",
     "node_lint_complexity",
-    "test_suite",
+    "unit_tests",
+    "integration_tests",
+    "coverage",
     "governance",
     "production_dependency_audit",
     "npm_package_surface",
@@ -139,11 +141,13 @@ reviewers cannot weaken deterministic results. See
 
 Run gates from a trusted launcher and keep the checkout immutable for the
 duration of the run. The package empties the analyzer child's environment, and
-the shipped CI workflows also clear Node and ESLint control variables. For a
+the shipped CI workflows also clear Node, ESLint, c8, V8 coverage, and nyc
+control variables. For a
 sanitized local POSIX invocation, use:
 
 ```bash
-env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS \
+env -u C8_CONFIG -u C8_REPORTER -u NODE_OPTIONS -u NODE_PATH \
+  -u NODE_V8_COVERAGE -u NYC_CONFIG -u TIMING -u DEBUG -u ESLINT_FLAGS \
   sdd-codegraph run-gates /absolute/path/to/repository \
   --comparison-base 0123456789abcdef0123456789abcdef01234567
 ```
@@ -158,8 +162,10 @@ inline directives, ignores target ESLint configuration, allows classic McCabe
 complexity `15`, and blocks each function measured at `16` or more. The profile
 also fixes global
 coverage `85/80/85/85`, changed-code coverage `90/85/90/90`, required unit and
-integration semantics, and five architecture boundaries. The remaining test,
-coverage, and architecture analyzer executors stay assigned to #11 and #12.
+integration semantics, and five architecture boundaries. Unit, integration,
+and combined exact-count coverage are enforced with package-owned `c8@12.0.0`
+and `istanbul-lib-coverage@3.2.2` executors;
+architecture analyzer executors remain assigned to #12.
 
 ## Codex runtime
 

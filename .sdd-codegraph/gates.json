@@ -9,7 +9,9 @@
   "executors": [
     "javascript_syntax",
     "node_lint_complexity",
-    "test_suite",
+    "unit_tests",
+    "integration_tests",
+    "coverage",
     "governance",
     "production_dependency_audit",
     "npm_package_surface",

@@ -22,6 +22,9 @@ import {
   runBoundedCommand,
 } from "./engineering-gate-runtime.js";
 import { runNodeLintComplexity } from "./node-lint-complexity-adapter.js";
+import { runNodeCoverage } from "./node-coverage-adapter.js";
+import { runIntegrationTests, runUnitTests } from "./node-test-suite-adapter.js";
+import { runTrustedGit } from "./git-change-selector.js";
 
 export { runBoundedCommand } from "./engineering-gate-runtime.js";
 
@@ -48,9 +51,14 @@ const REQUIRED_PACKAGE_ASSETS = Object.freeze([
   "src/governance-checks.js",
   "src/governance-trust.js",
   "src/governance-validator.js",
+  "src/coverage-map-worker.js",
+  "src/git-change-selector.js",
+  "src/node-coverage-adapter.js",
   "src/node-eslint-policy.js",
   "src/node-lint-complexity-adapter.js",
   "src/node-lint-complexity-worker.js",
+  "src/node-test-reporter.js",
+  "src/node-test-suite-adapter.js",
 ]);
 
 let policyPromise;
@@ -148,7 +156,9 @@ function fallbackPolicy() {
 export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "javascript_syntax",
   "node_lint_complexity",
-  "test_suite",
+  "unit_tests",
+  "integration_tests",
+  "coverage",
   "governance",
   "production_dependency_audit",
   "npm_package_surface",
@@ -156,18 +166,26 @@ export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
 ]);
 
 async function runExecutorWithTimeout(implementation, context, timeoutMs) {
+  const controller = new AbortController();
   let timer;
+  let timedOut = false;
   try {
-    return await Promise.race([
-      Promise.resolve().then(() => implementation(context)),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve({
-          status: "error",
-          reason_code: "EXECUTOR_TIMEOUT",
-          summary: "The executor exceeded its package-owned time limit.",
-        }), timeoutMs);
-      }),
-    ]);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    const execution = await Promise.resolve().then(() => implementation({
+      ...context,
+      signal: controller.signal,
+      limits: { ...context.limits, signal: controller.signal },
+    }));
+    return timedOut
+      ? {
+        status: "error",
+        reason_code: "EXECUTOR_TIMEOUT",
+        summary: "The executor exceeded its package-owned time limit and completed cancellation cleanup.",
+      }
+      : execution;
   } finally {
     clearTimeout(timer);
   }
@@ -194,14 +212,6 @@ async function javascriptSyntax(context) {
     reason_code: "SOURCE_SYNTAX_PASSED",
     summary: `Syntax validation passed for ${listed.files.length} tracked JavaScript and shell file(s).`,
   };
-}
-
-async function testSuite(context) {
-  const command = await runBoundedCommand(process.execPath, ["--test"], { cwd: context.target, ...context.limits });
-  if (command.status === "error") return command;
-  return command.exit_code === 0
-    ? { status: "pass", reason_code: "TEST_SUITE_PASSED", summary: "The repository test suite completed successfully." }
-    : { status: "fail", reason_code: "TEST_SUITE_FAILED", summary: "The repository test suite completed with a functional failure." };
 }
 
 async function governance(context) {
@@ -258,6 +268,13 @@ async function productionDependencyAudit(context) {
     : { status: "fail", reason_code: "DEPENDENCY_AUDIT_FAILED", summary: `The production dependency audit reported ${vulnerabilities.total} vulnerability finding(s).` };
 }
 
+export function evaluatePackageSurface(files) {
+  const missing = REQUIRED_PACKAGE_ASSETS.filter((asset) => !files.includes(asset));
+  return missing.length === 0
+    ? { status: "pass", reason_code: "PACKAGE_SURFACE_PASSED", summary: `The package dry run contains all required runner assets across ${files.length} file(s).` }
+    : { status: "fail", reason_code: "PACKAGE_SURFACE_FAILED", summary: `The package dry run is missing ${missing.length} required runner asset(s).` };
+}
+
 async function npmPackageSurface(context) {
   const command = await withTemporaryNpmCache((env) => runBoundedCommand(
     npmExecutable(),
@@ -273,10 +290,7 @@ async function npmPackageSurface(context) {
   } catch {
     return { status: "error", reason_code: "PACKAGE_DRY_RUN_MALFORMED" };
   }
-  const missing = REQUIRED_PACKAGE_ASSETS.filter((asset) => !files.includes(asset));
-  return missing.length === 0
-    ? { status: "pass", reason_code: "PACKAGE_SURFACE_PASSED", summary: `The package dry run contains all required runner assets across ${files.length} file(s).` }
-    : { status: "fail", reason_code: "PACKAGE_SURFACE_FAILED", summary: `The package dry run is missing ${missing.length} required runner asset(s).` };
+  return evaluatePackageSurface(files);
 }
 
 async function forbiddenReferences(context) {
@@ -305,7 +319,9 @@ async function forbiddenReferences(context) {
 const DEFAULT_EXECUTORS = Object.freeze({
   javascript_syntax: javascriptSyntax,
   node_lint_complexity: runNodeLintComplexity,
-  test_suite: testSuite,
+  unit_tests: runUnitTests,
+  integration_tests: runIntegrationTests,
+  coverage: runNodeCoverage,
   governance,
   production_dependency_audit: productionDependencyAudit,
   npm_package_surface: npmPackageSurface,
@@ -453,17 +469,11 @@ async function resolveComparisonBase(target, supplied, limits, required) {
   if (!/^[a-f0-9]{40}$/.test(supplied)) {
     return { error: "COMPARISON_BASE_INVALID", summary: "The comparison base must be one full lowercase commit SHA." };
   }
-  const exists = await runBoundedCommand("git", ["-C", target, "cat-file", "-e", `${supplied}^{commit}`], {
-    cwd: target,
-    ...limits,
-  });
+  const exists = await runTrustedGit(target, ["cat-file", "-e", `${supplied}^{commit}`], limits);
   if (exists.status === "error" || exists.exit_code !== 0) {
     return { error: "COMPARISON_BASE_UNAVAILABLE", summary: "The supplied comparison commit is unavailable in the target repository." };
   }
-  const mergeBase = await runBoundedCommand("git", ["-C", target, "merge-base", supplied, "HEAD"], {
-    cwd: target,
-    ...limits,
-  });
+  const mergeBase = await runTrustedGit(target, ["merge-base", supplied, "HEAD"], limits);
   const effective = mergeBase.stdout?.trim();
   if (mergeBase.status === "error" || mergeBase.exit_code !== 0 || !/^[a-f0-9]{40}$/.test(effective)) {
     return { error: "COMPARISON_BASE_UNAVAILABLE", summary: "A trustworthy merge base could not be resolved." };

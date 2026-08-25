@@ -10,10 +10,14 @@ permissions:
   contents: read
 
 env:
+  C8_CONFIG: ""
+  C8_REPORTER: ""
   DEBUG: ""
   ESLINT_FLAGS: ""
   NODE_OPTIONS: ""
   NODE_PATH: ""
+  NODE_V8_COVERAGE: ""
+  NYC_CONFIG: ""
   TIMING: ""
 
 concurrency:
@@ -58,7 +62,7 @@ jobs:
           node-version: 24.19.0
           package-manager-cache: false
       - run: npm ci
-      - run: env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"
+      - run: env -u C8_CONFIG -u C8_REPORTER -u NODE_OPTIONS -u NODE_PATH -u NODE_V8_COVERAGE -u NYC_CONFIG -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"
         env:
           COMPARISON_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       - name: Validate JSON and TOML
