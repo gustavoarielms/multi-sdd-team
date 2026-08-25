@@ -46,18 +46,32 @@ function validLocation(location, sourceLineCount) {
     || (location.start.line === location.end.line && location.start.column <= location.end.column);
 }
 
+function validChangedDescriptor(changed) {
+  return changed
+    && Array.isArray(changed.intervals)
+    && Number.isSafeInteger(changed.total)
+    && changed.total >= 0
+    && Number.isSafeInteger(changed.sourceLineCount)
+    && changed.sourceLineCount >= 0;
+}
+
+function changedIntervalLength(interval, previousEnd, sourceLineCount) {
+  const valid = Number.isSafeInteger(interval?.start)
+    && Number.isSafeInteger(interval?.end)
+    && interval.start > previousEnd
+    && interval.start >= 1
+    && interval.end >= interval.start
+    && interval.end <= sourceLineCount;
+  if (!valid) throw new Error("Invalid coverage location.");
+  return interval.end - interval.start + 1;
+}
+
 function validateChangedIntervals(changed) {
-  if (!changed || !Array.isArray(changed.intervals) || !Number.isSafeInteger(changed.total)
-    || changed.total < 0 || !Number.isSafeInteger(changed.sourceLineCount) || changed.sourceLineCount < 0) {
-    throw new Error("Invalid coverage location.");
-  }
+  if (!validChangedDescriptor(changed)) throw new Error("Invalid coverage location.");
   let total = 0;
   let previousEnd = 0;
   for (const interval of changed.intervals) {
-    if (!Number.isSafeInteger(interval?.start) || !Number.isSafeInteger(interval?.end)
-      || interval.start <= previousEnd || interval.start < 1 || interval.end < interval.start
-      || interval.end > changed.sourceLineCount) throw new Error("Invalid coverage location.");
-    total += interval.end - interval.start + 1;
+    total += changedIntervalLength(interval, previousEnd, changed.sourceLineCount);
     if (!Number.isSafeInteger(total)) throw new Error("Invalid coverage location.");
     previousEnd = interval.end;
   }
@@ -90,7 +104,18 @@ function addCount(counts, metric, covered) {
 export function selectChangedCoverage(fileCoverage, changed, budget = { used: 0 }) {
   validateChangedIntervals(changed);
   const counts = Object.fromEntries(METRICS.map((metric) => [metric, { covered: 0, total: 0 }]));
-  for (const [line, hits] of Object.entries(fileCoverage.getLineCoverage())) {
+  selectChangedLines(fileCoverage.getLineCoverage(), changed, budget, counts);
+  selectMappedLocations(fileCoverage.statementMap, fileCoverage.s, "statements", changed, budget, counts);
+  const functionLocations = Object.fromEntries(
+    Object.entries(fileCoverage.fnMap).map(([identifier, definition]) => [identifier, definition.loc]),
+  );
+  selectMappedLocations(functionLocations, fileCoverage.f, "functions", changed, budget, counts);
+  selectChangedBranches(fileCoverage.branchMap, fileCoverage.b, changed, budget, counts);
+  return counts;
+}
+
+function selectChangedLines(lineCoverage, changed, budget, counts) {
+  for (const [line, hits] of Object.entries(lineCoverage)) {
     consumeLocation(budget);
     const lineNumber = Number(line);
     if (!Number.isSafeInteger(lineNumber) || lineNumber < 1 || lineNumber > changed.sourceLineCount
@@ -99,16 +124,18 @@ export function selectChangedCoverage(fileCoverage, changed, budget = { used: 0 
       addCount(counts, "lines", hits > 0);
     }
   }
-  for (const [identifier, location] of Object.entries(fileCoverage.statementMap)) {
+}
+
+function selectMappedLocations(locationMap, hitsMap, metric, changed, budget, counts) {
+  for (const [identifier, location] of Object.entries(locationMap)) {
     consumeLocation(budget);
-    if (intersects(location, changed)) addCount(counts, "statements", fileCoverage.s[identifier] > 0);
+    if (intersects(location, changed)) addCount(counts, metric, hitsMap[identifier] > 0);
   }
-  for (const [identifier, definition] of Object.entries(fileCoverage.fnMap)) {
-    consumeLocation(budget);
-    if (intersects(definition.loc, changed)) addCount(counts, "functions", fileCoverage.f[identifier] > 0);
-  }
-  for (const [identifier, definition] of Object.entries(fileCoverage.branchMap)) {
-    const hits = fileCoverage.b[identifier];
+}
+
+function selectChangedBranches(branchMap, branchHits, changed, budget, counts) {
+  for (const [identifier, definition] of Object.entries(branchMap)) {
+    const hits = branchHits[identifier];
     if (!Array.isArray(definition.locations) || !Array.isArray(hits) || definition.locations.length !== hits.length) {
       throw new Error("Invalid coverage location.");
     }
@@ -117,7 +144,6 @@ export function selectChangedCoverage(fileCoverage, changed, budget = { used: 0 
       if (intersects(location, changed)) addCount(counts, "branches", hits[index] > 0);
     });
   }
-  return counts;
 }
 
 function abortError() {
@@ -255,12 +281,35 @@ async function rejectTargetCoverageControls(target, productionPaths) {
   }
 }
 
+async function safeSuiteRoot(target, suite) {
+  const realTarget = await fs.realpath(target);
+  const root = path.join(realTarget, "test", suite);
+  const stat = await fs.lstat(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe coverage suite");
+  const realRoot = await fs.realpath(root);
+  if (!isContained(realTarget, realRoot)) throw new Error("unsafe coverage suite");
+  return { realTarget, realRoot };
+}
+
+async function safeSuiteEntry(entry, realRoot, realTarget) {
+  const absolute = path.join(entry.parentPath ?? entry.path, entry.name);
+  const stat = await fs.lstat(absolute);
+  if (stat.isSymbolicLink()) throw new Error("unsafe coverage suite");
+  const real = await fs.realpath(absolute);
+  if (!isContained(realRoot, real)) throw new Error("unsafe coverage suite");
+  if (!stat.isFile() || !entry.name.endsWith(".test.js")) return null;
+  return path.relative(realTarget, real);
+}
+
 async function discoverSuiteFiles(target, suite) {
-  const root = path.join(target, "test", suite);
-  const entries = await fs.readdir(root, { withFileTypes: true, recursive: true });
-  return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".test.js"))
-    .map((entry) => path.relative(target, path.join(entry.parentPath ?? entry.path, entry.name)))
-    .sort();
+  const { realTarget, realRoot } = await safeSuiteRoot(target, suite);
+  const entries = await fs.readdir(realRoot, { withFileTypes: true, recursive: true });
+  const files = [];
+  for (const entry of entries) {
+    const relative = await safeSuiteEntry(entry, realRoot, realTarget);
+    if (relative) files.push(relative);
+  }
+  return files.sort();
 }
 
 async function runCoverageSuite(target, suite, productionPaths, root, configPath, limits, runner) {
@@ -351,65 +400,104 @@ function coverageResult(globalCounts, changedCounts) {
   return { status, reason_code: status === "pass" ? "COVERAGE_PASSED" : "COVERAGE_FAILED", summary: "Combined unit and integration coverage was evaluated with exact item counts.", evidence: [globalEvidence, changedEvidence], checks };
 }
 
+async function prepareCoverage(context, runner, state) {
+  const base = context.comparisonBase?.effective_merge_base_sha;
+  if (!/^[a-f0-9]{40}$/.test(base ?? "")) {
+    return { result: { status: "error", reason_code: "COMPARISON_BASE_INVALID" } };
+  }
+  const production = await collectProductionChanges(context.target, base, context.limits, runner);
+  if (production.status === "error") return { result: production };
+  const allPaths = [...new Set([...production.tracked, ...production.untracked])].sort();
+  if (production.tracked.length === 0) {
+    return { result: { status: "error", reason_code: "COVERAGE_EMPTY_PRODUCTION" } };
+  }
+  state.phase = "controls";
+  await rejectTargetCoverageControls(context.target, allPaths);
+  state.temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-node-coverage-"));
+  const configPath = path.join(state.temporaryRoot, "c8-config.json");
+  await fs.writeFile(configPath, "{}\n", { flag: "wx", mode: 0o600 });
+  return { production, allPaths, configPath };
+}
+
+async function collectCoverageMaps(context, runner, state, prepared) {
+  state.phase = "unit";
+  const unit = await runCoverageSuite(
+    context.target,
+    "unit",
+    prepared.allPaths,
+    state.temporaryRoot,
+    prepared.configPath,
+    context.limits,
+    runner,
+  );
+  if (unit.status === "error") return { result: unit };
+  state.phase = "integration";
+  const integration = await runCoverageSuite(
+    context.target,
+    "integration",
+    prepared.allPaths,
+    state.temporaryRoot,
+    prepared.configPath,
+    context.limits,
+    runner,
+  );
+  if (integration.status === "error") return { result: integration };
+  state.phase = "map";
+  const allowed = new Set(prepared.allPaths);
+  const [unitValue, integrationValue] = await Promise.all([
+    readOwnedCoverageMap(unit.mapPath, state.temporaryRoot, context.target, allowed, context.limits),
+    readOwnedCoverageMap(integration.mapPath, state.temporaryRoot, context.target, allowed, context.limits),
+  ]);
+  const combined = createCoverageMap(unitValue);
+  combined.merge(integrationValue);
+  return { combined };
+}
+
+function evaluateCoverage(context, production, combined, state) {
+  state.phase = "evaluation";
+  const globalMap = createCoverageMap();
+  for (const relative of production.tracked) {
+    globalMap.addFileCoverage(combined.fileCoverageFor(path.resolve(context.target, relative)));
+  }
+  state.phase = "denominator";
+  const globalCounts = summaryCounts(globalMap, true);
+  state.phase = "evaluation";
+  const changedCounts = emptyCounts();
+  const locationBudget = { used: 0 };
+  for (const [relative, changed] of production.changed) {
+    const absolute = path.resolve(context.target, relative);
+    if (!combined.data[absolute]) throw new Error("missing changed coverage source");
+    addCounts(changedCounts, selectChangedCoverage(combined.fileCoverageFor(absolute), changed, locationBudget));
+  }
+  return coverageResult(globalCounts, changedCounts);
+}
+
+function coverageError(error, context, phase) {
+  if (error?.name === "AbortError" || context.limits?.signal?.aborted) {
+    return { status: "error", reason_code: "EXECUTOR_ABORTED" };
+  }
+  const reasons = {
+    controls: "COVERAGE_CONFIGURATION_REJECTED",
+    unit: "COVERAGE_UNIT_EXECUTION_ERROR",
+    integration: "COVERAGE_INTEGRATION_EXECUTION_ERROR",
+    map: "COVERAGE_MAP_INVALID",
+    denominator: "COVERAGE_EMPTY_DENOMINATOR",
+    evaluation: "COVERAGE_EVALUATION_INVALID",
+  };
+  return { status: "error", reason_code: reasons[phase] ?? "COVERAGE_UNTRUSTWORTHY" };
+}
+
 export async function runNodeCoverage(context, runner = runBoundedCommand) {
-  let temporaryRoot;
-  let phase = "precondition";
+  const state = { phase: "precondition", temporaryRoot: undefined };
   try {
-    const base = context.comparisonBase?.effective_merge_base_sha;
-    if (!/^[a-f0-9]{40}$/.test(base ?? "")) return { status: "error", reason_code: "COMPARISON_BASE_INVALID" };
-    const production = await collectProductionChanges(context.target, base, context.limits, runner);
-    if (production.status === "error") return production;
-    const allPaths = [...new Set([...production.tracked, ...production.untracked])].sort();
-    if (production.tracked.length === 0) return { status: "error", reason_code: "COVERAGE_EMPTY_PRODUCTION" };
-    phase = "controls";
-    await rejectTargetCoverageControls(context.target, allPaths);
-    temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-node-coverage-"));
-    const configPath = path.join(temporaryRoot, "c8-config.json");
-    await fs.writeFile(configPath, "{}\n", { flag: "wx", mode: 0o600 });
-    phase = "unit";
-    const unit = await runCoverageSuite(context.target, "unit", allPaths, temporaryRoot, configPath, context.limits, runner);
-    if (unit.status === "error") return unit;
-    phase = "integration";
-    const integration = await runCoverageSuite(context.target, "integration", allPaths, temporaryRoot, configPath, context.limits, runner);
-    if (integration.status === "error") return integration;
-    phase = "map";
-    const allowed = new Set(allPaths);
-    const [unitValue, integrationValue] = await Promise.all([
-      readOwnedCoverageMap(unit.mapPath, temporaryRoot, context.target, allowed, context.limits),
-      readOwnedCoverageMap(integration.mapPath, temporaryRoot, context.target, allowed, context.limits),
-    ]);
-    const combined = createCoverageMap(unitValue);
-    combined.merge(integrationValue);
-    phase = "evaluation";
-    const globalMap = createCoverageMap();
-    for (const relative of production.tracked) globalMap.addFileCoverage(combined.fileCoverageFor(path.resolve(context.target, relative)));
-    phase = "denominator";
-    const globalCounts = summaryCounts(globalMap, true);
-    phase = "evaluation";
-    const changedCounts = emptyCounts();
-    const locationBudget = { used: 0 };
-    for (const [relative, changed] of production.changed) {
-      if (!combined.data[path.resolve(context.target, relative)]) throw new Error("missing changed coverage source");
-      addCounts(
-        changedCounts,
-        selectChangedCoverage(combined.fileCoverageFor(path.resolve(context.target, relative)), changed, locationBudget),
-      );
-    }
-    return coverageResult(globalCounts, changedCounts);
+    const prepared = await prepareCoverage(context, runner, state);
+    if (prepared.result) return prepared.result;
+    const maps = await collectCoverageMaps(context, runner, state, prepared);
+    if (maps.result) return maps.result;
+    return evaluateCoverage(context, prepared.production, maps.combined, state);
   } catch (error) {
-    if (error?.name === "AbortError" || context.limits?.signal?.aborted) {
-      return { status: "error", reason_code: "EXECUTOR_ABORTED" };
-    }
-    const reasons = {
-      controls: "COVERAGE_CONFIGURATION_REJECTED",
-      unit: "COVERAGE_UNIT_EXECUTION_ERROR",
-      integration: "COVERAGE_INTEGRATION_EXECUTION_ERROR",
-      map: "COVERAGE_MAP_INVALID",
-      denominator: "COVERAGE_EMPTY_DENOMINATOR",
-      evaluation: "COVERAGE_EVALUATION_INVALID",
-    };
-    return { status: "error", reason_code: reasons[phase] ?? "COVERAGE_UNTRUSTWORTHY" };
+    return coverageError(error, context, state.phase);
   } finally {
-    if (temporaryRoot) await fs.rm(temporaryRoot, { recursive: true, force: true });
+    if (state.temporaryRoot) await fs.rm(state.temporaryRoot, { recursive: true, force: true });
   }
 }

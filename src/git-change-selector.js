@@ -86,40 +86,70 @@ async function validatePhysicalPaths(target, paths) {
   }
 }
 
-export function parseChangedLineIntervals(stdout, sourceLineCount, aggregate) {
-  if (!Number.isSafeInteger(sourceLineCount) || sourceLineCount < 0 || sourceLineCount > MAX_SOURCE_LINES
-    || !aggregate || !Number.isSafeInteger(aggregate.lines) || aggregate.lines < 0
-    || aggregate.lines > MAX_CHANGED_LINES_TOTAL || !Number.isSafeInteger(aggregate.hunks)
-    || aggregate.hunks < 0 || aggregate.hunks > MAX_HUNKS_TOTAL) {
+function assertChangedInput(sourceLineCount, aggregate) {
+  const sourceInvalid = !Number.isSafeInteger(sourceLineCount)
+    || sourceLineCount < 0
+    || sourceLineCount > MAX_SOURCE_LINES;
+  const linesInvalid = !aggregate
+    || !Number.isSafeInteger(aggregate?.lines)
+    || aggregate.lines < 0
+    || aggregate.lines > MAX_CHANGED_LINES_TOTAL;
+  const hunksInvalid = !Number.isSafeInteger(aggregate?.hunks)
+    || aggregate.hunks < 0
+    || aggregate.hunks > MAX_HUNKS_TOTAL;
+  if (sourceInvalid || linesInvalid || hunksInvalid) throw new Error("invalid git hunk");
+}
+
+function assertHunkBudget(hunkCount, aggregate) {
+  if (hunkCount > MAX_HUNKS_PER_FILE || aggregate.hunks > MAX_HUNKS_TOTAL - hunkCount) {
     throw new Error("invalid git hunk");
   }
+}
+
+function validHunkRange(start, count, end, sourceLineCount) {
+  if (![start, count, end].every(Number.isSafeInteger)) return false;
+  if (start < 0 || count < 0 || count > MAX_CHANGED_LINES_PER_FILE) return false;
+  return count === 0 || (start > 0 && end <= sourceLineCount);
+}
+
+function parseHunkHeader(header, sourceLineCount) {
+  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@.*$/.exec(header);
+  if (!match) throw new Error("invalid git hunk");
+  const start = Number(match[1]);
+  const count = match[2] === undefined ? 1 : Number(match[2]);
+  const end = count === 0 ? start : start + count - 1;
+  if (!validHunkRange(start, count, end, sourceLineCount)) throw new Error("invalid git hunk");
+  return count === 0 ? null : { start, end, count };
+}
+
+function addHunkInterval(intervals, parsed, total) {
+  if (intervals.length > 0 && parsed.start <= intervals.at(-1).end) throw new Error("invalid git hunk");
+  const nextTotal = total + parsed.count;
+  if (!Number.isSafeInteger(nextTotal) || nextTotal > MAX_CHANGED_LINES_PER_FILE) {
+    throw new Error("invalid git hunk");
+  }
+  intervals.push({ start: parsed.start, end: parsed.end });
+  return nextTotal;
+}
+
+function commitChangedAggregate(aggregate, total, hunkCount) {
+  if (aggregate.lines > MAX_CHANGED_LINES_TOTAL - total) throw new Error("invalid git hunk");
+  aggregate.lines += total;
+  aggregate.hunks += hunkCount;
+}
+
+export function parseChangedLineIntervals(stdout, sourceLineCount, aggregate) {
+  assertChangedInput(sourceLineCount, aggregate);
   const intervals = [];
   let total = 0;
   let hunkCount = 0;
   for (const header of stdout.matchAll(/^@@.*$/gm)) {
     hunkCount += 1;
-    if (hunkCount > MAX_HUNKS_PER_FILE || aggregate.hunks > MAX_HUNKS_TOTAL - hunkCount) {
-      throw new Error("invalid git hunk");
-    }
-    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@.*$/.exec(header[0]);
-    if (!match) throw new Error("invalid git hunk");
-    const start = Number(match[1]);
-    const count = match[2] === undefined ? 1 : Number(match[2]);
-    const end = count === 0 ? start : start + count - 1;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(count) || !Number.isSafeInteger(end)
-      || start < 0 || count < 0 || count > MAX_CHANGED_LINES_PER_FILE
-      || (count > 0 && (start === 0 || end > sourceLineCount))) {
-      throw new Error("invalid git hunk");
-    }
-    if (count === 0) continue;
-    if (intervals.length > 0 && start <= intervals.at(-1).end) throw new Error("invalid git hunk");
-    total += count;
-    if (!Number.isSafeInteger(total) || total > MAX_CHANGED_LINES_PER_FILE) throw new Error("invalid git hunk");
-    intervals.push({ start, end });
+    assertHunkBudget(hunkCount, aggregate);
+    const parsed = parseHunkHeader(header[0], sourceLineCount);
+    if (parsed) total = addHunkInterval(intervals, parsed, total);
   }
-  if (aggregate.lines > MAX_CHANGED_LINES_TOTAL - total) throw new Error("invalid git hunk");
-  aggregate.lines += total;
-  aggregate.hunks += hunkCount;
+  commitChangedAggregate(aggregate, total, hunkCount);
   return { intervals, total, sourceLineCount };
 }
 

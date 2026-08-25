@@ -439,6 +439,22 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   ]);
   const coveragePassing = await runNodeCoverage(coverageContext, coverageRunner(false));
   assert.equal(coveragePassing.status, "pass");
+  const outsideSuite = await temporaryDirectory(t);
+  await fs.writeFile(path.join(outsideSuite, "external.test.js"), "throw new Error('external suite executed');\n");
+  const integrationRoot = path.join(coverageTarget, "test", "integration");
+  const savedIntegrationRoot = path.join(coverageTarget, "test", "integration-owned");
+  await fs.rename(integrationRoot, savedIntegrationRoot);
+  await fs.symlink(outsideSuite, integrationRoot);
+  const invokedCoverageSuites = [];
+  const symlinkRunner = async (executable, args, options) => {
+    if (executable !== "git") invokedCoverageSuites.push(options.env.SDD_TEST_SUITE);
+    return coverageRunner(false)(executable, args, options);
+  };
+  const unsafeSuite = await runNodeCoverage(coverageContext, symlinkRunner);
+  assert.equal(unsafeSuite.reason_code, "COVERAGE_INTEGRATION_EXECUTION_ERROR");
+  assert.deepEqual(invokedCoverageSuites, ["unit"]);
+  await fs.rm(integrationRoot);
+  await fs.rename(savedIntegrationRoot, integrationRoot);
   assert.equal((await runNodeCoverage(coverageContext, coverageRunner(false, "malformed"))).reason_code, "COVERAGE_MAP_INVALID");
   assert.equal((await runNodeCoverage(coverageContext, coverageRunner(false, "symlink"))).reason_code, "COVERAGE_MAP_INVALID");
   assert.equal((await runNodeCoverage(coverageContext, coverageRunner(false, "oversize"))).reason_code, "COVERAGE_MAP_INVALID");
@@ -822,7 +838,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   });
   const nativeSetTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
-    nativeSetTimeout(callback, delay === 60000 ? 20 : delay, ...args)
+    nativeSetTimeout(callback, delay === 60000 ? 20 : delay === 1000 ? 50 : delay, ...args)
   ));
 
   const result = await runConfiguredGates(target, { executors });
@@ -833,6 +849,16 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   assert.equal(result.document.results[6].reason_code, "EXECUTOR_TIMEOUT");
   assert.equal(result.document.results.slice(7).every((item) => item.status === "not_run"), true);
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+
+  const nonCooperativeExecutors = executorSet();
+  nonCooperativeExecutors.production_dependency_audit = () => new Promise(() => {});
+  const nonCooperativeStarted = Date.now();
+  const nonCooperative = await runConfiguredGates(target, { executors: nonCooperativeExecutors });
+  assert.ok(Date.now() - nonCooperativeStarted < 250);
+  assert.equal(nonCooperative.exitCode, 2);
+  assert.equal(nonCooperative.document.results[6].reason_code, "EXECUTOR_TIMEOUT");
+  assert.equal(nonCooperative.document.results.slice(7).every((item) => item.status === "not_run"), true);
+  assert.equal((await validateEngineeringGateRun(nonCooperative.document)).ok, true);
 });
 
 test("bounded command execution distinguishes timeout, overflow, and functional exit", async (t) => {

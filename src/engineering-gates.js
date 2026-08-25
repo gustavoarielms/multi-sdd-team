@@ -165,29 +165,44 @@ export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "forbidden_references",
 ]);
 
+const EXECUTOR_CLEANUP_GRACE_MS = 1000;
+
+function executorTimeoutResult() {
+  return {
+    status: "error",
+    reason_code: "EXECUTOR_TIMEOUT",
+    summary: "The executor exceeded its package-owned time limit; cancellation and cleanup were bounded.",
+  };
+}
+
 async function runExecutorWithTimeout(implementation, context, timeoutMs) {
   const controller = new AbortController();
   let timer;
+  let cleanupTimer;
   let timedOut = false;
   try {
-    timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
-    const execution = await Promise.resolve().then(() => implementation({
+    const execution = Promise.resolve().then(() => implementation({
       ...context,
       signal: controller.signal,
       limits: { ...context.limits, signal: controller.signal },
-    }));
-    return timedOut
-      ? {
-        status: "error",
-        reason_code: "EXECUTOR_TIMEOUT",
-        summary: "The executor exceeded its package-owned time limit and completed cancellation cleanup.",
-      }
-      : execution;
+    })).then(
+      (value) => ({ type: "result", value }),
+      (error) => ({ type: "error", error }),
+    );
+    const watchdog = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        cleanupTimer = setTimeout(() => resolve({ type: "timeout" }), EXECUTOR_CLEANUP_GRACE_MS);
+      }, timeoutMs);
+    });
+    const settled = await Promise.race([execution, watchdog]);
+    if (timedOut || settled.type === "timeout") return executorTimeoutResult();
+    if (settled.type === "error") throw settled.error;
+    return settled.value;
   } finally {
     clearTimeout(timer);
+    clearTimeout(cleanupTimer);
   }
 }
 
