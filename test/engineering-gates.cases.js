@@ -59,6 +59,65 @@ async function temporaryDirectory(t) {
   return directory;
 }
 
+const LINUX_PROCESS_STAT_LIMIT = 4096;
+const LINUX_PROCESS_STATES = new Set(["R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I"]);
+
+function parseLinuxProcessState(source) {
+  if (typeof source !== "string" || Buffer.byteLength(source) > LINUX_PROCESS_STAT_LIMIT) {
+    throw new Error("invalid Linux process stat");
+  }
+  const commandEnd = source.lastIndexOf(") ");
+  const state = source[commandEnd + 2];
+  if (commandEnd < 2 || source[commandEnd + 3] !== " " || !LINUX_PROCESS_STATES.has(state)) {
+    throw new Error("invalid Linux process stat");
+  }
+  return state;
+}
+
+async function readLinuxProcessState(pid) {
+  const handle = await fs.open(`/proc/${pid}/stat`, "r");
+  try {
+    const buffer = Buffer.alloc(LINUX_PROCESS_STAT_LIMIT + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return parseLinuxProcessState(buffer.subarray(0, bytesRead).toString("utf8"));
+  } finally {
+    await handle.close();
+  }
+}
+
+async function processExited(pid, dependencies) {
+  try {
+    dependencies.probe(pid);
+  } catch (error) {
+    if (error?.code === "ESRCH") return true;
+    throw error;
+  }
+  if (dependencies.platform !== "linux") return false;
+  try {
+    return await dependencies.readLinuxState(pid) === "Z";
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+async function assertProcessExited(pid, injected = {}) {
+  const timeoutMs = injected.timeoutMs ?? 1000;
+  const now = injected.now ?? (() => performance.now());
+  const wait = injected.wait ?? ((delay) => new Promise((resolve) => { setTimeout(resolve, delay); }));
+  const dependencies = {
+    platform: injected.platform ?? process.platform,
+    probe: injected.probe ?? ((candidate) => process.kill(candidate, 0)),
+    readLinuxState: injected.readLinuxState ?? readLinuxProcessState,
+  };
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    if (await processExited(pid, dependencies)) return;
+    await wait(Math.min(10, deadline - now()));
+  }
+  assert.fail(`Process ${pid} remained observable after ${timeoutMs} ms.`);
+}
+
 async function configuredTarget(t, configuration = validConfiguration) {
   const target = await temporaryDirectory(t);
   await fs.mkdir(path.join(target, ".sdd-codegraph"), { recursive: true });
@@ -862,6 +921,49 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
 });
 
 test("bounded command execution distinguishes timeout, overflow, and functional exit", async (t) => {
+  let transitionProbes = 0;
+  await assertProcessExited(123, {
+    platform: "linux",
+    timeoutMs: 10,
+    now: () => 0,
+    wait: async () => {},
+    probe: () => {
+      transitionProbes += 1;
+      if (transitionProbes === 3) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    },
+    readLinuxState: async () => "R",
+  });
+  assert.equal(transitionProbes, 3);
+  assert.equal(parseLinuxProcessState("123 (fixture ) worker) Z 1 2 3\n"), "Z");
+  assert.throws(() => parseLinuxProcessState("123 malformed\n"), /invalid Linux process stat/);
+  assert.throws(() => parseLinuxProcessState("x".repeat(4097)), /invalid Linux process stat/);
+  let zombieElapsed = 0;
+  await assertProcessExited(123, {
+    platform: "linux",
+    timeoutMs: 2,
+    now: () => zombieElapsed,
+    wait: async (delay) => { zombieElapsed += delay; },
+    probe: () => {},
+    readLinuxState: async () => "Z",
+  });
+  let deadlineElapsed = 0;
+  await assert.rejects(assertProcessExited(123, {
+    platform: "linux",
+    timeoutMs: 2,
+    now: () => deadlineElapsed,
+    wait: async (delay) => { deadlineElapsed += delay; },
+    probe: () => {},
+    readLinuxState: async () => "R",
+  }), /remained observable/);
+  await assert.rejects(assertProcessExited(123, {
+    probe: () => { throw Object.assign(new Error("unexpected probe failure"), { code: "EPERM" }); },
+  }), { code: "EPERM" });
+  await assert.rejects(assertProcessExited(123, {
+    platform: "linux",
+    probe: () => {},
+    readLinuxState: async () => { throw Object.assign(new Error("unexpected proc failure"), { code: "EIO" }); },
+  }), { code: "EIO" });
+
   const timedOut = await runBoundedCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     cwd: repositoryRoot,
     timeoutMs: 20,
@@ -909,7 +1011,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   setTimeout(() => controller.abort(), 150);
   assert.equal((await treeExecution).reason_code, "EXECUTOR_ABORTED");
   const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
-  assert.throws(() => process.kill(grandchildPid, 0), { code: "ESRCH" });
+  await assertProcessExited(grandchildPid);
 
   const injectedTreeDirectory = await temporaryDirectory(t);
   const injectedGrandchildPath = path.join(injectedTreeDirectory, "grandchild.pid");
@@ -945,7 +1047,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   assert.equal((await injectedTreeExecution).reason_code, "EXECUTOR_ABORTED");
   assert.equal(injectedTerminationCompleted, true);
   const injectedGrandchildPid = Number(await fs.readFile(injectedGrandchildPath, "utf8"));
-  assert.throws(() => process.kill(injectedGrandchildPid, 0), { code: "ESRCH" });
+  await assertProcessExited(injectedGrandchildPid);
 
   const suiteTarget = await temporaryDirectory(t);
   await fs.mkdir(path.join(suiteTarget, "test", "unit"), { recursive: true });
