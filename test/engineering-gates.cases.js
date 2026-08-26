@@ -122,7 +122,7 @@ async function processExited(pid, dependencies) {
   try {
     return await dependencies.readLinuxState(pid) === "Z";
   } catch (error) {
-    if (error?.code === "ENOENT") return true;
+    if (error?.code === "ENOENT" || error?.code === "ESRCH") return true;
     throw error;
   }
 }
@@ -1169,6 +1169,11 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     probe: () => {},
     readLinuxState: async () => { throw Object.assign(new Error("unexpected proc failure"), { code: "EIO" }); },
   }), { code: "EIO" });
+  assert.equal(await processExited(123, {
+    platform: "linux",
+    probe: () => {},
+    readLinuxState: async () => { throw Object.assign(new Error("process disappeared"), { code: "ESRCH" }); },
+  }), true);
 
   const timedOut = await runBoundedCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     cwd: repositoryRoot,
@@ -1186,13 +1191,17 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     }
     return originalEmit.call(this, event, ...eventArgs);
   });
+  const closeSuppressedDiagnosticDeadlineMs = 2000;
   const verifiedWithoutClose = await Promise.race([
     runBoundedCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
       cwd: repositoryRoot,
       timeoutMs: 20,
       maxOutputBytes: 1024,
     }),
-    new Promise((resolve) => setTimeout(() => resolve({ reason_code: "TEST_DEADLINE" }), 250)),
+    new Promise((resolve) => setTimeout(
+      () => resolve({ reason_code: "TEST_DEADLINE" }),
+      closeSuppressedDiagnosticDeadlineMs,
+    )),
   ]);
   assert.equal(verifiedWithoutClose.reason_code, "COMMAND_TIMEOUT");
   await new Promise((resolve) => setTimeout(resolve, 20));
