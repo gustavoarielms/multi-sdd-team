@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,9 +9,22 @@ import { fileURLToPath } from "node:url";
 
 import {
   ENGINEERING_EXECUTOR_IDS,
+  createExecutorBoundary,
   runBoundedCommand,
   runEngineeringGates,
+  runExecutorBoundaryWithTimeout,
 } from "../src/engineering-gates.js";
+import {
+  linuxProcessGroupExited,
+  parseLinuxProcessGroup,
+  parseLinuxProcessIdentity,
+  parsePosixProcessInventory,
+  readLinuxProcessGroup,
+  readLinuxProcessIdentity,
+  terminateProcessTree,
+  verifyWindowsProcessExited,
+  windowsProcessExited,
+} from "../src/engineering-gate-runtime.js";
 import {
   validateEngineeringGateConfiguration,
   validateEngineeringGateRun,
@@ -57,6 +71,18 @@ async function temporaryDirectory(t) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "engineering-gates-test-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   return directory;
+}
+
+async function waitForPidFile(file) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      return Number(await fs.readFile(file, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("PID fixture was not created");
 }
 
 const LINUX_PROCESS_STAT_LIMIT = 4096;
@@ -140,8 +166,10 @@ async function configuredTarget(t, configuration = validConfiguration) {
 }
 
 function runConfiguredGates(target, options = {}) {
+  const { executors, ...runOptions } = options;
   return runEngineeringGates(target, {
-    ...options,
+    ...runOptions,
+    ...(executors ? { testHooks: { mode: "cooperative_in_process_test_only", executors } } : {}),
     comparisonBase: options.comparisonBase ?? comparisonBases.get(target),
   });
 }
@@ -835,18 +863,24 @@ test("lint warnings are observed evidence but primary executor evidence remains 
 
 test("missing, malformed, unknown, and unsafe configuration fail closed before execution", async (t) => {
   const missingTarget = await temporaryDirectory(t);
-  const missing = await runEngineeringGates(missingTarget, { executors: executorSet() });
+  const missing = await runEngineeringGates(missingTarget, {
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(missing.exitCode, 2);
   assert.equal(missing.document.run_error.reason_code, "CONFIGURATION_MISSING");
   assert.equal(missing.document.results.every((item) => item.status === "not_run"), true);
 
   const malformedTarget = await configuredTarget(t);
   await fs.writeFile(path.join(malformedTarget, ".sdd-codegraph", "gates.json"), "{invalid");
-  const malformed = await runEngineeringGates(malformedTarget, { executors: executorSet() });
+  const malformed = await runEngineeringGates(malformedTarget, {
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(malformed.document.run_error.reason_code, "CONFIGURATION_INVALID");
 
   const unknownTarget = await configuredTarget(t, { ...validConfiguration, baseline: "main" });
-  const unknown = await runEngineeringGates(unknownTarget, { executors: executorSet() });
+  const unknown = await runEngineeringGates(unknownTarget, {
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(unknown.document.run_error.reason_code, "CONFIGURATION_INVALID");
 
   const outside = await temporaryDirectory(t);
@@ -854,7 +888,9 @@ test("missing, malformed, unknown, and unsafe configuration fail closed before e
   await fs.writeFile(path.join(outside, "gates.json"), `${JSON.stringify({ ...validConfiguration, secret: "do-not-leak" })}\n`);
   await fs.mkdir(path.join(unsafeTarget, ".sdd-codegraph"));
   await fs.symlink(path.join(outside, "gates.json"), path.join(unsafeTarget, ".sdd-codegraph", "gates.json"));
-  const unsafe = await runEngineeringGates(unsafeTarget, { executors: executorSet() });
+  const unsafe = await runEngineeringGates(unsafeTarget, {
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(unsafe.document.run_error.reason_code, "CONFIGURATION_UNSAFE_PATH");
   assert.doesNotMatch(JSON.stringify(unsafe.document), /do-not-leak/);
 });
@@ -887,21 +923,23 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   const target = await configuredTarget(t);
   const executors = executorSet();
   let cleanupCompleted = false;
+  const cleanupStarted = Date.now();
   executors.production_dependency_audit = ({ signal }) => new Promise((resolve) => {
     signal.addEventListener("abort", () => {
       setTimeout(() => {
         cleanupCompleted = true;
         resolve({ status: "error", reason_code: "EXECUTOR_ABORTED" });
-      }, 30);
+      }, 200);
     }, { once: true });
   });
   const nativeSetTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
-    nativeSetTimeout(callback, delay === 60000 ? 20 : delay === 1000 ? 50 : delay, ...args)
+    nativeSetTimeout(callback, delay === 60000 ? 20 : [1000, 2000].includes(delay) ? 50 : delay, ...args)
   ));
 
   const result = await runConfiguredGates(target, { executors });
   assert.equal(cleanupCompleted, true);
+  assert.ok(Date.now() - cleanupStarted >= 190);
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.outcome, "blocked");
   assert.equal(result.document.results[6].status, "error");
@@ -909,18 +947,186 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   assert.equal(result.document.results.slice(7).every((item) => item.status === "not_run"), true);
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
 
-  const nonCooperativeExecutors = executorSet();
-  nonCooperativeExecutors.production_dependency_audit = () => new Promise(() => {});
+  let boundarySettled;
+  let forcedTerminationCompleted = false;
+  const nonCooperativeExecution = new Promise((resolve) => { boundarySettled = resolve; });
   const nonCooperativeStarted = Date.now();
-  const nonCooperative = await runConfiguredGates(target, { executors: nonCooperativeExecutors });
+  const nonCooperative = await runExecutorBoundaryWithTimeout({
+    execution: nonCooperativeExecution,
+    abort: () => {},
+    terminate: async () => {
+      forcedTerminationCompleted = true;
+      boundarySettled({ type: "error", error: new Error("terminated") });
+      await nonCooperativeExecution;
+    },
+  }, 20);
   assert.ok(Date.now() - nonCooperativeStarted < 250);
-  assert.equal(nonCooperative.exitCode, 2);
-  assert.equal(nonCooperative.document.results[6].reason_code, "EXECUTOR_TIMEOUT");
-  assert.equal(nonCooperative.document.results.slice(7).every((item) => item.status === "not_run"), true);
-  assert.equal((await validateEngineeringGateRun(nonCooperative.document)).ok, true);
+  assert.equal(forcedTerminationCompleted, true);
+  assert.equal(nonCooperative.reason_code, "EXECUTOR_TIMEOUT");
+
+  let legacyOverrideInvoked = false;
+  const rejectedOverride = await runEngineeringGates(target, {
+    comparisonBase: comparisonBases.get(target),
+    executors: {
+      javascript_syntax: async () => {
+        legacyOverrideInvoked = true;
+        return { status: "pass" };
+      },
+    },
+  });
+  assert.equal(legacyOverrideInvoked, false);
+  assert.equal(rejectedOverride.exitCode, 2);
+  assert.equal(rejectedOverride.document.run_error.reason_code, "EXECUTOR_OVERRIDE_REJECTED");
+  assert.equal(rejectedOverride.document.results.every((item) => item.status === "not_run"), true);
 });
 
 test("bounded command execution distinguishes timeout, overflow, and functional exit", async (t) => {
+  const windowsTask = '"node.exe","123","Console","1","1,024 K"\n';
+  assert.equal(windowsProcessExited("tasklist.exe", 123, () => ({ status: 0, stdout: windowsTask })), false);
+  assert.equal(windowsProcessExited("tasklist.exe", 456, () => ({ status: 0, stdout: windowsTask })), true);
+  assert.throws(() => windowsProcessExited("tasklist.exe", 123, () => ({ status: 1, stdout: "" })), /verification failed/);
+  assert.throws(() => windowsProcessExited(
+    "tasklist.exe",
+    123,
+    () => ({ status: 0, stdout: "malformed non-CSV output\n" }),
+  ), /invalid Windows process inventory/);
+  let windowsElapsed = 0;
+  let windowsProbes = 0;
+  await verifyWindowsProcessExited("tasklist.exe", 123, {
+    now: () => windowsElapsed,
+    wait: async (delay) => { windowsElapsed += delay; },
+    probe: () => ++windowsProbes >= 3,
+  });
+  windowsElapsed = 0;
+  await assert.rejects(verifyWindowsProcessExited("tasklist.exe", 123, {
+    now: () => windowsElapsed,
+    wait: async (delay) => { windowsElapsed += delay; },
+    probe: () => false,
+  }), /could not be verified/);
+  const stalledWindowsStarted = Date.now();
+  await assert.rejects(verifyWindowsProcessExited("tasklist.exe", 123, {
+    timeoutMs: 20,
+    probe: () => new Promise(() => {}),
+  }), /deadline/);
+  assert.ok(Date.now() - stalledWindowsStarted < 80);
+
+  assert.deepEqual(parseLinuxProcessGroup("123 (fixture worker) Z 1 123 0 0\n"), { state: "Z", group: 123 });
+  assert.throws(() => parseLinuxProcessGroup("123 malformed\n"), /invalid Linux process stat/);
+  const identityFields = ["R", "1", "321", "321", ...Array(15).fill("0"), "999"];
+  assert.deepEqual(parseLinuxProcessIdentity(`321 (fixture worker) ${identityFields.join(" ")}\n`), {
+    pid: 321,
+    state: "R",
+    parent: 1,
+    group: 321,
+    session: 321,
+    startTime: "999",
+  });
+  assert.throws(() => parseLinuxProcessIdentity("321 malformed\n"), /invalid Linux process stat/);
+  assert.deepEqual(parsePosixProcessInventory(
+    "321 1 321 321 R Tue Aug 25 10:59:39 2026\n",
+  ), [{
+    pid: 321,
+    parent: 1,
+    group: 321,
+    session: 321,
+    state: "R",
+    startTime: "Tue Aug 25 10:59:39 2026",
+  }]);
+  assert.throws(() => parsePosixProcessInventory("malformed\n"), /invalid process inventory/);
+  const linuxStatRoot = await temporaryDirectory(t);
+  const linuxStat = path.join(linuxStatRoot, "stat");
+  await fs.writeFile(linuxStat, "123 (fixture worker) R 1 123 0 0\n");
+  assert.deepEqual(await readLinuxProcessGroup(linuxStat), { state: "R", group: 123 });
+  await fs.writeFile(linuxStat, `321 (fixture worker) ${identityFields.join(" ")}\n`);
+  assert.equal((await readLinuxProcessIdentity(linuxStat)).startTime, "999");
+  assert.equal(await linuxProcessGroupExited(123, {
+    readdir: async () => ["not-a-pid", "1", "2"],
+    read: async (file) => path.basename(path.dirname(file)) === "1"
+      ? { state: "Z", group: 123 }
+      : { state: "R", group: 456 },
+  }), true);
+  assert.equal(await linuxProcessGroupExited(123, {
+    readdir: async () => ["1"],
+    read: async () => ({ state: "R", group: 123 }),
+  }), false);
+  assert.equal(await linuxProcessGroupExited(123, {
+    readdir: async () => ["1"],
+    read: async () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); },
+  }), true);
+  await assert.rejects(linuxProcessGroupExited(123, {
+    readdir: async () => ["1"],
+    read: async () => { throw Object.assign(new Error("denied"), { code: "EIO" }); },
+  }), { code: "EIO" });
+  const stalledScanStarted = Date.now();
+  await assert.rejects(Promise.race([
+    linuxProcessGroupExited(123, {
+      timeoutMs: 20,
+      readdir: async () => ["1"],
+      read: async () => new Promise(() => {}),
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("process inventory deadline exceeded")), 120)),
+  ]), /deadline/);
+  assert.ok(Date.now() - stalledScanStarted < 80);
+
+  let staleInventoryCalls = 0;
+  const staleSignals = [];
+  await terminateProcessTree({ pid: 2147483646, kill: () => {} }, {
+    platform: "linux",
+    rootIdentity: { pid: 2147483646, parent: 1, group: 2147483646, session: 2147483646, startTime: "old" },
+    inventory: async () => {
+      staleInventoryCalls += 1;
+      return [{ pid: 2147483646, parent: 1, group: 2147483646, session: 2147483646, startTime: "reused", state: "R" }];
+    },
+    signal: (pid, signal) => staleSignals.push([pid, signal]),
+  });
+  assert.ok(staleInventoryCalls > 0);
+  assert.deepEqual(staleSignals, []);
+
+  const rootIdentity = { pid: 201, parent: 1, group: 201, session: 201, startTime: "root", state: "R" };
+  const childIdentity = { pid: 202, parent: 201, group: 202, session: 202, startTime: "child", state: "R" };
+  const cleanupAfterPartialFreeze = async ({ failInventory, advanceDeadline }) => {
+    const states = new Map([[201, "R"], [202, "R"]]);
+    const signals = [];
+    let inventoryCalls = 0;
+    let elapsed = 0;
+    await assert.rejects(terminateProcessTree({ pid: 201, identity: rootIdentity, kill: () => {} }, {
+      platform: "linux",
+      rootIdentity,
+      timeoutMs: 40,
+      now: () => elapsed,
+      inventory: async () => {
+        inventoryCalls += 1;
+        if (failInventory && inventoryCalls === 4) throw new Error("fixture inventory failure");
+        return [rootIdentity, childIdentity].map((identity) => ({
+          ...identity,
+          state: states.get(identity.pid),
+        }));
+      },
+      signal: (pid, signal) => {
+        signals.push([pid, signal]);
+        if (signal === "SIGSTOP" && pid === 201 && advanceDeadline) elapsed = 35;
+        if (signal === "SIGKILL") states.set(pid, "Z");
+      },
+      wait: async () => {},
+    }), failInventory ? /fixture inventory failure/ : /deadline/);
+    assert.deepEqual(states, new Map([[201, "Z"], [202, "Z"]]));
+    assert.equal(signals.some(([pid, signal]) => pid === 201 && signal === "SIGSTOP"), true);
+    assert.equal(signals.some(([pid, signal]) => pid === 201 && signal === "SIGKILL"), true);
+    assert.equal(signals.some(([pid, signal]) => pid === 202 && signal === "SIGKILL"), true);
+  };
+  await cleanupAfterPartialFreeze({ failInventory: true, advanceDeadline: false });
+  await cleanupAfterPartialFreeze({ failInventory: false, advanceDeadline: true });
+
+  let staleWindowsTaskkillCalled = false;
+  await assert.rejects(terminateProcessTree({ pid: 123, identity: rootIdentity, kill: () => {} }, {
+    platform: "win32",
+    windowsExecutable: "C:\\Windows\\System32\\taskkill.exe",
+    windowsVerifierExecutable: "C:\\Windows\\System32\\tasklist.exe",
+    terminateWindows: async () => { staleWindowsTaskkillCalled = true; },
+    verifyTerminated: async () => {},
+  }), /retained Windows process ownership unavailable/);
+  assert.equal(staleWindowsTaskkillCalled, false);
+
   let transitionProbes = 0;
   await assertProcessExited(123, {
     platform: "linux",
@@ -971,6 +1177,28 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(timedOut.reason_code, "COMMAND_TIMEOUT");
 
+  const originalEmit = ChildProcess.prototype.emit;
+  let closeSuppressed = false;
+  t.mock.method(ChildProcess.prototype, "emit", function suppressClose(event, ...eventArgs) {
+    if (event === "close" && !closeSuppressed) {
+      closeSuppressed = true;
+      return false;
+    }
+    return originalEmit.call(this, event, ...eventArgs);
+  });
+  const verifiedWithoutClose = await Promise.race([
+    runBoundedCommand(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      cwd: repositoryRoot,
+      timeoutMs: 20,
+      maxOutputBytes: 1024,
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ reason_code: "TEST_DEADLINE" }), 250)),
+  ]);
+  assert.equal(verifiedWithoutClose.reason_code, "COMMAND_TIMEOUT");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(closeSuppressed, true);
+  t.mock.restoreAll();
+
   const overflow = await runBoundedCommand(process.execPath, ["-e", "process.stdout.write('x'.repeat(4096))"], {
     cwd: repositoryRoot,
     timeoutMs: 1000,
@@ -985,6 +1213,19 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(functional.status, "completed");
   assert.equal(functional.exit_code, 7);
+
+  const sanitizedBoundaryEnvironment = await runBoundedCommand(
+    process.execPath,
+    ["-e", "process.stdout.write(process.env.SDD_ENGINEERING_EXECUTOR_BOUNDARY ?? '')"],
+    {
+      cwd: repositoryRoot,
+      timeoutMs: 1000,
+      maxOutputBytes: 64,
+      env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+    },
+  );
+  assert.equal(sanitizedBoundaryEnvironment.status, "completed");
+  assert.equal(sanitizedBoundaryEnvironment.stdout, "");
 
   const spawnFailure = await runBoundedCommand(path.join(repositoryRoot, "missing-executable"), [], {
     cwd: repositoryRoot,
@@ -1011,12 +1252,42 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   setTimeout(() => controller.abort(), 150);
   assert.equal((await treeExecution).reason_code, "EXECUTOR_ABORTED");
   const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
-  await assertProcessExited(grandchildPid);
+  assert.equal(await processExited(grandchildPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true);
+
+  const detachedDirectory = await temporaryDirectory(t);
+  const detachedPidPath = path.join(detachedDirectory, "detached.pid");
+  const detachedExecution = runBoundedCommand(process.execPath, ["-e", [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });",
+    "child.unref();",
+    `fs.writeFileSync(${JSON.stringify(detachedPidPath)}, String(child.pid));`,
+    "setInterval(() => {}, 1000);",
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 150,
+    maxOutputBytes: 1024,
+  });
+  const detachedPid = await waitForPidFile(detachedPidPath);
+  t.after(() => {
+    try { process.kill(detachedPid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  assert.equal((await detachedExecution).reason_code, "COMMAND_TIMEOUT");
+  assert.equal(await processExited(detachedPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true);
 
   const injectedTreeDirectory = await temporaryDirectory(t);
   const injectedGrandchildPath = path.join(injectedTreeDirectory, "grandchild.pid");
   const injectedController = new AbortController();
   let injectedTerminationCompleted = false;
+  let injectedTerminationVerified = false;
   const injectedTreeExecution = runBoundedCommand(process.execPath, ["-e", [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
@@ -1041,13 +1312,300 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
         await new Promise((resolve) => setTimeout(resolve, 20));
         injectedTerminationCompleted = true;
       },
+      verifyTerminated: async () => {
+        assert.equal(injectedTerminationCompleted, true);
+        injectedTerminationVerified = true;
+      },
     },
   });
   setTimeout(() => injectedController.abort(), 150);
   assert.equal((await injectedTreeExecution).reason_code, "EXECUTOR_ABORTED");
   assert.equal(injectedTerminationCompleted, true);
+  assert.equal(injectedTerminationVerified, true);
   const injectedGrandchildPid = Number(await fs.readFile(injectedGrandchildPath, "utf8"));
   await assertProcessExited(injectedGrandchildPid);
+
+  const failedWindowsVerification = await runBoundedCommand(
+    process.execPath,
+    ["-e", "setInterval(() => {}, 1000)"],
+    {
+      cwd: repositoryRoot,
+      timeoutMs: 20,
+      maxOutputBytes: 1024,
+      terminationControl: {
+        platform: "win32",
+        windowsExecutable: "C:\\Windows\\System32\\taskkill.exe",
+        windowsVerifierExecutable: "C:\\Windows\\System32\\tasklist.exe",
+        terminateWindows: async ({ pid }) => {
+          try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ }
+        },
+        verifyWindows: async () => { throw new Error("verification unavailable"); },
+      },
+    },
+  );
+  assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
+
+  const completedWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 101,
+    send: (_message, callback) => callback?.(),
+    disconnect() { this.connected = false; this.emit("disconnect"); },
+  });
+  const completedBoundary = createExecutorBoundary(completedWorker, { fixture: true }, async () => {});
+  completedWorker.emit("spawn");
+  completedWorker.emit("message", { type: "result", value: { status: "pass" } });
+  completedWorker.disconnect();
+  completedWorker.emit("exit");
+  completedWorker.emit("close");
+  assert.deepEqual(await completedBoundary.execution, { type: "result", value: { status: "pass" } });
+
+  const failedWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 102,
+    send: () => {},
+    disconnect() { this.connected = false; },
+  });
+  const terminationAttempts = [];
+  const failedBoundary = createExecutorBoundary(failedWorker, undefined, async (candidate) => {
+    terminationAttempts.push({ pid: candidate.pid, startTime: candidate.identity?.startTime });
+    throw new Error("termination proof failed");
+  });
+  failedWorker.emit("message", { type: "owned_process_group", action: "register", pid: 103 });
+  const oldIdentity = { pid: 105, parent: 102, group: 105, session: 105, startTime: "old" };
+  const currentIdentity = { ...oldIdentity, startTime: "current" };
+  failedWorker.emit("message", { type: "owned_process_group", action: "register", identity: oldIdentity });
+  failedWorker.emit("message", { type: "owned_process_group", action: "register", identity: currentIdentity });
+  failedWorker.emit("message", { type: "owned_process_group", action: "unregister", identity: oldIdentity });
+  await assert.rejects(failedBoundary.terminate(), /termination proof failed/);
+  assert.equal((await failedBoundary.execution).type, "error");
+  assert.equal(failedWorker.connected, false);
+  assert.equal(terminationAttempts.some((attempt) => attempt.pid === failedWorker.pid), true);
+  assert.equal(terminationAttempts.some((attempt) => attempt.pid === 103), false);
+  assert.equal(terminationAttempts.some((attempt) => (
+    attempt.pid === currentIdentity.pid && attempt.startTime === currentIdentity.startTime
+  )), true);
+
+  const acknowledgedMessages = [];
+  const acknowledgedTerminations = [];
+  const acknowledgedWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 108,
+    send(message, callback) { acknowledgedMessages.push(message); callback?.(); },
+    disconnect() { this.connected = false; },
+  });
+  const acknowledgedBoundary = createExecutorBoundary(acknowledgedWorker, undefined, async (candidate) => {
+    acknowledgedTerminations.push(candidate.pid);
+  });
+  const acknowledgedIdentity = { pid: 109, parent: 108, group: 109, session: 109, startTime: "owned" };
+  acknowledgedWorker.emit("message", {
+    type: "owned_process_group",
+    action: "register",
+    identity: acknowledgedIdentity,
+    requestId: "register-1",
+  });
+  acknowledgedWorker.emit("message", {
+    type: "owned_process_group",
+    action: "unregister",
+    identity: { ...acknowledgedIdentity, startTime: "stale" },
+    requestId: "unregister-stale",
+  });
+  assert.deepEqual(acknowledgedMessages.slice(0, 2), [
+    { type: "owned_process_group_ack", requestId: "register-1", accepted: true },
+    { type: "owned_process_group_ack", requestId: "unregister-stale", accepted: false },
+  ]);
+  await acknowledgedBoundary.terminate();
+  assert.equal(acknowledgedTerminations.includes(acknowledgedIdentity.pid), true);
+
+  const retryWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 106,
+    send: () => {},
+    disconnect() { this.connected = false; this.emit("disconnect"); },
+  });
+  const outerRetryAttempts = [];
+  const retryBoundary = createExecutorBoundary(retryWorker, undefined, async (candidate) => {
+    outerRetryAttempts.push(candidate.pid);
+  });
+  const retryIdentity = { pid: 107, parent: 106, group: 107, session: 107, startTime: "retry" };
+  retryWorker.emit("message", { type: "owned_process_group", action: "register", identity: retryIdentity });
+  retryWorker.emit("message", { type: "result", value: { status: "error" } });
+  retryWorker.disconnect();
+  assert.equal((await retryBoundary.execution).type, "result");
+  assert.deepEqual(outerRetryAttempts, [retryIdentity.pid]);
+
+  const finalizationWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 110,
+    send: () => {},
+    disconnect() { this.connected = false; },
+  });
+  const finalizationIdentity = { pid: 111, parent: 110, group: 111, session: 111, startTime: "finalize" };
+  const finalizationAttempts = [];
+  let finalizationGroupAttempts = 0;
+  const finalizationBoundary = createExecutorBoundary(finalizationWorker, undefined, async (candidate) => {
+    finalizationAttempts.push(candidate.pid);
+    if (candidate.pid === finalizationIdentity.pid) {
+      finalizationGroupAttempts += 1;
+      if (finalizationGroupAttempts === 1) throw new Error("verification failed");
+    }
+  });
+  finalizationWorker.emit("message", {
+    type: "owned_process_group",
+    action: "register",
+    identity: finalizationIdentity,
+  });
+  finalizationWorker.emit("message", { type: "result", value: { status: "pass" } });
+  finalizationWorker.emit("disconnect");
+  finalizationWorker.emit("exit");
+  finalizationWorker.emit("close");
+  assert.deepEqual(await finalizationBoundary.execution, {
+    type: "result",
+    value: { status: "pass" },
+  });
+  assert.deepEqual(finalizationAttempts, [
+    finalizationIdentity.pid,
+    finalizationWorker.pid,
+    finalizationIdentity.pid,
+  ]);
+
+  const erroredWorker = Object.assign(new EventEmitter(), {
+    connected: true,
+    pid: 104,
+    send: () => {},
+    disconnect() { this.connected = false; },
+  });
+  const erroredBoundary = createExecutorBoundary(erroredWorker, undefined, async () => {});
+  erroredWorker.emit("message", { type: "error" });
+  erroredWorker.emit("error", new Error("spawn failed"));
+  assert.equal((await erroredBoundary.execution).type, "error");
+  assert.equal(erroredWorker.connected, false);
+
+  const runtimePath = path.join(repositoryRoot, "src", "engineering-gate-runtime.js");
+  const boundaryWorker = spawn(process.execPath, ["-e", [
+    `import(${JSON.stringify(runtimePath)}).then(({ runBoundedCommand }) => runBoundedCommand(`,
+    "  process.execPath, ['-e', 'setInterval(() => {}, 1000)'],",
+    "  { cwd: process.cwd(), timeoutMs: 5000, maxOutputBytes: 1024 },",
+    "));",
+    "process.on('message', () => {});",
+    "setInterval(() => {}, 1000);",
+  ].join("\n")], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+    shell: false,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  const boundary = createExecutorBoundary(boundaryWorker);
+  const boundaryDescendantPid = await new Promise((resolve) => {
+    boundaryWorker.on("message", (message) => {
+      if (message?.type === "owned_process_group" && message.action === "register") resolve(message.identity.pid);
+    });
+  });
+  t.after(() => {
+    for (const pid of [boundaryDescendantPid, boundaryWorker.pid]) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ }
+    }
+  });
+  const originalBoundaryEmit = ChildProcess.prototype.emit;
+  t.mock.method(ChildProcess.prototype, "emit", function suppressBoundaryClose(event, ...eventArgs) {
+    if (this === boundaryWorker && event === "close") {
+      return false;
+    }
+    return originalBoundaryEmit.call(this, event, ...eventArgs);
+  });
+  const forcedBoundaryStarted = Date.now();
+  const forcedBoundary = await runExecutorBoundaryWithTimeout(boundary, 20, 50);
+  assert.equal(forcedBoundary.reason_code, "EXECUTOR_TIMEOUT");
+  assert.ok(Date.now() - forcedBoundaryStarted < 1500);
+  assert.equal(await processExited(boundaryDescendantPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true);
+  assert.equal(boundaryWorker.connected, false);
+  t.mock.restoreAll();
+
+  const exitOnAbortWorker = spawn(process.execPath, ["-e", [
+    `import(${JSON.stringify(runtimePath)}).then(({ runBoundedCommand }) => runBoundedCommand(`,
+    "  process.execPath, ['-e', 'setInterval(() => {}, 1000)'],",
+    "  { cwd: process.cwd(), timeoutMs: 5000, maxOutputBytes: 1024 },",
+    "));",
+    "process.on('message', (message) => { if (message?.type === 'abort') process.exit(0); });",
+    "setInterval(() => {}, 1000);",
+  ].join("\n")], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+    shell: false,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  const exitOnAbortBoundary = createExecutorBoundary(exitOnAbortWorker);
+  const exitOnAbortDescendantPid = await new Promise((resolve) => {
+    exitOnAbortWorker.on("message", (message) => {
+      if (message?.type === "owned_process_group" && message.action === "register") resolve(message.identity.pid);
+    });
+  });
+  t.after(() => {
+    for (const pid of [exitOnAbortDescendantPid, exitOnAbortWorker.pid]) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ }
+    }
+  });
+  const exitDuringGrace = await runExecutorBoundaryWithTimeout(exitOnAbortBoundary, 20, 500);
+  assert.equal(exitDuringGrace.reason_code, "EXECUTOR_TIMEOUT");
+  assert.equal(await processExited(exitOnAbortDescendantPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true);
+
+  const ipcRaceDirectory = await temporaryDirectory(t);
+  for (const registrationDelivery of ["lost", "delayed"]) {
+    const commandStartedPath = path.join(ipcRaceDirectory, `${registrationDelivery}-command-started`);
+    const commandSource = [
+      `require('node:fs').writeFileSync(${JSON.stringify(commandStartedPath)}, String(process.pid));`,
+      "setTimeout(() => {}, 1000);",
+    ].join("\n");
+    const ipcRaceWorker = spawn(process.execPath, ["-e", [
+      `import(${JSON.stringify(runtimePath)}).then(({ runBoundedCommand }) => runBoundedCommand(`,
+      `  process.execPath, ['-e', ${JSON.stringify(commandSource)}],`,
+      "  { cwd: process.cwd(), timeoutMs: 5000, maxOutputBytes: 1024 },",
+      "));",
+      "process.on('message', (message) => { if (message?.type === 'abort') process.exit(0); });",
+      "setInterval(() => {}, 1000);",
+    ].join("\n")], {
+      detached: process.platform !== "win32",
+      env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+      shell: false,
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    let resolveOwnedPid;
+    const ownedPid = new Promise((resolve) => { resolveOwnedPid = resolve; });
+    const emit = ipcRaceWorker.emit;
+    ipcRaceWorker.emit = function interceptOwnedRegistration(event, ...eventArgs) {
+      const [message] = eventArgs;
+      if (event === "message" && message?.type === "owned_process_group" && message.action === "register") {
+        resolveOwnedPid(message.identity.pid);
+        if (registrationDelivery === "delayed") {
+          setTimeout(() => emit.call(this, event, ...eventArgs), 150);
+        }
+        return false;
+      }
+      return emit.call(this, event, ...eventArgs);
+    };
+    const ipcRaceBoundary = createExecutorBoundary(ipcRaceWorker);
+    const ipcRaceOwnedPid = await ownedPid;
+    t.after(() => {
+      for (const pid of [ipcRaceOwnedPid, ipcRaceWorker.pid]) {
+        try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ }
+      }
+    });
+    const ipcRaceResult = await runExecutorBoundaryWithTimeout(ipcRaceBoundary, 20, 50);
+    assert.equal(ipcRaceResult.reason_code, "EXECUTOR_TIMEOUT");
+    assert.equal(await processExited(ipcRaceOwnedPid, {
+      platform: process.platform,
+      probe: (candidate) => process.kill(candidate, 0),
+      readLinuxState: readLinuxProcessState,
+    }), true, `${registrationDelivery} ownership registration must not leak the command`);
+    await assert.rejects(fs.access(commandStartedPath));
+  }
 
   const suiteTarget = await temporaryDirectory(t);
   await fs.mkdir(path.join(suiteTarget, "test", "unit"), { recursive: true });
@@ -1091,7 +1649,7 @@ test("comparison-base rejects non-full commit identifiers before execution", asy
   const target = await configuredTarget(t);
   const result = await runEngineeringGates(target, {
     comparisonBase: "HEAD~1",
-    executors: executorSet(),
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
   });
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.run_error.reason_code, "COMPARISON_BASE_INVALID");
@@ -1100,7 +1658,9 @@ test("comparison-base rejects non-full commit identifiers before execution", asy
 
 test("the selected blocking changed-code profile requires an explicit comparison base", async (t) => {
   const target = await configuredTarget(t);
-  const result = await runEngineeringGates(target, { executors: executorSet() });
+  const result = await runEngineeringGates(target, {
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.run_error.reason_code, "COMPARISON_BASE_REQUIRED");
 });
@@ -1116,7 +1676,10 @@ test("comparison-base resolves a full commit to its effective merge base", async
   await fs.writeFile(path.join(target, "src", "renamed.js"), "export const value = 2;\n");
   await fs.rm(path.join(target, "src", "deleted.js"));
   await fs.writeFile(path.join(target, "src", "untracked.js"), "export const untracked = true;\n");
-  const result = await runEngineeringGates(target, { comparisonBase: sha, executors: executorSet() });
+  const result = await runEngineeringGates(target, {
+    comparisonBase: sha,
+    testHooks: { mode: "cooperative_in_process_test_only", executors: executorSet() },
+  });
   assert.equal(result.exitCode, 0);
   assert.deepEqual(result.document.comparison_base, {
     supplied_sha: sha,

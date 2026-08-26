@@ -14,15 +14,68 @@ reporter receives the test-runner event stream and emits one bounded JSON result
 for the adapter to validate. The reporter's result is evidence, not target
 configuration.
 
-`runExecutorWithTimeout` owns an `AbortController` for every executor and
-passes its `AbortSignal` into the suite or coverage adapter. Those adapters
-pass the same signal to their bounded subprocess operation. On timeout, the
-runner aborts the signal; the adapter terminates the direct child and its
-process group/tree, awaits their termination, removes every temporary directory
-it created, and resolves only after cleanup. The runner must await that
-resolution before serializing the executor `error` or marking later executors
-`not_run`. The process-group termination is idempotent, including a child that
-exits before abort, and it must not affect processes outside that executor.
+The runner hosts each package-owned executor in its own package-owned process
+boundary and owns an `AbortController` inside that boundary. The suite or
+coverage adapter passes the same `AbortSignal` to its bounded subprocess
+operation. On timeout, the runner first asks the boundary to abort; the adapter
+captures the direct child and observable descendants, freezes that owned tree,
+revalidates each PID against its start time, session, and process group before
+signalling it, awaits verified termination, removes every temporary directory
+it created, and resolves only
+after cleanup. The runner awaits that resolution before serializing the
+executor `error` or marking later executors `not_run`. If the executor does not
+cooperate, a second package-owned bound forcibly terminates and verifies the
+executor boundary before the runner emits its timeout result. Process-tree
+termination is idempotent, including a child that exits before abort, and it
+must not affect processes outside that executor.
+
+Every POSIX bounded command first starts a package-owned supervisor that cannot
+launch the requested executable until the worker sends its full stable process
+identity and receives an explicit acknowledgement from the outer boundary.
+The boundary stores the identity before acknowledging it. A lost, delayed, or
+rejected registration therefore leaves the executable unstarted; worker IPC
+disconnect makes the supervisor terminate any locally retained command before
+it exits. Bare PIDs are rejected. An unregister applies only after verified
+cleanup and only to the same identity, and stale unregister requests are
+negatively acknowledged, so a stale message cannot remove a newer reused PID.
+A final-kill budget is reserved before any
+`SIGSTOP`; captured descendants are revalidated and receive best-effort
+`SIGKILL` on every later failure. Identities whose cleanup cannot be verified
+remain registered for the outer boundary to retry. Forced
+termination drains that registry, terminates and verifies each still-matching
+owned tree, terminates and verifies the worker boundary, drains the registry
+once more, disconnects the owned IPC channel, and settles
+independently of delayed or missing `close` delivery. Windows invokes the
+If the first registry drain during normal worker finalization fails,
+`disconnect`, `exit`, and `close` share one idempotent full-termination
+sequence: the worker is terminated, retained identities are retried by the
+second drain, and no result becomes observable until that sequence completes.
+Windows invokes the
+package-owned `taskkill.exe /t /f` tree operation only while the direct worker
+or command still has a retained live `ChildProcess` handle; transmitted child
+registrations never authorize Windows tree termination. A stale or synthetic
+PID therefore fails closed without invoking `taskkill`. The operation is
+followed by bounded `tasklist.exe` absence verification. One monotonic cleanup
+deadline is passed through inventory reads, `ps`/`tasklist`, termination,
+polling, and final verification; exhaustion fails closed as
+`COMMAND_TERMINATION_FAILED`.
+
+On Windows the supervisor retains the command's live `ChildProcess` handle and
+uses `/T` cleanup if the worker IPC channel disconnects. Without a Windows Job
+Object, the fallback still cannot recover a tree if both the worker and
+supervisor handles have already observed exit before cleanup. That path fails
+closed without signalling a reusable PID; it does not claim that descendants
+of those exited processes were contained. Kill-on-close coverage for that case
+requires a separately approved native Job Object boundary.
+
+Portable Node process APIs do not provide a non-escapable OS containment object
+on every supported platform. The POSIX fallback therefore proves cleanup for
+descendants still observable through ancestry when inventory starts, including
+a direct `detached`/`unref` child. It does not claim containment for a process
+that double-forks and is reparented before that first bounded inventory. Closing
+that residual adversarial case requires a Linux cgroup, Windows Job Object, and
+a separately approved macOS containment mechanism; none is assumed available
+or writable by this package.
 
 The coverage executor starts c8 through its installed package asset, also via
 `process.execPath` and fixed arguments. `c8@12.0.0` and
@@ -124,6 +177,11 @@ outcomes stay `passed|failed|blocked`; exit codes stay `0|1|2`. `run-gates`
 emits one canonical JSON document. `--comparison-base` stays mandatory for
 this quality profile and must be a full SHA. No new command is introduced.
 
+Runtime executor overrides are rejected fail-closed. The in-process executor
+hook is explicitly test-only and is not part of the runner contract; only the
+package-owned executor process boundary carries timeout and forced-termination
+guarantees.
+
 ### Historical test-suite rule lifecycle
 
 `ENG-TEST-SUITE-001` is retained for audit history but is no longer an active
@@ -172,7 +230,7 @@ integration files (eleven total), with
 | Risk | Control |
 |---|---|
 | Node 22 and 24 V8 branch accounting differs | Run the same full contract on Node 22.14.0 and 24.19.0; do not weaken thresholds or introduce ignores. |
-| A child process survives the existing watchdog | `runExecutorWithTimeout` aborts through an `AbortSignal`; adapters kill only their own child process tree, await exit and cleanup, then settle. Test the outer-timeout race. |
+| A child process survives the existing watchdog | `runExecutorWithTimeout` aborts through an `AbortSignal`; a command supervisor waits for durable ownership acknowledgement before launch and cleans up on worker disconnect; adapters freeze the observable owned tree, revalidate stable identities before signalling, await bounded verification, then settle. Test lost and delayed registration, detached direct descendants, and the outer-timeout race; retain the documented pre-inventory reparenting limit. |
 | Target input changes analyzer behavior | Use trusted package assets, empty/sanitized child environment, fixed args without shell, real-path containment, and rejected target configuration/suppressions. |
 | Large or sensitive tool output enters canonical JSON | Bound stdout/stderr and normalize only allowed reason codes, counts, locations, summaries, and redaction metadata. |
 | Changed/new selection is incomplete | Use full SHA plus merge base and reconcile committed, index, working tree, renames, and eligible untracked production paths. |

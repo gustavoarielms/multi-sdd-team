@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,9 +18,11 @@ import {
   validateGovernanceDocument,
 } from "./governance-validator.js";
 import {
+  captureProcessIdentity,
   isContained,
   listTrackedFiles,
   runBoundedCommand,
+  terminateProcessTree,
 } from "./engineering-gate-runtime.js";
 import { runNodeLintComplexity } from "./node-lint-complexity-adapter.js";
 import { runNodeCoverage } from "./node-coverage-adapter.js";
@@ -165,7 +168,9 @@ export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "forbidden_references",
 ]);
 
-const EXECUTOR_CLEANUP_GRACE_MS = 1000;
+const EXECUTOR_BOUNDARY_TERMINATION_MS = 2000;
+const EXECUTOR_WORKER_FLAG = "--engineering-executor-worker";
+const EXECUTOR_BOUNDARY_ENV = "SDD_ENGINEERING_EXECUTOR_BOUNDARY";
 
 function executorTimeoutResult() {
   return {
@@ -175,10 +180,9 @@ function executorTimeoutResult() {
   };
 }
 
-async function runExecutorWithTimeout(implementation, context, timeoutMs) {
+async function runCooperativeInProcessTestExecutor(implementation, context, timeoutMs) {
   const controller = new AbortController();
   let timer;
-  let cleanupTimer;
   let timedOut = false;
   try {
     const execution = Promise.resolve().then(() => implementation({
@@ -193,17 +197,262 @@ async function runExecutorWithTimeout(implementation, context, timeoutMs) {
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-        cleanupTimer = setTimeout(() => resolve({ type: "timeout" }), EXECUTOR_CLEANUP_GRACE_MS);
+        resolve({ type: "aborted" });
       }, timeoutMs);
     });
-    const settled = await Promise.race([execution, watchdog]);
-    if (timedOut || settled.type === "timeout") return executorTimeoutResult();
+    const first = await Promise.race([execution, watchdog]);
+    const settled = first.type === "aborted" ? await execution : first;
+    if (timedOut) return executorTimeoutResult();
     if (settled.type === "error") throw settled.error;
     return settled.value;
   } finally {
     clearTimeout(timer);
-    clearTimeout(cleanupTimer);
   }
+}
+
+function validOwnedProcessIdentity(identity) {
+  return identity
+    && [identity.pid, identity.parent, identity.group, identity.session].every(Number.isSafeInteger)
+    && identity.pid > 0
+    && typeof identity.startTime === "string"
+    && identity.startTime.length > 0;
+}
+
+function sameOwnedProcessIdentity(left, right) {
+  return left?.pid === right?.pid
+    && left?.startTime === right?.startTime
+    && left?.session === right?.session
+    && left?.group === right?.group;
+}
+
+function ownedProcessGroup(identity) {
+  return {
+    pid: identity.pid,
+    identity,
+    kill: (signal) => process.kill(identity.pid, signal),
+  };
+}
+
+function disconnectOwnedIpc(child) {
+  if (!child.connected) return;
+  try { child.disconnect(); } catch { /* The worker already disconnected. */ }
+}
+
+function applyOwnedProcessMessage(message, ownedGroups) {
+  if (message?.type !== "owned_process_group") return undefined;
+  if (!validOwnedProcessIdentity(message.identity)) return { accepted: false, registered: false };
+  if (message.action === "register") {
+    ownedGroups.set(message.identity.pid, message.identity);
+    return { accepted: true, registered: true };
+  }
+  if (
+    message.action === "unregister"
+    && sameOwnedProcessIdentity(ownedGroups.get(message.identity.pid), message.identity)
+  ) {
+    ownedGroups.delete(message.identity.pid);
+    return { accepted: true, registered: false };
+  }
+  return { accepted: false, registered: false };
+}
+
+function acknowledgeOwnedProcessMessage(child, message, accepted, onFailure) {
+  if (typeof message.requestId !== "string" || !child.connected) return;
+  try {
+    child.send({
+      type: "owned_process_group_ack",
+      requestId: message.requestId,
+      accepted,
+    }, () => {});
+  } catch {
+    onFailure();
+  }
+}
+
+export function createExecutorBoundary(child, context, terminate = terminateProcessTree) {
+  if (process.platform !== "win32" && !child.identityPromise && typeof child.spawnfile === "string") {
+    child.identityPromise = captureProcessIdentity(child.pid);
+    child.identityPromise.then((identity) => { child.identity = identity; }, () => {});
+  }
+  let workerResult;
+  let workerError;
+  let termination;
+  let groupDrain;
+  let finalization;
+  let settled = false;
+  const ownedGroups = new Map();
+  let settleExecution;
+  const execution = new Promise((resolve) => {
+    settleExecution = resolve;
+  });
+  const settle = (value) => {
+    if (settled) return;
+    settled = true;
+    settleExecution(value);
+  };
+  const terminateGroups = async () => {
+    const groups = [...ownedGroups.values()];
+    const results = await Promise.allSettled(groups.map((identity) => terminate(ownedProcessGroup(identity))));
+    groups.forEach((identity, index) => {
+      if (
+        results[index].status === "fulfilled"
+        && sameOwnedProcessIdentity(ownedGroups.get(identity.pid), identity)
+      ) {
+        ownedGroups.delete(identity.pid);
+      }
+    });
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) throw failure.reason;
+  };
+  const drainOwnedGroups = () => {
+    groupDrain ??= terminateGroups().finally(() => { groupDrain = undefined; });
+    return groupDrain;
+  };
+  const workerOutcome = () => (workerError
+    ? { type: "error", error: workerError }
+    : workerResult === undefined
+      ? { type: "error", error: new Error("executor worker exited without a result") }
+      : { type: "result", value: workerResult });
+  const operationFailure = async (operation) => {
+    try {
+      await operation();
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  };
+  const completeTermination = (initialDrainAttempted = false) => {
+    termination ??= (async () => {
+      if (!initialDrainAttempted) await operationFailure(drainOwnedGroups);
+      const workerFailure = await operationFailure(() => terminate(child));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const groupFailure = await operationFailure(drainOwnedGroups);
+      disconnectOwnedIpc(child);
+      const failure = workerFailure ?? groupFailure;
+      if (failure) throw failure;
+    })();
+    return termination;
+  };
+  const settleFromExit = () => {
+    finalization ??= (async () => {
+      const drainFailure = ownedGroups.size === 0
+        ? undefined
+        : await operationFailure(drainOwnedGroups);
+      if (drainFailure) {
+        const terminationFailure = await operationFailure(() => completeTermination(true));
+        if (terminationFailure) {
+          settle({ type: "error", error: terminationFailure });
+          return;
+        }
+      }
+      settle(workerOutcome());
+    })();
+  };
+  child.on("message", (message) => {
+    const ownership = applyOwnedProcessMessage(message, ownedGroups);
+    if (ownership) {
+      const accepting = !settled && !termination && !finalization && child.connected;
+      const accepted = ownership.registered ? accepting : ownership.accepted;
+      if (ownership.registered && !accepted) drainOwnedGroups().catch(() => {});
+      acknowledgeOwnedProcessMessage(child, message, accepted, () => drainOwnedGroups().catch(() => {}));
+      return;
+    }
+    if (message?.type === "result") workerResult = message.value;
+    if (message?.type === "error") workerError = new Error("executor worker failed");
+  });
+  child.on("error", () => {
+    workerError = new Error("executor worker failed");
+    disconnectOwnedIpc(child);
+    settleFromExit();
+  });
+  child.on("disconnect", () => {
+    if (workerResult !== undefined || workerError) settleFromExit();
+  });
+  child.on("exit", settleFromExit);
+  child.on("close", settleFromExit);
+  if (context !== undefined) {
+    child.on("spawn", () => {
+      if (child.connected) child.send({ type: "start", context }, () => {});
+    });
+  }
+  return {
+    execution,
+    abort: () => {
+      if (child.connected) child.send({ type: "abort" }, () => {});
+    },
+    terminate: async () => {
+      try {
+        await completeTermination();
+        settle({ type: "terminated" });
+      } catch (error) {
+        settle({ type: "error", error });
+        throw error;
+      }
+    },
+  };
+}
+
+function startExecutorBoundary(implementation, context) {
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), EXECUTOR_WORKER_FLAG, implementation], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, [EXECUTOR_BOUNDARY_ENV]: "1" },
+    shell: false,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+    windowsHide: true,
+  });
+  return createExecutorBoundary(child, context);
+}
+
+export async function runExecutorBoundaryWithTimeout(
+  boundary,
+  timeoutMs,
+  boundaryTerminationMs = EXECUTOR_BOUNDARY_TERMINATION_MS,
+) {
+  let timer;
+  let terminationTimer;
+  let timedOut = false;
+  try {
+    const watchdog = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        boundary.abort();
+        terminationTimer = setTimeout(() => resolve({ type: "terminate" }), boundaryTerminationMs);
+      }, timeoutMs);
+    });
+    const first = await Promise.race([boundary.execution, watchdog]);
+    if (first.type === "terminate" || timedOut) {
+      await boundary.terminate();
+      return executorTimeoutResult();
+    }
+    if (first.type === "error") throw first.error;
+    return first.value;
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(terminationTimer);
+  }
+}
+
+async function runExecutorWorker(implementation) {
+  const executor = DEFAULT_EXECUTORS[implementation];
+  if (!executor) process.exitCode = 2;
+  const controller = new AbortController();
+  process.on("message", async (message) => {
+    if (message?.type === "abort") {
+      controller.abort();
+      return;
+    }
+    if (message?.type !== "start" || !executor) return;
+    try {
+      const context = message.context;
+      const value = await executor({
+        ...context,
+        signal: controller.signal,
+        limits: { ...context.limits, signal: controller.signal },
+      });
+      process.send?.({ type: "result", value }, () => process.disconnect());
+    } catch {
+      process.send?.({ type: "error" }, () => process.disconnect());
+    }
+  });
 }
 
 async function javascriptSyntax(context) {
@@ -503,7 +752,29 @@ function selectedProfileMatches(selected, expected) {
     && selected.adapter_version === expected.adapter_version;
 }
 
-async function executeEngineeringRegistrations(policy, implementations, context) {
+function executorSelection(options) {
+  if (Object.hasOwn(options, "executors")) {
+    return {
+      error: "EXECUTOR_OVERRIDE_REJECTED",
+      summary: "Runtime executor overrides are not permitted; package-owned executors require an isolated boundary.",
+    };
+  }
+  if (options.testHooks === undefined) return { implementations: DEFAULT_EXECUTORS, isolated: true };
+  const hooks = options.testHooks;
+  const valid = hooks?.mode === "cooperative_in_process_test_only"
+    && hooks.executors
+    && typeof hooks.executors === "object"
+    && !Array.isArray(hooks.executors)
+    && Object.keys(hooks).every((key) => ["executors", "mode"].includes(key));
+  return valid
+    ? { implementations: hooks.executors, isolated: false }
+    : {
+      error: "TEST_HOOKS_INVALID",
+      summary: "In-process executor hooks are available only through the explicit test-only contract.",
+    };
+}
+
+async function executeEngineeringRegistrations(policy, implementations, context, isolated) {
   const results = [];
   const evidence = [];
   let blocked = false;
@@ -527,13 +798,21 @@ async function executeEngineeringRegistrations(policy, implementations, context)
     try {
       const implementation = implementations[registration.implementation];
       execution = implementation
-        ? await runExecutorWithTimeout(implementation, {
-          ...context,
-          limits: {
-            timeoutMs: registration.timeout_ms,
-            maxOutputBytes: registration.max_output_bytes,
-          },
-        }, registration.timeout_ms)
+        ? isolated
+          ? await runExecutorBoundaryWithTimeout(startExecutorBoundary(registration.implementation, {
+            ...context,
+            limits: {
+              timeoutMs: registration.timeout_ms,
+              maxOutputBytes: registration.max_output_bytes,
+            },
+          }), registration.timeout_ms)
+          : await runCooperativeInProcessTestExecutor(implementation, {
+            ...context,
+            limits: {
+              timeoutMs: registration.timeout_ms,
+              maxOutputBytes: registration.max_output_bytes,
+            },
+          }, registration.timeout_ms)
         : { status: "error", reason_code: "EXECUTOR_MISSING" };
       if (!execution || typeof execution !== "object") {
         execution = { status: "error", reason_code: "EXECUTOR_INVALID_RESULT" };
@@ -568,6 +847,8 @@ export async function runEngineeringGates(targetPath, options = {}) {
       "The package-owned engineering gate policy could not be loaded trustworthily.",
     );
   }
+  const selection = executorSelection(options);
+  if (selection.error) return blockedRun(startedAt, policy, selection.error, selection.summary);
   let target;
   try {
     target = await fs.realpath(path.resolve(targetPath));
@@ -594,12 +875,12 @@ export async function runEngineeringGates(targetPath, options = {}) {
   }, policy.profile?.comparison?.required === true);
   if (comparison.error) return blockedRun(startedAt, policy, comparison.error, comparison.summary);
 
-  const implementations = options.executors ?? DEFAULT_EXECUTORS;
+  const implementations = selection.implementations;
   const { results, evidence } = await executeEngineeringRegistrations(policy, implementations, {
     target,
     comparisonBase: comparison.comparisonBase,
     qualityProfile: policy.profileContext,
-  });
+  }, selection.isolated);
 
   const document = assembleDocument(
     startedAt,
@@ -627,4 +908,8 @@ export async function runEngineeringGates(targetPath, options = {}) {
     document,
     exitCode: document.outcome === "blocked" ? 2 : document.outcome === "failed" ? 1 : 0,
   };
+}
+
+if (process.argv[2] === EXECUTOR_WORKER_FLAG) {
+  await runExecutorWorker(process.argv[3]);
 }
