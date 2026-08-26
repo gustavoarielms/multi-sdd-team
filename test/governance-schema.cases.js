@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
-import test from "node:test";
+import test from "./classified-test.js";
 import {
   validateAgentResult,
   validateAgentResultText,
@@ -256,7 +256,6 @@ test("versioned governance catalog and check registry are valid and linked", asy
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
       "ENG-SOURCE-SYNTAX-001",
-      "ENG-TEST-SUITE-001",
       "SEC-PRODUCTION-DEPS-001",
       "ENG-PACKAGE-SURFACE-001",
       "GOV-FORBIDDEN-SURFACE-001",
@@ -406,6 +405,18 @@ test("catalog integrity rejects invalid documents, duplicate rules, proposed blo
   const changedProposed = structuredClone(catalog);
   changedProposed.rules.find((rule) => rule.status === "proposed").title = "Changed proposed guidance";
   assert.equal((await validateGovernanceCatalog(changedProposed, registry)).ok, true);
+
+  const reactivatedLegacy = structuredClone(catalog);
+  const legacy = reactivatedLegacy.rules.find((rule) => rule.rule_id === "ENG-TEST-SUITE-001");
+  legacy.enforcement = {
+    mode: "deterministic",
+    gate_effect: "block",
+    automation: { engine: "sdd_engineering_gates", check_id: "test_suite" },
+  };
+  assert.match(
+    (await validateGovernanceCatalog(reactivatedLegacy, registry)).errors.join(" "),
+    /deprecated rule retains an active deterministic binding/,
+  );
 });
 
 test("deterministic check results require bounded evidence linked to rule and check", async () => {

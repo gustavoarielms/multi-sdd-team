@@ -10,8 +10,8 @@
     "registry_id": { "const": "multi_sdd_engineering_gates" },
     "executors": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 9,
+      "maxItems": 9,
       "items": {
         "type": "object",
         "additionalProperties": false,

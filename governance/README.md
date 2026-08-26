@@ -139,11 +139,11 @@ incomplete layouts fail closed with a bounded machine-readable result.
 `sdd-codegraph run-gates [target]` reads the target's
 `.sdd-codegraph/gates.json`, validates the exact v1 executor allowlist, runs the
 package-owned executors in registry order, validates the complete result, and
-writes one `engineering-gate-run` JSON document to stdout. The seven executors
+writes one `engineering-gate-run` JSON document to stdout. The nine executors
 cover tracked JavaScript and shell syntax, package-owned Node.js lint and
-per-function complexity, the repository test suite, the five individual
-governance checks, production dependency audit, npm package surface, and
-approved forbidden references.
+per-function complexity, explicit unit and integration suites, combined global
+and changed/new coverage, the five individual governance checks, production
+dependency audit, npm package surface, and approved forbidden references.
 
 Executor states are deliberately distinct:
 
@@ -160,8 +160,9 @@ failures, timeouts, output overflow, and invalid generated results are blocked
 runs.
 
 Gate effects and executor bindings are exact package trust, not project input.
-The configuration cannot supply commands, plugins, effects, exceptions, or
-baselines, and a reviewer cannot override a deterministic failure or error.
+The configuration cannot supply commands, plugins, effects, exceptions,
+coverage configuration, suppressions, or baselines, and a reviewer cannot
+override a deterministic failure or error.
 Child processes use fixed argument arrays without a shell, target paths are
 real-path contained, output and time are bounded by the executor registry, and
 only normalized reason codes, counts, bounded source locations, summaries, and
@@ -169,10 +170,11 @@ redaction metadata enter the canonical document. The npm executors use a
 disposable cache so a broken user cache cannot change the gate result.
 
 The runner must start from a trusted launcher, and its checkout must remain
-immutable while gates execute. The package-owned analyzer child receives an
-empty environment, while the shipped CI and publish workflows explicitly clear
-Node and ESLint control variables. This prevents target or ambient
-`NODE_OPTIONS`, `NODE_PATH`, `TIMING`, `DEBUG`, and `ESLINT_FLAGS` values from
+immutable while gates execute. Package-owned analyzer children receive a
+sanitized environment, while the shipped CI and publish workflows explicitly
+clear Node, ESLint, c8, V8 coverage, and nyc control variables. This prevents
+target or ambient `NODE_OPTIONS`, `NODE_PATH`, `NODE_V8_COVERAGE`, `C8_CONFIG`,
+`C8_REPORTER`, `NYC_CONFIG`, `TIMING`, `DEBUG`, and `ESLINT_FLAGS` values from
 changing analyzer execution or its JSON protocol. Compromise before the parent
 Node process starts and concurrent local mutation of the checkout remain
 outside the runner's trust boundary.
@@ -201,12 +203,21 @@ suppressions, and offline execution. The lint and complexity executor uses the
 package dependency ESLint `10.8.1`, the recommended `@eslint/js` rules as
 errors, Node built-in globals, ESM source semantics, and classic McCabe maximum
 `15` for every function. Warnings remain informational evidence. The built-in
-test runner remains bound to the supported Node runtime; the #11 and #12
-analyzers remain future work.
+test runner remains bound to the supported Node runtime. Coverage uses exact
+direct dependencies `c8@12.0.0` and `istanbul-lib-coverage@3.2.2`, combines
+separate unit and integration maps, and uses exact covered/total item
+arithmetic. Global coverage contains tracked production files; changed/new
+coverage additionally includes complete, non-ignored untracked production
+files. Deleted files are excluded and renames use their final path.
+Architecture analyzers remain future work under #12.
 
 Because changed-code coverage is blocking, `run-gates` requires an explicit
 full comparison commit and records both the supplied SHA and effective merge
 base. Missing or untrustworthy comparison history blocks the run with exit `2`.
+Target `.c8rc*`, `.nycrc*`, package `c8`/`nyc` properties, and inline coverage
+ignore directives also block the run. Executor timeouts abort owned child
+process trees and await termination plus temporary coverage cleanup before the
+canonical result settles.
 
 ## Runtime enforcement
 

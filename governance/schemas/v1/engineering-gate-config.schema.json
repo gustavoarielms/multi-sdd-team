@@ -20,13 +20,15 @@
     },
     "executors": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
+      "minItems": 9,
+      "maxItems": 9,
       "uniqueItems": true,
       "prefixItems": [
         { "const": "javascript_syntax" },
         { "const": "node_lint_complexity" },
-        { "const": "test_suite" },
+        { "const": "unit_tests" },
+        { "const": "integration_tests" },
+        { "const": "coverage" },
         { "const": "governance" },
         { "const": "production_dependency_audit" },
         { "const": "npm_package_surface" },

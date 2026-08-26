@@ -366,20 +366,20 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "ENG-TEST-SUITE-001",
-      "version": 1,
+      "version": 2,
       "title": "The repository test suite must complete successfully",
       "description": "The package-owned test executor must run the repository test suite without recursively invoking the full engineering gate runner.",
       "category": "testing",
-      "status": "approved",
+      "status": "deprecated",
       "owner": "quality_gate",
       "default_severity": "high",
-      "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_engineering_gates", "check_id": "test_suite", "config_ref": ".sdd-codegraph/gates.json" } },
+      "enforcement": { "mode": "human_review", "gate_effect": "none" },
       "scope": { "description": "The target repository test suite executed with the package-owned fixed command." },
       "exceptions_allowed": false,
       "source_refs": ["package.json", "governance/gates/v1/registry.json"],
       "responsible_gate": "quality_gate",
       "evidence_requirements": ["Bounded test command outcome and exit classification."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-20T01:21:17Z", "rationale": "Approved as a required blocking executor in Issue #8.", "reference": "issue:8" }
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-25T00:00:00Z", "rationale": "Deprecated after the approved unit, integration, and coverage executors replaced the aggregate suite gate.", "reference": "issue:11" }
     },
     {
       "schema_version": "1.0.0",

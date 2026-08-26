@@ -6,9 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const packagePath = path.join("@gustavoarielms", "sdd-codegraph-cli");
 const adapterPath = path.join("src", "node-lint-complexity-adapter.js");
+const coverageAdapterPath = path.join("src", "node-coverage-adapter.js");
 const limits = Object.freeze({ timeoutMs: 60000, maxOutputBytes: 262144 });
 
 async function temporaryDirectory(t, prefix) {
@@ -45,18 +46,27 @@ async function assertAdapterPasses(modulePath, target) {
   assert.match(result.summary, /ESLint 10\.8\.1 analyzed 1 tracked JavaScript file\(s\)/);
 }
 
+async function assertCoverageAdapter(modulePath) {
+  const module = await import(pathToFileURL(modulePath));
+  assert.equal(module.meetsCoverageThreshold({ covered: 9, total: 10 }, 90), true);
+  assert.equal(module.meetsCoverageThreshold({ covered: 89, total: 100 }, 90), false);
+}
+
 test("source, project-local, global, and packed consumers use the package-owned adapter", async (t) => {
   const target = await targetRepository(t);
   const cache = await temporaryDirectory(t, "adapter-distribution-cache-");
   await assertAdapterPasses(path.join(repositoryRoot, adapterPath), target);
+  await assertCoverageAdapter(path.join(repositoryRoot, coverageAdapterPath));
 
   const localConsumer = await temporaryDirectory(t, "adapter-local-consumer-");
   runNpm(localConsumer, cache, ["install", "--ignore-scripts", "--no-package-lock", repositoryRoot]);
   await assertAdapterPasses(path.join(localConsumer, "node_modules", packagePath, adapterPath), target);
+  await assertCoverageAdapter(path.join(localConsumer, "node_modules", packagePath, coverageAdapterPath));
 
   const globalPrefix = await temporaryDirectory(t, "adapter-global-prefix-");
   runNpm(globalPrefix, cache, ["install", "--global", "--prefix", globalPrefix, "--ignore-scripts", repositoryRoot]);
   await assertAdapterPasses(path.join(globalPrefix, "lib", "node_modules", packagePath, adapterPath), target);
+  await assertCoverageAdapter(path.join(globalPrefix, "lib", "node_modules", packagePath, coverageAdapterPath));
 
   const packedDirectory = await temporaryDirectory(t, "adapter-packed-artifact-");
   const pack = JSON.parse(runNpm(packedDirectory, cache, ["pack", repositoryRoot, "--json", "--ignore-scripts"]));
@@ -68,4 +78,5 @@ test("source, project-local, global, and packed consumers use the package-owned 
     path.join(packedDirectory, pack[0].filename),
   ]);
   await assertAdapterPasses(path.join(packedConsumer, "node_modules", packagePath, adapterPath), target);
+  await assertCoverageAdapter(path.join(packedConsumer, "node_modules", packagePath, coverageAdapterPath));
 });

@@ -3,7 +3,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "./classified-test.js";
+import { evaluatePackageSurface } from "../src/engineering-gates.js";
 import {
   checkCodeGraph,
   checkProjectFiles,
@@ -35,8 +36,10 @@ test("package is configured for public MIT publication", async () => {
   assert.deepEqual(metadata.dependencies, {
     "@eslint/js": "10.0.1",
     ajv: "8.20.0",
+    c8: "12.0.0",
     eslint: "10.8.1",
     globals: "17.11.0",
+    "istanbul-lib-coverage": "3.2.2",
   });
   assert.deepEqual(metadata.files, [
     "README.md",
@@ -110,7 +113,7 @@ test("publish workflow dogfoods gates and ignores lifecycle scripts for install 
 
   for (const command of [
     "npm ci --ignore-scripts",
-    "env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base \"$(git rev-parse HEAD^{commit})\"",
+    "env -u C8_CONFIG -u C8_REPORTER -u NODE_OPTIONS -u NODE_PATH -u NODE_V8_COVERAGE -u NYC_CONFIG -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base \"$(git rev-parse HEAD^{commit})\"",
     "npm publish --ignore-scripts",
   ]) {
     assert.ok(runCommands.includes(command), `missing fail-closed publish command: ${command}`);
@@ -119,14 +122,14 @@ test("publish workflow dogfoods gates and ignores lifecycle scripts for install 
 
 test("CI and publish workflows sanitize Node and ESLint control variables", async () => {
   const expectedGateCommands = new Map([
-    ["ci.yml", 'env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"'],
-    ["publish.yml", 'env -u NODE_OPTIONS -u NODE_PATH -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$(git rev-parse HEAD^{commit})"'],
+    ["ci.yml", 'env -u C8_CONFIG -u C8_REPORTER -u NODE_OPTIONS -u NODE_PATH -u NODE_V8_COVERAGE -u NYC_CONFIG -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$COMPARISON_BASE"'],
+    ["publish.yml", 'env -u C8_CONFIG -u C8_REPORTER -u NODE_OPTIONS -u NODE_PATH -u NODE_V8_COVERAGE -u NYC_CONFIG -u TIMING -u DEBUG -u ESLINT_FLAGS node ./bin/sdd-codegraph.js run-gates . --comparison-base "$(git rev-parse HEAD^{commit})"'],
   ]);
 
   for (const [workflow, expectedGateCommand] of expectedGateCommands) {
     const source = await fs.readFile(new URL(`../.github/workflows/${workflow}`, import.meta.url), "utf8");
     const runCommands = [...source.matchAll(/^\s+- run: (.+)$/gm)].map((match) => match[1]);
-    for (const variable of ["DEBUG", "ESLINT_FLAGS", "NODE_OPTIONS", "NODE_PATH", "TIMING"]) {
+    for (const variable of ["C8_CONFIG", "C8_REPORTER", "DEBUG", "ESLINT_FLAGS", "NODE_OPTIONS", "NODE_PATH", "NODE_V8_COVERAGE", "NYC_CONFIG", "TIMING"]) {
       assert.match(source, new RegExp(`^  ${variable}: ["']{2}$`, "m"), `${workflow} does not sanitize ${variable}`);
     }
     assert.ok(runCommands.includes(expectedGateCommand), `${workflow} does not invoke gates with the sanitized direct launcher`);
@@ -161,6 +164,8 @@ test("npm package contains only the supported Codex distribution", async (contex
     "codex/agents/tester-reviewer.toml",
     "codex/pipeline.json",
     "docs/agent-governance-responsibility-map.md",
+    "docs/functional-spec.md",
+    "docs/technical-spec.md",
     "governance/README.md",
     "governance/checks/v1/registry.json",
     "governance/examples/v1/active-rule-exception.json",
@@ -188,17 +193,28 @@ test("npm package contains only the supported Codex distribution", async (contex
     "setup.sh",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
+    "src/git-change-selector.js",
+    "src/coverage-map-worker.js",
     "src/governance-checks.js",
     "src/governance-trust.js",
     "src/governance-validator.d.ts",
     "src/governance-validator.js",
     "src/installer.js",
+    "src/node-coverage-adapter.js",
     "src/node-eslint-policy.js",
     "src/node-lint-complexity-adapter.js",
     "src/node-lint-complexity-worker.js",
+    "src/node-test-reporter.js",
+    "src/node-test-suite-adapter.js",
   ].sort();
 
   assert.deepEqual(paths, expected);
+  assert.equal(evaluatePackageSurface(paths).status, "pass");
+  assert.deepEqual(evaluatePackageSurface(paths.filter((file) => file !== "src/coverage-map-worker.js")), {
+    status: "fail",
+    reason_code: "PACKAGE_SURFACE_FAILED",
+    summary: "The package dry run is missing 1 required runner asset(s).",
+  });
 });
 
 test("package source contains only the Codex runtime surface", async () => {

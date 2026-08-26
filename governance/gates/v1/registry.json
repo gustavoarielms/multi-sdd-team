@@ -17,9 +17,23 @@
       "max_output_bytes": 262144
     },
     {
-      "executor_id": "test_suite",
-      "implementation": "test_suite",
-      "rule_ids": ["ENG-TEST-SUITE-001"],
+      "executor_id": "unit_tests",
+      "implementation": "unit_tests",
+      "rule_ids": ["TEST-UNIT-SUITE-001"],
+      "timeout_ms": 120000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "integration_tests",
+      "implementation": "integration_tests",
+      "rule_ids": ["TEST-INTEGRATION-SUITE-001"],
+      "timeout_ms": 120000,
+      "max_output_bytes": 262144
+    },
+    {
+      "executor_id": "coverage",
+      "implementation": "coverage",
+      "rule_ids": ["TEST-COVERAGE-GLOBAL-001", "TEST-COVERAGE-CHANGED-001"],
       "timeout_ms": 120000,
       "max_output_bytes": 262144
     },

@@ -33,9 +33,21 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
     timeout_ms: 60000,
     max_output_bytes: 262144,
   }),
-  test_suite: Object.freeze({
-    implementation: "test_suite",
-    rule_ids: Object.freeze(["ENG-TEST-SUITE-001"]),
+  unit_tests: Object.freeze({
+    implementation: "unit_tests",
+    rule_ids: Object.freeze(["TEST-UNIT-SUITE-001"]),
+    timeout_ms: 120000,
+    max_output_bytes: 262144,
+  }),
+  integration_tests: Object.freeze({
+    implementation: "integration_tests",
+    rule_ids: Object.freeze(["TEST-INTEGRATION-SUITE-001"]),
+    timeout_ms: 120000,
+    max_output_bytes: 262144,
+  }),
+  coverage: Object.freeze({
+    implementation: "coverage",
+    rule_ids: Object.freeze(["TEST-COVERAGE-GLOBAL-001", "TEST-COVERAGE-CHANGED-001"]),
     timeout_ms: 120000,
     max_output_bytes: 262144,
   }),
@@ -92,7 +104,6 @@ export const APPROVED_GOVERNANCE_RULES = Object.freeze({
   "GOV-CHECK-RULE-LINK-001": Object.freeze({ version: 1, digest: "sha256:0785674aed190cf0ba15f1d20b89319bc927e7df54c5e1281b9fe83f5dab7840" }),
   "GOV-INSTALL-PARITY-001": Object.freeze({ version: 1, digest: "sha256:17bc4f0dd08816fe383e33f0f5c4f08c8596eac3e5218db43c378f3086d764e1" }),
   "ENG-SOURCE-SYNTAX-001": Object.freeze({ version: 1, digest: "sha256:586ffe9490946152c076e51ce90423230d9f9c419c7c298d73eeed31df2645a8" }),
-  "ENG-TEST-SUITE-001": Object.freeze({ version: 1, digest: "sha256:46e742c80817c1be42d473edcc1b6b49d3fe432365e07919c02dab4707caad00" }),
   "SEC-PRODUCTION-DEPS-001": Object.freeze({ version: 1, digest: "sha256:eb56caf5a8bd47484bc4d8aae34cb43d6dceed98916383b4f9754413210bfdf3" }),
   "ENG-PACKAGE-SURFACE-001": Object.freeze({ version: 1, digest: "sha256:ede1a3abf05773c749d0fbdf730140c9230aad79bad50bab48826c811eee4e22" }),
   "GOV-FORBIDDEN-SURFACE-001": Object.freeze({ version: 1, digest: "sha256:d6298d8376b6a031e9f99d4dc5ac14183eef2f017a915985c1ff6715e2e7a387" }),

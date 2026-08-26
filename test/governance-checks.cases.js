@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "./classified-test.js";
 import { hasBlockingGovernanceFailures, runGovernanceChecks } from "../src/governance-checks.js";
 import { validateGovernanceCheckResult } from "../src/governance-validator.js";
 import { installProject } from "../src/installer.js";
