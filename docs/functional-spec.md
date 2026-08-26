@@ -48,6 +48,13 @@ child process it started. Only after those processes have exited and owned
 temporary resources have been cleaned may the runner emit that executor's
 `error` and mark later executors `not_run`.
 
+This cleanup boundary is not an operating-system sandbox. It verifies only
+processes that remain attributable to a package-owned process identity, group,
+session, or observable ancestry when bounded inventory begins. A process that
+has already detached and been reparented outside that attributable domain is a
+documented portability residual and is not claimed as contained by
+`run-gates`.
+
 The exact ordered executor allowlist becomes:
 
 1. `javascript_syntax`

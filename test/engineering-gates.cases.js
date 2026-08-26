@@ -1033,6 +1033,9 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     state: "R",
     startTime: "Tue Aug 25 10:59:39 2026",
   }]);
+  assert.equal(parsePosixProcessInventory(
+    "321 1 321 321 ?Es Tue Aug 25 10:59:39 2026\n",
+  )[0].state, "?Es");
   assert.throws(() => parsePosixProcessInventory("malformed\n"), /invalid process inventory/);
   const directIdentity = {
     pid: 2147483600,
@@ -1198,6 +1201,33 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(exitedSessionStates.get(retainedSessionChild.pid), "Z");
   assert.equal(exitedSessionSignals.some(([pid]) => pid === unrelatedSessionChild.pid), false);
+
+  const observableExitingIdentity = {
+    pid: 2147483639,
+    parent: 1,
+    group: 2147483639,
+    session: 2147483639,
+    startTime: "Tue Aug 25 10:59:39 2026",
+    state: "?Es",
+  };
+  let observableExitingState = observableExitingIdentity.state;
+  const observableExitingSignals = [];
+  await terminateProcessTree({
+    pid: observableExitingIdentity.pid,
+    identity: observableExitingIdentity,
+    kill: () => {},
+  }, {
+    platform: "darwin",
+    rootIdentity: observableExitingIdentity,
+    inventory: async () => [{ ...observableExitingIdentity, state: observableExitingState }],
+    signal: (pid, signalName) => {
+      observableExitingSignals.push([pid, signalName]);
+      if (signalName === "SIGKILL") observableExitingState = "Z";
+    },
+    wait: async () => {},
+  });
+  assert.equal(observableExitingSignals.some(([, signalName]) => signalName === "SIGSTOP"), true);
+  assert.equal(observableExitingSignals.some(([, signalName]) => signalName === "SIGKILL"), true);
 
   const rootIdentity = { pid: 201, parent: 1, group: 201, session: 201, startTime: "root", state: "R" };
   const childIdentity = { pid: 202, parent: 201, group: 202, session: 202, startTime: "child", state: "R" };
@@ -1372,13 +1402,92 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(overflow.reason_code, "COMMAND_OUTPUT_LIMIT");
 
-  const functional = await runBoundedCommand(process.execPath, ["-e", "process.exit(7)"], {
+  let delayLateOutputFreeze = true;
+  const lateOverflow = await runBoundedCommand(process.execPath, ["-e", [
+    "const { spawn } = require('node:child_process');",
+    "const child = spawn(process.execPath, ['-e', \"setTimeout(() => process.stdout.write('x'.repeat(4096)), 5)\"], {",
+    "  stdio: ['ignore', 'inherit', 'inherit'],",
+    "});",
+    "child.unref();",
+    "process.exit(0);",
+  ].join("\n")], {
     cwd: repositoryRoot,
     timeoutMs: 1000,
     maxOutputBytes: 64,
+    terminationControl: {
+      signal: (pid, signalName) => {
+        if (signalName === "SIGSTOP" && delayLateOutputFreeze) {
+          delayLateOutputFreeze = false;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 75);
+        }
+        process.kill(pid, signalName);
+      },
+    },
+  });
+  assert.equal(lateOverflow.reason_code, "COMMAND_OUTPUT_LIMIT");
+
+  const functional = await runBoundedCommand(process.execPath, ["-e", [
+    "process.stdout.write('preserved-out');",
+    "process.stderr.write('preserved-error');",
+    "process.exit(7);",
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
   });
   assert.equal(functional.status, "completed");
   assert.equal(functional.exit_code, 7);
+  assert.equal(functional.stdout, "preserved-out");
+  assert.equal(functional.stderr, "preserved-error");
+
+  const completedTreeDirectory = await temporaryDirectory(t);
+  const completedDescendantPath = path.join(completedTreeDirectory, "descendant.pid");
+  const completedTree = await runBoundedCommand(process.execPath, ["-e", [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    "child.unref();",
+    `fs.writeFileSync(${JSON.stringify(completedDescendantPath)}, String(child.pid));`,
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+  });
+  const completedDescendantPid = await waitForPidFile(completedDescendantPath);
+  t.after(() => {
+    try { process.kill(completedDescendantPid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  assert.equal(completedTree.status, "completed");
+  assert.equal(completedTree.exit_code, 0);
+  assert.equal(await processExited(completedDescendantPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true, "a completed target must not settle before its attributable descendant exits");
+
+  const signalledTreeDirectory = await temporaryDirectory(t);
+  const signalledDescendantPath = path.join(signalledTreeDirectory, "descendant.pid");
+  const signalledTree = await runBoundedCommand(process.execPath, ["-e", [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+    `fs.writeFileSync(${JSON.stringify(signalledDescendantPath)}, String(child.pid));`,
+    "process.kill(process.pid, 'SIGTERM');",
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+  });
+  const signalledDescendantPid = await waitForPidFile(signalledDescendantPath);
+  t.after(() => {
+    try { process.kill(signalledDescendantPid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  assert.equal(signalledTree.reason_code, "COMMAND_SIGNALLED");
+  assert.equal(await processExited(signalledDescendantPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true, "a signalled target must not settle before its attributable descendant exits");
 
   const sanitizedBoundaryEnvironment = await runBoundedCommand(
     process.execPath,
@@ -1435,6 +1544,83 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     maxOutputBytes: 64,
   });
   assert.equal(spawnFailure.reason_code, "COMMAND_SPAWN_FAILED");
+
+  const directSupervisor = spawn(
+    process.execPath,
+    [path.join(repositoryRoot, "src", "engineering-gate-runtime.js"), "--engineering-command-supervisor"],
+    {
+      cwd: repositoryRoot,
+      env: process.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  let directSupervisorClosed = false;
+  let directSupervisorOutput = "";
+  directSupervisor.stdout.on("data", (chunk) => { directSupervisorOutput += chunk.toString("utf8"); });
+  directSupervisor.once("close", () => { directSupervisorClosed = true; });
+  t.after(() => {
+    try { process.kill(directSupervisor.pid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  const directSupervisorOutcome = new Promise((resolve, reject) => {
+    const diagnosticTimer = setTimeout(() => reject(new Error("direct supervisor fixture timed out")), 2000);
+    directSupervisor.on("message", (message) => {
+      if (message?.type !== "command_close") return;
+      clearTimeout(diagnosticTimer);
+      resolve(message);
+    });
+  });
+  directSupervisor.send({
+    type: "start_command",
+    executable: process.execPath,
+    args: ["-e", "process.stdout.write('direct-supervisor-output')"],
+    env: {},
+  });
+  assert.deepEqual(await directSupervisorOutcome, { type: "command_close", code: 0, signal: null });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(directSupervisorOutput, "direct-supervisor-output");
+  assert.equal(directSupervisorClosed, false, "the supervisor must await owner cleanup after target close");
+  directSupervisor.disconnect();
+  await assertProcessExited(directSupervisor.pid);
+
+  for (const [label, executable] of [
+    ["synchronous", null],
+    ["asynchronous", path.join(repositoryRoot, "missing-direct-supervisor-target")],
+  ]) {
+    const failedDirectSupervisor = spawn(
+      process.execPath,
+      [path.join(repositoryRoot, "src", "engineering-gate-runtime.js"), "--engineering-command-supervisor"],
+      {
+        cwd: repositoryRoot,
+        env: process.env,
+        shell: false,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
+    t.after(() => {
+      try { process.kill(failedDirectSupervisor.pid, "SIGKILL"); } catch { /* Already terminated. */ }
+    });
+    const failedDirectOutcome = new Promise((resolve, reject) => {
+      const diagnosticTimer = setTimeout(
+        () => reject(new Error(`${label} direct supervisor failure timed out`)),
+        2000,
+      );
+      failedDirectSupervisor.on("message", (message) => {
+        if (message?.type !== "command_error") return;
+        clearTimeout(diagnosticTimer);
+        resolve(message);
+      });
+    });
+    failedDirectSupervisor.send({ type: "start_command", executable, args: [], env: {} });
+    assert.deepEqual(await failedDirectOutcome, { type: "command_error" });
+    assert.equal(await processExited(failedDirectSupervisor.pid, {
+      platform: process.platform,
+      probe: (candidate) => process.kill(candidate, 0),
+      readLinuxState: readLinuxProcessState,
+    }), false, `${label} target-start failure must await owner cleanup`);
+    failedDirectSupervisor.disconnect();
+    await assertProcessExited(failedDirectSupervisor.pid);
+  }
 
   const treeDirectory = await temporaryDirectory(t);
   const commandPidPath = path.join(treeDirectory, "command.pid");
@@ -1574,6 +1760,53 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
   assert.equal(Number.isSafeInteger(failedWindowsCommandPid), true);
+
+  const cleanupProtocolWorker = spawn(process.execPath, ["-e", [
+    `import(${JSON.stringify(path.join(repositoryRoot, "src", "engineering-gate-runtime.js"))}).then(async ({ runBoundedCommand }) => {`,
+    "  let supervisorObservedAlive = false;",
+    "  const result = await runBoundedCommand(process.execPath, ['-e', 'process.exit(0)'], {",
+    "    cwd: process.cwd(), timeoutMs: 1000, maxOutputBytes: 1024,",
+    "    terminationControl: {",
+    "      platform: 'win32',",
+    "      windowsExecutable: 'C:\\\\Windows\\\\System32\\\\taskkill.exe',",
+    "      windowsVerifierExecutable: 'C:\\\\Windows\\\\System32\\\\tasklist.exe',",
+    "      terminateWindows: async ({ pid }) => { process.kill(pid, 0); supervisorObservedAlive = true; },",
+    "      verifyWindows: async () => { throw new Error('verification unavailable'); },",
+    "    },",
+    "  });",
+    "  process.send({ type: 'fixture_result', result, supervisorObservedAlive });",
+    "});",
+  ].join("\n")], {
+    detached: process.platform !== "win32",
+    env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+    shell: false,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  const cleanupProtocolActions = [];
+  const cleanupProtocolResult = await new Promise((resolve, reject) => {
+    const diagnosticTimer = setTimeout(() => reject(new Error("cleanup protocol fixture timed out")), 3000);
+    cleanupProtocolWorker.on("message", (message) => {
+      if (message?.type === "owned_process_group") {
+        cleanupProtocolActions.push(message.action);
+        if (message.requestId) cleanupProtocolWorker.send({
+          type: "owned_process_group_ack",
+          requestId: message.requestId,
+          accepted: true,
+        });
+      }
+      if (message?.type === "fixture_result") {
+        clearTimeout(diagnosticTimer);
+        resolve(message);
+      }
+    });
+    cleanupProtocolWorker.once("error", reject);
+  });
+  t.after(() => {
+    try { process.kill(cleanupProtocolWorker.pid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  assert.equal(cleanupProtocolResult.result.reason_code, "COMMAND_TERMINATION_FAILED");
+  assert.equal(cleanupProtocolResult.supervisorObservedAlive, true);
+  assert.deepEqual(cleanupProtocolActions, ["register"]);
 
   const completedWorker = Object.assign(new EventEmitter(), {
     connected: true,

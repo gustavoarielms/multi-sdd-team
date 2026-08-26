@@ -33,7 +33,13 @@ Every POSIX bounded command first starts a package-owned supervisor that cannot
 launch the requested executable until its full stable process identity is
 captured through a PID-specific bounded `/proc` or `/bin/ps -p` read rather
 than a process-wide inventory scan. The supervisor acknowledges the target
-spawn, and termination waits
+spawn, reports the target's exit code or signal without exiting itself, and
+waits for its owner to finish cleanup. The owner retains that target outcome,
+then inventories, terminates, and verifies the attributable supervisor domain
+under one monotonic deadline before it exposes `completed` or
+`COMMAND_SIGNALLED`, unregisters ownership, or releases IPC. Timeout, abort,
+output overflow, and target-start failure use the same cleanup sequence.
+Termination waits
 for that bounded local acknowledgement before inventory and signalling so a
 concurrent launch cannot escape cleanup. Inside an executor boundary, the
 worker must also send that identity
@@ -44,9 +50,11 @@ disconnect makes the supervisor terminate any locally retained command before
 it exits. The target environment travels only in that owned IPC message. The
 supervisor itself receives an empty POSIX environment or, on Windows, only a
 validated absolute `SystemRoot`; target-owned control variables cannot affect
-the package-owned supervisor. The supervisor remains in the worker's isolated
-POSIX process group
-and, where the platform reports it, session. The outer boundary retains the
+the package-owned supervisor. Every POSIX supervisor owns a distinct isolated
+process group and, where the platform reports it, session, including inside an
+executor boundary. This lets normal-exit cleanup capture observable members
+that remain attributable to the supervisor domain after the direct target has
+exited. The outer boundary retains the
 worker leader identity and terminates and verifies surviving members of that
 domain even if the leader exits before the registration message is observed.
 The retained-domain fallback is allowed only when that leader is absent or the
@@ -88,12 +96,13 @@ requires a separately approved native Job Object boundary.
 
 Portable Node process APIs do not provide a non-escapable OS containment object
 on every supported platform. The POSIX fallback therefore proves cleanup for
-descendants still observable through ancestry when inventory starts, including
-a direct `detached`/`unref` child. It does not claim containment for a process
-that double-forks and is reparented before that first bounded inventory. Closing
-that residual adversarial case requires a Linux cgroup, Windows Job Object, and
-a separately approved macOS containment mechanism; none is assumed available
-or writable by this package.
+processes still attributable through stable ancestry or the package-owned
+process group and session when inventory starts. It does not claim containment
+for any process that has already detached into another domain and been
+reparented before that first bounded inventory; this residual is not limited to
+a double-fork. Closing that adversarial case requires a Linux cgroup, Windows
+Job Object, and a separately approved macOS containment mechanism; none is
+assumed available or writable by this package.
 
 The coverage executor starts c8 through its installed package asset, also via
 `process.execPath` and fixed arguments. `c8@12.0.0` and

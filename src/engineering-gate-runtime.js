@@ -209,7 +209,7 @@ export function parsePosixProcessInventory(source) {
   const identities = [];
   for (const line of source.split("\n")) {
     if (!line.trim()) continue;
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([A-Za-z])\S*\s+(.+?)\s*$/);
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([A-Za-z?]\S*)\s+(.+?)\s*$/);
     if (!match) throw new Error("invalid process inventory");
     identities.push({
       pid: Number(match[1]),
@@ -277,7 +277,9 @@ function posixProcessIdentity(pid, deadline, run = spawnSync) {
       timeout,
     },
   );
-  if (result.error || result.status !== 0) throw new Error("spawned process identity unavailable");
+  if (result.error) throw new Error("spawned process identity unavailable");
+  if (result.status === 1 && result.stdout.trim() === "") return undefined;
+  if (result.status !== 0) throw new Error("spawned process identity unavailable");
   const identities = parsePosixProcessInventory(result.stdout);
   if (identities.length !== 1 || identities[0].pid !== pid) {
     throw new Error("spawned process identity unavailable");
@@ -286,7 +288,7 @@ function posixProcessIdentity(pid, deadline, run = spawnSync) {
 }
 
 function terminalProcess(identity) {
-  return ["Z", "X", "x"].includes(identity?.state);
+  return ["Z", "X", "x"].includes(identity?.state?.[0]);
 }
 
 function sameProcess(expected, actual) {
@@ -342,9 +344,31 @@ function descendantsOf(root, inventory) {
   return [...owned.values()];
 }
 
+function observableOwnedTree(root, inventory) {
+  const owned = new Map(descendantsOf(root, inventory).map((identity) => [identity.pid, identity]));
+  if (root.pid === root.group) {
+    for (const identity of membersOfRetainedDomain(root, inventory)) owned.set(identity.pid, identity);
+  }
+  return [...owned.values()];
+}
+
 async function currentOwnedIdentity(expected, control, deadline) {
-  const inventory = await processInventory(control, deadline);
-  const current = inventory.find((identity) => identity.pid === expected.pid);
+  let current;
+  if (control.inventory) {
+    const inventory = await processInventory(control, deadline);
+    current = inventory.find((identity) => identity.pid === expected.pid);
+  } else {
+    try {
+      current = await beforeDeadline(
+        () => control.platform === "linux"
+          ? readLinuxProcessIdentity(`/proc/${expected.pid}/stat`)
+          : posixProcessIdentity(expected.pid, deadline),
+        deadline,
+      );
+    } catch (error) {
+      if (!["ENOENT", "ESRCH"].includes(error?.code)) throw error;
+    }
+  }
   return sameProcess(expected, current) && !terminalProcess(current) ? current : undefined;
 }
 
@@ -364,14 +388,14 @@ function rememberOwned(captured, identities) {
   return identities;
 }
 
-async function freezeOwnedTree(root, captured, control, deadline) {
-  let inventory = await processInventory(control, deadline);
+async function freezeOwnedTree(root, captured, control, deadline, initialInventory) {
+  let inventory = initialInventory ?? await processInventory(control, deadline);
   const currentRoot = inventory.find((identity) => identity.pid === root.pid);
   if (!sameProcess(root, currentRoot) || terminalProcess(currentRoot)) return [];
-  let owned = rememberOwned(captured, descendantsOf(root, inventory));
+  let owned = rememberOwned(captured, observableOwnedTree(root, inventory));
   for (const identity of owned) await signalOwnedIdentity(identity, "SIGSTOP", control, deadline);
   inventory = await processInventory(control, deadline);
-  owned = rememberOwned(captured, descendantsOf(root, inventory).filter((identity) => (
+  owned = rememberOwned(captured, observableOwnedTree(root, inventory).filter((identity) => (
     sameProcess(identity, inventory.find((current) => current.pid === identity.pid))
   )));
   for (const identity of owned) await signalOwnedIdentity(identity, "SIGSTOP", control, deadline);
@@ -388,8 +412,8 @@ function membersOfRetainedDomain(root, inventory) {
   ));
 }
 
-async function freezeRetainedDomain(root, captured, control, deadline) {
-  let inventory = await processInventory(control, deadline);
+async function freezeRetainedDomain(root, captured, control, deadline, initialInventory) {
+  let inventory = initialInventory ?? await processInventory(control, deadline);
   let owned = rememberOwned(captured, membersOfRetainedDomain(root, inventory));
   for (const identity of owned) await signalOwnedIdentity(identity, "SIGSTOP", control, deadline);
   inventory = await processInventory(control, deadline);
@@ -399,11 +423,8 @@ async function freezeRetainedDomain(root, captured, control, deadline) {
 
 async function verifyOwnedTreeExited(owned, control, deadline) {
   while (remainingMilliseconds(deadline) > 0) {
-    const inventory = await processInventory(control, deadline);
-    const survivor = owned.some((expected) => {
-      const current = inventory.find((identity) => identity.pid === expected.pid);
-      return sameProcess(expected, current) && !terminalProcess(current);
-    });
+    const current = await Promise.all(owned.map((expected) => currentOwnedIdentity(expected, control, deadline)));
+    const survivor = current.some(Boolean);
     if (!survivor) return;
     await beforeDeadline(
       () => control.wait(Math.min(PROCESS_TREE_VERIFY_INTERVAL_MS, remainingMilliseconds(deadline))),
@@ -464,6 +485,7 @@ async function terminatePosixOwnedTree(child, control, deadline) {
         captured,
         terminationControl,
         terminationDeadline,
+        firstInventory,
       ),
       control,
       deadline,
@@ -477,6 +499,7 @@ async function terminatePosixOwnedTree(child, control, deadline) {
       captured,
       terminationControl,
       terminationDeadline,
+      firstInventory,
     ),
     control,
     deadline,
@@ -636,8 +659,18 @@ function releaseVerifiedChildResources(child) {
   try { if (child?.connected) child.disconnect(); } catch { /* The owned IPC channel already closed. */ }
 }
 
+function readableCompletion(stream) {
+  if (!stream || stream.readableEnded || stream.closed) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    stream.once("end", resolve);
+    stream.once("close", resolve);
+    stream.once("error", reject);
+  });
+}
+
 async function runCommandSupervisor() {
   let command;
+  let commandReported = false;
   let closing = false;
   const close = async () => {
     if (closing) return;
@@ -646,6 +679,17 @@ async function runCommandSupervisor() {
       try { await terminateProcessTree(command); } catch { /* The owner also verifies the supervisor tree. */ }
     }
     process.exit();
+  };
+  const reportCommandOutcome = (message) => {
+    if (commandReported) return;
+    commandReported = true;
+    try {
+      process.send?.(message, (error) => {
+        if (error) close();
+      });
+    } catch {
+      close();
+    }
   };
   process.once("disconnect", close);
   process.once("message", (message) => {
@@ -665,14 +709,14 @@ async function runCommandSupervisor() {
         if (error) close();
       });
     } catch {
-      process.send?.({ type: "command_error" }, () => process.exit(1));
+      reportCommandOutcome({ type: "command_error" });
       return;
     }
     command.once("error", () => {
-      process.send?.({ type: "command_error" }, () => process.exit(1));
+      reportCommandOutcome({ type: "command_error" });
     });
     command.once("close", (code, signal) => {
-      process.send?.({ type: "command_close", code, signal }, () => process.exit(0));
+      reportCommandOutcome({ type: "command_close", code, signal });
     });
   });
 }
@@ -710,15 +754,22 @@ export function runBoundedCommand(executable, args, options) {
     let outputBytes = 0;
     let reason;
     let child;
-    let commandClose;
+    let targetOutcome;
     const boundaryOwned = process.env[EXECUTOR_BOUNDARY_ENV] === "1" && process.connected && process.send;
     let startupPromise = Promise.resolve();
     let startupResolve;
+    let outputCompletion = Promise.resolve();
     let timer;
     let terminationPromise;
 
-    const terminate = () => {
+    const resultAfterDrain = () => {
+      if (reason) return { status: "error", reason_code: reason };
+      return typeof targetOutcome === "function" ? targetOutcome() : targetOutcome;
+    };
+
+    const terminate = (result = { status: "error", reason_code: reason }) => {
       if (terminationPromise) return terminationPromise;
+      targetOutcome = result;
       const cleanupNow = injectedTerminationControl?.now ?? performance.now.bind(performance);
       const cleanupTimeout = injectedTerminationControl?.timeoutMs ?? PROCESS_TREE_VERIFY_TIMEOUT_MS;
       const cleanupDeadline = processDeadline(cleanupTimeout, cleanupNow);
@@ -733,7 +784,9 @@ export function runBoundedCommand(executable, args, options) {
           timeoutMs: remainingMilliseconds(cleanupDeadline),
         }),
       ).then(
-        () => finish({ status: "error", reason_code: reason }, true),
+        () => beforeDeadline(() => outputCompletion, cleanupDeadline),
+      ).then(
+        () => finish(resultAfterDrain(), true),
         (error) => {
           error?.ownedIdentities?.forEach((identity) => reportOwnedProcessGroup("register", identity));
           finish(
@@ -745,7 +798,7 @@ export function runBoundedCommand(executable, args, options) {
       return terminationPromise;
     };
 
-    const finish = (result, cleanupVerified = true) => {
+    const finish = (result, cleanupVerified) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -758,7 +811,7 @@ export function runBoundedCommand(executable, args, options) {
     };
 
     const abort = () => {
-      if (settled || reason) return;
+      if (settled || reason || terminationPromise) return;
       reason = "EXECUTOR_ABORTED";
       terminate();
     };
@@ -776,7 +829,7 @@ export function runBoundedCommand(executable, args, options) {
     };
 
     const ownershipFailure = () => {
-      if (settled || reason) return;
+      if (settled || reason || terminationPromise) return;
       reason = "COMMAND_OWNERSHIP_HANDOFF_FAILED";
       terminate();
     };
@@ -818,7 +871,7 @@ export function runBoundedCommand(executable, args, options) {
       child = supervisedCommandSpawn(
         cwd,
         input,
-        process.platform !== "win32" && !boundaryOwned,
+        process.platform !== "win32",
       );
       if (process.platform !== "win32") {
         const captureIdentity = injectedTerminationControl?.captureIdentity ?? captureProcessIdentity;
@@ -828,12 +881,12 @@ export function runBoundedCommand(executable, args, options) {
         beginSupervisedCommand();
       }
     } catch {
-      finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" });
+      finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" }, true);
       return;
     }
 
     timer = setTimeout(() => {
-      if (settled || reason) return;
+      if (settled || reason || terminationPromise) return;
       reason = "COMMAND_TIMEOUT";
       terminate();
     }, timeoutMs);
@@ -843,39 +896,45 @@ export function runBoundedCommand(executable, args, options) {
 
     child.stdout.on("data", (chunk) => capture("stdout", chunk));
     child.stderr.on("data", (chunk) => capture("stderr", chunk));
+    outputCompletion = Promise.all([
+      readableCompletion(child.stdout),
+      readableCompletion(child.stderr),
+    ]);
     child.on("message", (message) => {
       if (message?.type === "command_started") settleStartup();
-      if (message?.type === "command_close") commandClose = message;
-      if (message?.type === "command_error" && !reason) {
+      if (message?.type === "command_close" && !reason && !terminationPromise) {
+        settleStartup();
+        terminate(message.signal
+          ? { status: "error", reason_code: "COMMAND_SIGNALLED" }
+          : () => ({
+            status: "completed",
+            exit_code: message.code ?? 1,
+            stdout: stdout.toString("utf8"),
+            stderr: stderr.toString("utf8"),
+          }));
+      }
+      if (message?.type === "command_error" && !reason && !terminationPromise) {
         reason = "COMMAND_SPAWN_FAILED";
+        settleStartup();
+        terminate();
       }
     });
     child.on("error", async () => {
       settleStartup();
-      if (reason) {
+      if (terminationPromise) {
         await terminationPromise;
         return;
       }
-      finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" });
+      reason ??= "COMMAND_SPAWN_FAILED";
+      await terminate();
     });
-    child.on("close", async (code, signal) => {
+    child.on("close", async () => {
       settleStartup();
-      if (reason) {
-        if (terminationPromise) await terminationPromise;
-        else finish({ status: "error", reason_code: reason });
-        return;
+      if (!terminationPromise) {
+        reason ??= "COMMAND_SPAWN_FAILED";
+        terminate();
       }
-      const effectiveSignal = commandClose?.signal ?? signal;
-      if (effectiveSignal) {
-        finish({ status: "error", reason_code: "COMMAND_SIGNALLED" });
-        return;
-      }
-      finish({
-        status: "completed",
-        exit_code: commandClose?.code ?? code ?? 1,
-        stdout: stdout.toString("utf8"),
-        stderr: stderr.toString("utf8"),
-      });
+      await terminationPromise;
     });
     if (input !== undefined) {
       child.stdin.on("error", () => {});
