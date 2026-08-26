@@ -357,6 +357,25 @@ async function freezeOwnedTree(root, captured, control, deadline) {
   return owned;
 }
 
+function membersOfRetainedDomain(root, inventory) {
+  if (root.pid !== root.group) throw new Error("owned process group unavailable");
+  return inventory.filter((identity) => (
+    identity.pid !== root.pid
+    && identity.group === root.group
+    && (root.session <= 0 || identity.session === root.session)
+    && !terminalProcess(identity)
+  ));
+}
+
+async function freezeRetainedDomain(root, captured, control, deadline) {
+  let inventory = await processInventory(control, deadline);
+  let owned = rememberOwned(captured, membersOfRetainedDomain(root, inventory));
+  for (const identity of owned) await signalOwnedIdentity(identity, "SIGSTOP", control, deadline);
+  inventory = await processInventory(control, deadline);
+  owned = rememberOwned(captured, membersOfRetainedDomain(root, inventory));
+  for (const identity of owned) await signalOwnedIdentity(identity, "SIGSTOP", control, deadline);
+}
+
 async function verifyOwnedTreeExited(owned, control, deadline) {
   while (remainingMilliseconds(deadline) > 0) {
     const inventory = await processInventory(control, deadline);
@@ -387,18 +406,10 @@ async function killCapturedTree(captured, control, deadline) {
   await verifyOwnedTreeExited(identities, control, deadline);
 }
 
-async function terminatePosixOwnedTree(child, control, deadline) {
-  const firstInventory = await processInventory(control, deadline);
-  const discoveredRoot = firstInventory.find((identity) => identity.pid === child.pid);
-  const capturedRoot = child.identityPromise
-    ? await beforeDeadline(() => child.identityPromise, deadline)
-    : undefined;
-  const root = control.rootIdentity ?? child.identity ?? capturedRoot;
-  if (!root) throw new Error("owned process identity unavailable");
-  if (!sameProcess(root, discoveredRoot) || terminalProcess(discoveredRoot)) return;
+async function terminateCapturedOwnership(freeze, control, deadline) {
   const captured = new Map();
   try {
-    await freezeOwnedTree(root, captured, control, freezeDeadline(deadline));
+    await freeze(captured, control, freezeDeadline(deadline));
     await killCapturedTree(captured, control, deadline);
   } catch (error) {
     try {
@@ -410,6 +421,45 @@ async function terminatePosixOwnedTree(child, control, deadline) {
     }
     throw error;
   }
+}
+
+async function terminatePosixOwnedTree(child, control, deadline) {
+  const firstInventory = await processInventory(control, deadline);
+  const discoveredRoot = firstInventory.find((identity) => identity.pid === child.pid);
+  const capturedRoot = child.identityPromise
+    ? await beforeDeadline(() => child.identityPromise, deadline)
+    : undefined;
+  const root = control.rootIdentity ?? child.identity ?? capturedRoot;
+  if (!root) throw new Error("owned process identity unavailable");
+  if (discoveredRoot && !sameProcess(root, discoveredRoot)) {
+    const error = new Error("owned process identity changed");
+    error.code = "PROCESS_IDENTITY_CHANGED";
+    throw error;
+  }
+  if (sameProcess(root, discoveredRoot) && !terminalProcess(discoveredRoot)) {
+    await terminateCapturedOwnership(
+      (captured, terminationControl, terminationDeadline) => freezeOwnedTree(
+        root,
+        captured,
+        terminationControl,
+        terminationDeadline,
+      ),
+      control,
+      deadline,
+    );
+    return;
+  }
+  if (root.pid !== root.group) return;
+  await terminateCapturedOwnership(
+    (captured, terminationControl, terminationDeadline) => freezeRetainedDomain(
+      root,
+      captured,
+      terminationControl,
+      terminationDeadline,
+    ),
+    control,
+    deadline,
+  );
 }
 
 async function terminateWindowsOwnedTree(child, control, deadline) {
@@ -456,7 +506,7 @@ export async function terminateProcessTree(child, injectedControl) {
   try {
     await terminatePosixOwnedTree(child, control, deadline);
   } catch (error) {
-    if (typeof child.spawnfile === "string") {
+    if (typeof child.spawnfile === "string" && error?.code !== "PROCESS_IDENTITY_CHANGED") {
       try { child.kill("SIGKILL"); } catch { /* Retained child handle already closed. */ }
     }
     throw error;
@@ -534,7 +584,7 @@ function supervisedCommandSpawn(cwd, env, input) {
   return spawn(process.execPath, [runtimePath, COMMAND_SUPERVISOR_FLAG], {
     cwd,
     env: commandEnvironment(env),
-    detached: process.platform !== "win32",
+    detached: false,
     shell: false,
     stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe", "ipc"],
   });

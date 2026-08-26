@@ -35,7 +35,16 @@ identity and receives an explicit acknowledgement from the outer boundary.
 The boundary stores the identity before acknowledging it. A lost, delayed, or
 rejected registration therefore leaves the executable unstarted; worker IPC
 disconnect makes the supervisor terminate any locally retained command before
-it exits. Bare PIDs are rejected. An unregister applies only after verified
+it exits. The supervisor remains in the worker's isolated POSIX process group
+and, where the platform reports it, session. The outer boundary retains the
+worker leader identity and terminates and verifies surviving members of that
+domain even if the leader exits before the registration message is observed.
+The retained-domain fallback is allowed only when that leader is absent or the
+same terminal identity; an observable PID with a different start time, group,
+or session fails closed before any domain member is signalled, including the
+raw retained-handle fallback. Processes from
+another group or session are excluded. Bare PIDs are rejected.
+An unregister applies only after verified
 cleanup and only to the same identity, and stale unregister requests are
 negatively acknowledged, so a stale message cannot remove a newer reused PID.
 A final-kill budget is reserved before any
@@ -45,12 +54,11 @@ remain registered for the outer boundary to retry. Forced
 termination drains that registry, terminates and verifies each still-matching
 owned tree, terminates and verifies the worker boundary, drains the registry
 once more, disconnects the owned IPC channel, and settles
-independently of delayed or missing `close` delivery. Windows invokes the
-If the first registry drain during normal worker finalization fails,
-`disconnect`, `exit`, and `close` share one idempotent full-termination
-sequence: the worker is terminated, retained identities are retried by the
-second drain, and no result becomes observable until that sequence completes.
-Windows invokes the
+independently of delayed or missing `close` delivery. Normal `disconnect`,
+`exit`, and `close` finalization also shares that idempotent full-termination
+sequence. If its first registry drain fails, the worker is still terminated
+and retained identities are retried by the second drain; no result becomes
+observable until the sequence completes. Windows invokes the
 package-owned `taskkill.exe /t /f` tree operation only while the direct worker
 or command still has a retained live `ChildProcess` handle; transmitted child
 registrations never authorize Windows tree termination. A stale or synthetic

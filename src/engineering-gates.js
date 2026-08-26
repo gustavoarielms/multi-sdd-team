@@ -334,15 +334,10 @@ export function createExecutorBoundary(child, context, terminate = terminateProc
   };
   const settleFromExit = () => {
     finalization ??= (async () => {
-      const drainFailure = ownedGroups.size === 0
-        ? undefined
-        : await operationFailure(drainOwnedGroups);
-      if (drainFailure) {
-        const terminationFailure = await operationFailure(() => completeTermination(true));
-        if (terminationFailure) {
-          settle({ type: "error", error: terminationFailure });
-          return;
-        }
+      const terminationFailure = await operationFailure(completeTermination);
+      if (terminationFailure) {
+        settle({ type: "error", error: terminationFailure });
+        return;
       }
       settle(workerOutcome());
     })();

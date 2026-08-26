@@ -1070,17 +1070,71 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
 
   let staleInventoryCalls = 0;
   const staleSignals = [];
-  await terminateProcessTree({ pid: 2147483646, kill: () => {} }, {
+  const staleChildKills = [];
+  await assert.rejects(terminateProcessTree({
+    pid: 2147483646,
+    spawnfile: process.execPath,
+    kill: (signal) => staleChildKills.push(signal),
+  }, {
     platform: "linux",
     rootIdentity: { pid: 2147483646, parent: 1, group: 2147483646, session: 2147483646, startTime: "old" },
     inventory: async () => {
       staleInventoryCalls += 1;
-      return [{ pid: 2147483646, parent: 1, group: 2147483646, session: 2147483646, startTime: "reused", state: "R" }];
+      return [
+        { pid: 2147483646, parent: 1, group: 2147483646, session: 2147483646, startTime: "reused", state: "R" },
+        { pid: 2147483645, parent: 2147483646, group: 2147483646, session: 2147483646, startTime: "new-child", state: "R" },
+      ];
     },
     signal: (pid, signal) => staleSignals.push([pid, signal]),
-  });
+  }), /identity/);
   assert.ok(staleInventoryCalls > 0);
   assert.deepEqual(staleSignals, []);
+  assert.deepEqual(staleChildKills, []);
+
+  const exitedSessionRoot = {
+    pid: 2147483640,
+    parent: 1,
+    group: 2147483640,
+    session: 2147483640,
+    startTime: "exited-root",
+    state: "R",
+  };
+  const retainedSessionChild = {
+    pid: 2147483641,
+    parent: 1,
+    group: 2147483640,
+    session: 2147483640,
+    startTime: "retained-child",
+    state: "R",
+  };
+  const unrelatedSessionChild = {
+    pid: 2147483642,
+    parent: 1,
+    group: 2147483642,
+    session: 2147483642,
+    startTime: "unrelated-child",
+    state: "R",
+  };
+  const exitedSessionStates = new Map([
+    [retainedSessionChild.pid, "R"],
+    [unrelatedSessionChild.pid, "R"],
+  ]);
+  const exitedSessionSignals = [];
+  await terminateProcessTree({ pid: exitedSessionRoot.pid, identity: exitedSessionRoot, kill: () => {} }, {
+    platform: "linux",
+    rootIdentity: exitedSessionRoot,
+    inventory: async () => [retainedSessionChild, unrelatedSessionChild].map((identity) => ({
+      ...identity,
+      state: exitedSessionStates.get(identity.pid),
+    })),
+    signal: (pid, signal) => {
+      exitedSessionSignals.push([pid, signal]);
+      if (signal === "SIGKILL") exitedSessionStates.set(pid, "Z");
+    },
+    wait: async () => {},
+  });
+  assert.equal(exitedSessionStates.get(retainedSessionChild.pid), "Z");
+  assert.equal(exitedSessionSignals.some(([pid]) => pid === unrelatedSessionChild.pid), false);
 
   const rootIdentity = { pid: 201, parent: 1, group: 201, session: 201, startTime: "root", state: "R" };
   const childIdentity = { pid: 202, parent: 201, group: 202, session: 202, startTime: "child", state: "R" };
@@ -1440,7 +1494,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   retryWorker.emit("message", { type: "result", value: { status: "error" } });
   retryWorker.disconnect();
   assert.equal((await retryBoundary.execution).type, "result");
-  assert.deepEqual(outerRetryAttempts, [retryIdentity.pid]);
+  assert.deepEqual(outerRetryAttempts, [retryIdentity.pid, retryWorker.pid]);
 
   const finalizationWorker = Object.assign(new EventEmitter(), {
     connected: true,
