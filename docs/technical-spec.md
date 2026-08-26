@@ -30,12 +30,22 @@ termination is idempotent, including a child that exits before abort, and it
 must not affect processes outside that executor.
 
 Every POSIX bounded command first starts a package-owned supervisor that cannot
-launch the requested executable until the worker sends its full stable process
-identity and receives an explicit acknowledgement from the outer boundary.
-The boundary stores the identity before acknowledging it. A lost, delayed, or
-rejected registration therefore leaves the executable unstarted; worker IPC
+launch the requested executable until its full stable process identity is
+captured through a PID-specific bounded `/proc` or `/bin/ps -p` read rather
+than a process-wide inventory scan. The supervisor acknowledges the target
+spawn, and termination waits
+for that bounded local acknowledgement before inventory and signalling so a
+concurrent launch cannot escape cleanup. Inside an executor boundary, the
+worker must also send that identity
+and receive an explicit acknowledgement from the outer boundary. The boundary
+stores the identity before acknowledging it. A lost, delayed, or rejected
+registration therefore leaves the executable unstarted; worker IPC
 disconnect makes the supervisor terminate any locally retained command before
-it exits. The supervisor remains in the worker's isolated POSIX process group
+it exits. The target environment travels only in that owned IPC message. The
+supervisor itself receives an empty POSIX environment or, on Windows, only a
+validated absolute `SystemRoot`; target-owned control variables cannot affect
+the package-owned supervisor. The supervisor remains in the worker's isolated
+POSIX process group
 and, where the platform reports it, session. The outer boundary retains the
 worker leader identity and terminates and verifies surviving members of that
 domain even if the leader exits before the registration message is observed.

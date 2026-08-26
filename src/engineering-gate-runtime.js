@@ -264,6 +264,27 @@ function posixProcessInventory(deadline) {
   }
 }
 
+function posixProcessIdentity(pid, deadline, run = spawnSync) {
+  const timeout = remainingMilliseconds(deadline);
+  if (timeout <= 0) throw new Error("process inventory deadline exceeded");
+  const result = run(
+    "/bin/ps",
+    ["-p", String(pid), "-o", "pid=,ppid=,pgid=,sess=,state=,lstart="],
+    {
+      encoding: "utf8",
+      maxBuffer: LINUX_PROCESS_STAT_LIMIT,
+      shell: false,
+      timeout,
+    },
+  );
+  if (result.error || result.status !== 0) throw new Error("spawned process identity unavailable");
+  const identities = parsePosixProcessInventory(result.stdout);
+  if (identities.length !== 1 || identities[0].pid !== pid) {
+    throw new Error("spawned process identity unavailable");
+  }
+  return identities[0];
+}
+
 function terminalProcess(identity) {
   return ["Z", "X", "x"].includes(identity?.state);
 }
@@ -513,12 +534,23 @@ export async function terminateProcessTree(child, injectedControl) {
   }
 }
 
-export async function captureProcessIdentity(pid) {
-  const control = resolvedTerminationControl({ platform: process.platform });
-  const deadline = processDeadline(PROCESS_TREE_VERIFY_TIMEOUT_MS, control.now);
-  const inventory = await processInventory(control, deadline);
-  const identity = inventory.find((candidate) => candidate.pid === pid);
-  if (!identity || terminalProcess(identity)) throw new Error("spawned process identity unavailable");
+export async function captureProcessIdentity(pid, injected = {}) {
+  const platform = injected.platform ?? process.platform;
+  const now = injected.now ?? performance.now.bind(performance);
+  const deadline = processDeadline(injected.timeoutMs ?? PROCESS_TREE_VERIFY_TIMEOUT_MS, now);
+  let identity;
+  try {
+    identity = await beforeDeadline(() => {
+      if (injected.readPosixIdentity) return injected.readPosixIdentity(pid, deadline);
+      if (platform === "linux") return readLinuxProcessIdentity(`/proc/${pid}/stat`);
+      return posixProcessIdentity(pid, deadline, injected.runPosixIdentity);
+    }, deadline);
+  } catch (error) {
+    if (!["ENOENT", "ESRCH"].includes(error?.code)) throw error;
+  }
+  if (!identity || identity.pid !== pid || terminalProcess(identity)) {
+    throw new Error("spawned process identity unavailable");
+  }
   return identity;
 }
 
@@ -580,14 +612,28 @@ function requestOwnedProcessGroup(identity, timeoutMs) {
   });
 }
 
-function supervisedCommandSpawn(cwd, env, input) {
+function supervisedCommandSpawn(cwd, input, detached) {
   return spawn(process.execPath, [runtimePath, COMMAND_SUPERVISOR_FLAG], {
     cwd,
-    env: commandEnvironment(env),
-    detached: false,
+    env: supervisorEnvironment(),
+    detached,
     shell: false,
     stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe", "ipc"],
   });
+}
+
+function startSupervisedCommand(child, executable, args, env, onError) {
+  try {
+    child.send({ type: "start_command", executable, args, env: commandEnvironment(env) }, (error) => {
+      if (error) onError();
+    });
+  } catch {
+    onError();
+  }
+}
+
+function releaseVerifiedChildResources(child) {
+  try { if (child?.connected) child.disconnect(); } catch { /* The owned IPC channel already closed. */ }
 }
 
 async function runCommandSupervisor() {
@@ -610,10 +656,13 @@ async function runCommandSupervisor() {
     try {
       command = spawn(message.executable, message.args, {
         cwd: process.cwd(),
-        env: process.env,
+        env: message.env,
         detached: false,
         shell: false,
         stdio: "inherit",
+      });
+      process.send?.({ type: "command_started" }, (error) => {
+        if (error) close();
       });
     } catch {
       process.send?.({ type: "command_error" }, () => process.exit(1));
@@ -635,6 +684,14 @@ function commandEnvironment(env) {
   return childEnv;
 }
 
+function supervisorEnvironment() {
+  const systemRoot = process.env.SystemRoot;
+  if (process.platform !== "win32" || typeof systemRoot !== "string" || !path.win32.isAbsolute(systemRoot)) {
+    return {};
+  }
+  return { SystemRoot: systemRoot };
+}
+
 export function runBoundedCommand(executable, args, options) {
   const {
     cwd,
@@ -654,12 +711,28 @@ export function runBoundedCommand(executable, args, options) {
     let reason;
     let child;
     let commandClose;
-    let supervised = false;
+    const boundaryOwned = process.env[EXECUTOR_BOUNDARY_ENV] === "1" && process.connected && process.send;
+    let startupPromise = Promise.resolve();
+    let startupResolve;
     let timer;
     let terminationPromise;
 
     const terminate = () => {
-      terminationPromise ??= terminateProcessTree(child, injectedTerminationControl).then(
+      if (terminationPromise) return terminationPromise;
+      const cleanupNow = injectedTerminationControl?.now ?? performance.now.bind(performance);
+      const cleanupTimeout = injectedTerminationControl?.timeoutMs ?? PROCESS_TREE_VERIFY_TIMEOUT_MS;
+      const cleanupDeadline = processDeadline(cleanupTimeout, cleanupNow);
+      const startupDeadline = {
+        expiresAt: cleanupDeadline.expiresAt - Math.max(1, Math.floor(cleanupTimeout / 2)),
+        now: cleanupNow,
+      };
+      terminationPromise = beforeDeadline(() => startupPromise, startupDeadline).catch(() => {}).then(
+        () => terminateProcessTree(child, {
+          ...injectedTerminationControl,
+          now: cleanupNow,
+          timeoutMs: remainingMilliseconds(cleanupDeadline),
+        }),
+      ).then(
         () => finish({ status: "error", reason_code: reason }, true),
         (error) => {
           error?.ownedIdentities?.forEach((identity) => reportOwnedProcessGroup("register", identity));
@@ -677,7 +750,10 @@ export function runBoundedCommand(executable, args, options) {
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
-      if (cleanupVerified) reportOwnedProcessGroup("unregister", child?.identity);
+      if (cleanupVerified) {
+        reportOwnedProcessGroup("unregister", child?.identity);
+        releaseVerifiedChildResources(child);
+      }
       resolve({ ...result, duration_ms: Math.max(0, Date.now() - started) });
     };
 
@@ -699,46 +775,57 @@ export function runBoundedCommand(executable, args, options) {
       else stderr = Buffer.concat([stderr, chunk]);
     };
 
+    const ownershipFailure = () => {
+      if (settled || reason) return;
+      reason = "COMMAND_OWNERSHIP_HANDOFF_FAILED";
+      terminate();
+    };
+
+    const settleStartup = () => {
+      if (!startupResolve) return;
+      startupResolve();
+      startupResolve = undefined;
+    };
+
+    const beginSupervisedCommand = () => {
+      startupPromise = new Promise((resolve) => {
+        startupResolve = resolve;
+      });
+      startSupervisedCommand(child, executable, args, env, () => {
+        settleStartup();
+        ownershipFailure();
+      });
+    };
+
+    const prepareSupervisedCommand = async (identity) => {
+      child.identity = identity;
+      try {
+        if (boundaryOwned) {
+          const accepted = await requestOwnedProcessGroup(
+            identity,
+            Math.max(1, timeoutMs - (Date.now() - started)),
+          );
+          if (!accepted) throw new Error("executor ownership registration rejected");
+        }
+        if (settled || reason) return;
+        beginSupervisedCommand();
+      } catch {
+        ownershipFailure();
+      }
+    };
+
     try {
-      supervised = process.env[EXECUTOR_BOUNDARY_ENV] === "1" && process.connected && process.send;
-      child = supervised
-        ? supervisedCommandSpawn(cwd, env, input)
-        : spawn(executable, args, {
-          cwd,
-          env: commandEnvironment(env),
-          detached: process.platform !== "win32",
-          shell: false,
-          stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-        });
+      child = supervisedCommandSpawn(
+        cwd,
+        input,
+        process.platform !== "win32" && !boundaryOwned,
+      );
       if (process.platform !== "win32") {
-        child.identityPromise = captureProcessIdentity(child.pid);
-        child.identityPromise.then(async (identity) => {
-          child.identity = identity;
-          if (!supervised || settled || reason) return;
-          try {
-            const accepted = await requestOwnedProcessGroup(
-              identity,
-              Math.max(1, timeoutMs - (Date.now() - started)),
-            );
-            if (!accepted) throw new Error("executor ownership registration rejected");
-            if (settled || reason) return;
-            child.send({ type: "start_command", executable, args }, (error) => {
-              if (!error || settled || reason) return;
-              reason = "COMMAND_OWNERSHIP_HANDOFF_FAILED";
-              terminate();
-            });
-          } catch {
-            if (settled || reason) return;
-            reason = "COMMAND_OWNERSHIP_HANDOFF_FAILED";
-            terminate();
-          }
-        }, () => {});
-      } else if (supervised) {
-        child.send({ type: "start_command", executable, args }, (error) => {
-          if (!error || settled || reason) return;
-          reason = "COMMAND_OWNERSHIP_HANDOFF_FAILED";
-          terminate();
-        });
+        const captureIdentity = injectedTerminationControl?.captureIdentity ?? captureProcessIdentity;
+        child.identityPromise = captureIdentity(child.pid);
+        child.identityPromise.then(prepareSupervisedCommand, ownershipFailure);
+      } else {
+        beginSupervisedCommand();
       }
     } catch {
       finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" });
@@ -757,12 +844,14 @@ export function runBoundedCommand(executable, args, options) {
     child.stdout.on("data", (chunk) => capture("stdout", chunk));
     child.stderr.on("data", (chunk) => capture("stderr", chunk));
     child.on("message", (message) => {
+      if (message?.type === "command_started") settleStartup();
       if (message?.type === "command_close") commandClose = message;
       if (message?.type === "command_error" && !reason) {
         reason = "COMMAND_SPAWN_FAILED";
       }
     });
     child.on("error", async () => {
+      settleStartup();
       if (reason) {
         await terminationPromise;
         return;
@@ -770,6 +859,7 @@ export function runBoundedCommand(executable, args, options) {
       finish({ status: "error", reason_code: "COMMAND_SPAWN_FAILED" });
     });
     child.on("close", async (code, signal) => {
+      settleStartup();
       if (reason) {
         if (terminationPromise) await terminationPromise;
         else finish({ status: "error", reason_code: reason });

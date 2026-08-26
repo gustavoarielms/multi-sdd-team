@@ -15,6 +15,7 @@ import {
   runExecutorBoundaryWithTimeout,
 } from "../src/engineering-gates.js";
 import {
+  captureProcessIdentity,
   linuxProcessGroupExited,
   parseLinuxProcessGroup,
   parseLinuxProcessIdentity,
@@ -1033,6 +1034,68 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     startTime: "Tue Aug 25 10:59:39 2026",
   }]);
   assert.throws(() => parsePosixProcessInventory("malformed\n"), /invalid process inventory/);
+  const directIdentity = {
+    pid: 2147483600,
+    parent: 1,
+    group: 2147483600,
+    session: 2147483600,
+    state: "R",
+    startTime: "Tue Aug 25 10:59:39 2026",
+  };
+  let directIdentityQuery;
+  assert.deepEqual(await captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    now: () => 0,
+    timeoutMs: 1000,
+    runPosixIdentity: (executable, args, options) => {
+      directIdentityQuery = { executable, args, options };
+      return {
+        status: 0,
+        stdout: "2147483600 1 2147483600 2147483600 R Tue Aug 25 10:59:39 2026\n",
+      };
+    },
+  }), directIdentity);
+  assert.equal(directIdentityQuery.executable, "/bin/ps");
+  assert.deepEqual(directIdentityQuery.args, [
+    "-p",
+    String(directIdentity.pid),
+    "-o",
+    "pid=,ppid=,pgid=,sess=,state=,lstart=",
+  ]);
+  assert.equal(directIdentityQuery.options.shell, false);
+  assert.equal(directIdentityQuery.options.timeout, 1000);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    runPosixIdentity: () => ({ status: 1, stdout: "" }),
+  }), /spawned process identity unavailable/);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    runPosixIdentity: () => ({ status: 0, stdout: [
+      "2147483600 1 2147483600 2147483600 R Tue Aug 25 10:59:39 2026",
+      "2147483601 1 2147483601 2147483601 R Tue Aug 25 10:59:39 2026",
+      "",
+    ].join("\n") }),
+  }), /spawned process identity unavailable/);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    readPosixIdentity: async () => undefined,
+  }), /spawned process identity unavailable/);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    readPosixIdentity: async () => ({ ...directIdentity, state: "Z" }),
+  }), /spawned process identity unavailable/);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    readPosixIdentity: async () => {
+      throw Object.assign(new Error("gone"), { code: "ENOENT" });
+    },
+  }), /spawned process identity unavailable/);
+  await assert.rejects(captureProcessIdentity(directIdentity.pid, {
+    platform: "darwin",
+    readPosixIdentity: async () => {
+      throw Object.assign(new Error("denied"), { code: "EIO" });
+    },
+  }), { code: "EIO" });
   const linuxStatRoot = await temporaryDirectory(t);
   const linuxStat = path.join(linuxStatRoot, "stat");
   await fs.writeFile(linuxStat, "123 (fixture worker) R 1 123 0 0\n");
@@ -1258,9 +1321,49 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     )),
   ]);
   assert.equal(verifiedWithoutClose.reason_code, "COMMAND_TIMEOUT");
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(closeSuppressed, true);
+  // Linux delivers and this hook suppresses `close`; macOS may elide it after owned IPC release.
   t.mock.restoreAll();
+
+  const ownershipStartDirectory = await temporaryDirectory(t);
+  const ownershipStartMarker = path.join(ownershipStartDirectory, "started");
+  let releaseOwnership;
+  const ownershipHeld = new Promise((resolve) => { releaseOwnership = resolve; });
+  const ownershipHeldExecution = runBoundedCommand(process.execPath, ["-e", [
+    `require('node:fs').writeFileSync(${JSON.stringify(ownershipStartMarker)}, 'started');`,
+    "process.stdout.write('x'.repeat(4096));",
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 1000,
+    maxOutputBytes: 64,
+    terminationControl: {
+      captureIdentity: async (pid) => {
+        const identity = await captureProcessIdentity(pid);
+        await ownershipHeld;
+        return identity;
+      },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const startedBeforeOwnership = await fs.access(ownershipStartMarker).then(() => true, () => false);
+  releaseOwnership();
+  const ownershipHeldResult = await ownershipHeldExecution;
+  assert.equal(startedBeforeOwnership, false);
+  assert.equal(ownershipHeldResult.reason_code, "COMMAND_OUTPUT_LIMIT");
+
+  const rejectedOwnershipMarker = path.join(ownershipStartDirectory, "rejected");
+  const rejectedOwnership = await runBoundedCommand(process.execPath, ["-e", [
+    `require('node:fs').writeFileSync(${JSON.stringify(rejectedOwnershipMarker)}, 'started');`,
+    "setInterval(() => {}, 1000);",
+  ].join("\n")], {
+    cwd: repositoryRoot,
+    timeoutMs: 1000,
+    maxOutputBytes: 64,
+    terminationControl: {
+      captureIdentity: async () => { throw new Error("identity unavailable"); },
+    },
+  });
+  assert.equal(rejectedOwnership.reason_code, "COMMAND_TERMINATION_FAILED");
+  assert.equal(await fs.access(rejectedOwnershipMarker).then(() => true, () => false), false);
 
   const overflow = await runBoundedCommand(process.execPath, ["-e", "process.stdout.write('x'.repeat(4096))"], {
     cwd: repositoryRoot,
@@ -1290,6 +1393,42 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   assert.equal(sanitizedBoundaryEnvironment.status, "completed");
   assert.equal(sanitizedBoundaryEnvironment.stdout, "");
 
+  const preloadDirectory = await temporaryDirectory(t);
+  const supervisorPreloadMarker = path.join(preloadDirectory, "supervisor-preloaded");
+  const supervisorPreload = path.join(preloadDirectory, "preload.cjs");
+  await fs.writeFile(supervisorPreload, [
+    "if (process.argv.includes('--engineering-command-supervisor')) {",
+    `  require('node:fs').writeFileSync(${JSON.stringify(supervisorPreloadMarker)}, 'unsafe');`,
+    "}",
+  ].join("\n"));
+  const isolatedSupervisorEnvironment = await runBoundedCommand(
+    process.execPath,
+    ["-e", "process.stdout.write('target')"],
+    {
+      cwd: repositoryRoot,
+      timeoutMs: 1000,
+      maxOutputBytes: 64,
+      env: { ...process.env, NODE_OPTIONS: `--require=${supervisorPreload}` },
+    },
+  );
+  assert.equal(isolatedSupervisorEnvironment.status, "completed");
+  assert.equal(isolatedSupervisorEnvironment.stdout, "target");
+  assert.equal(await fs.access(supervisorPreloadMarker).then(() => true, () => false), false);
+
+  const targetOnlyDebugEnvironment = await runBoundedCommand(
+    process.execPath,
+    ["-e", "process.stdout.write(process.env.TARGET_ONLY_VALUE ?? '')"],
+    {
+      cwd: repositoryRoot,
+      timeoutMs: 1000,
+      maxOutputBytes: 64,
+      env: { NODE_DEBUG: "child_process", TARGET_ONLY_VALUE: "preserved" },
+    },
+  );
+  assert.equal(targetOnlyDebugEnvironment.status, "completed");
+  assert.equal(targetOnlyDebugEnvironment.stdout, "preserved");
+  assert.equal(targetOnlyDebugEnvironment.stderr, "");
+
   const spawnFailure = await runBoundedCommand(path.join(repositoryRoot, "missing-executable"), [], {
     cwd: repositoryRoot,
     timeoutMs: 1000,
@@ -1298,11 +1437,13 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   assert.equal(spawnFailure.reason_code, "COMMAND_SPAWN_FAILED");
 
   const treeDirectory = await temporaryDirectory(t);
+  const commandPidPath = path.join(treeDirectory, "command.pid");
   const grandchildPidPath = path.join(treeDirectory, "grandchild.pid");
   const controller = new AbortController();
   const treeExecution = runBoundedCommand(process.execPath, ["-e", [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(commandPidPath)}, String(process.pid));`,
     "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
     `fs.writeFileSync(${JSON.stringify(grandchildPidPath)}, String(child.pid));`,
     "setInterval(() => {}, 1000);",
@@ -1312,9 +1453,18 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     maxOutputBytes: 1024,
     signal: controller.signal,
   });
-  setTimeout(() => controller.abort(), 150);
+  const commandPid = await waitForPidFile(commandPidPath);
+  const grandchildPid = await waitForPidFile(grandchildPidPath);
+  controller.abort();
   assert.equal((await treeExecution).reason_code, "EXECUTOR_ABORTED");
-  const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
+  t.after(() => {
+    try { process.kill(commandPid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
+  assert.equal(await processExited(commandPid, {
+    platform: process.platform,
+    probe: (candidate) => process.kill(candidate, 0),
+    readLinuxState: readLinuxProcessState,
+  }), true);
   assert.equal(await processExited(grandchildPid, {
     platform: process.platform,
     probe: (candidate) => process.kill(candidate, 0),
@@ -1347,6 +1497,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   }), true);
 
   const injectedTreeDirectory = await temporaryDirectory(t);
+  const injectedCommandPath = path.join(injectedTreeDirectory, "command.pid");
   const injectedGrandchildPath = path.join(injectedTreeDirectory, "grandchild.pid");
   const injectedController = new AbortController();
   let injectedTerminationCompleted = false;
@@ -1354,6 +1505,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   const injectedTreeExecution = runBoundedCommand(process.execPath, ["-e", [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(injectedCommandPath)}, String(process.pid));`,
     "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
     `fs.writeFileSync(${JSON.stringify(injectedGrandchildPath)}, String(child.pid));`,
     "setInterval(() => {}, 1000);",
@@ -1368,8 +1520,9 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
       terminateWindows: async ({ executable, args, pid }) => {
         assert.equal(executable, "C:\\Windows\\System32\\taskkill.exe");
         assert.deepEqual(args, ["/pid", String(pid), "/t", "/f"]);
+        const injectedCommandPid = Number(await fs.readFile(injectedCommandPath, "utf8"));
         const injectedGrandchildPid = Number(await fs.readFile(injectedGrandchildPath, "utf8"));
-        for (const candidate of [injectedGrandchildPid, pid]) {
+        for (const candidate of [injectedGrandchildPid, injectedCommandPid, pid]) {
           try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
         }
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1381,16 +1534,23 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
       },
     },
   });
-  setTimeout(() => injectedController.abort(), 150);
+  await waitForPidFile(injectedCommandPath);
+  const injectedGrandchildPid = await waitForPidFile(injectedGrandchildPath);
+  injectedController.abort();
   assert.equal((await injectedTreeExecution).reason_code, "EXECUTOR_ABORTED");
   assert.equal(injectedTerminationCompleted, true);
   assert.equal(injectedTerminationVerified, true);
-  const injectedGrandchildPid = Number(await fs.readFile(injectedGrandchildPath, "utf8"));
   await assertProcessExited(injectedGrandchildPid);
 
+  const failedWindowsDirectory = await temporaryDirectory(t);
+  const failedWindowsCommandPath = path.join(failedWindowsDirectory, "command.pid");
+  let failedWindowsCommandPid;
   const failedWindowsVerification = await runBoundedCommand(
     process.execPath,
-    ["-e", "setInterval(() => {}, 1000)"],
+    ["-e", [
+      `require('node:fs').writeFileSync(${JSON.stringify(failedWindowsCommandPath)}, String(process.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n")],
     {
       cwd: repositoryRoot,
       timeoutMs: 20,
@@ -1400,13 +1560,20 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
         windowsExecutable: "C:\\Windows\\System32\\taskkill.exe",
         windowsVerifierExecutable: "C:\\Windows\\System32\\tasklist.exe",
         terminateWindows: async ({ pid }) => {
-          try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ }
+          failedWindowsCommandPid = await waitForPidFile(failedWindowsCommandPath);
+          for (const candidate of [failedWindowsCommandPid, pid]) {
+            try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+          }
         },
         verifyWindows: async () => { throw new Error("verification unavailable"); },
       },
     },
   );
+  t.after(() => {
+    try { process.kill(failedWindowsCommandPid, "SIGKILL"); } catch { /* Already terminated. */ }
+  });
   assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
+  assert.equal(Number.isSafeInteger(failedWindowsCommandPid), true);
 
   const completedWorker = Object.assign(new EventEmitter(), {
     connected: true,
