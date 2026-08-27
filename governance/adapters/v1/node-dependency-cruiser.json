@@ -1,0 +1,37 @@
+{
+  "forbidden": [
+    {
+      "name": "no_production_cycles",
+      "severity": "error",
+      "from": { "path": "^(bin|src)/" },
+      "to": { "circular": true }
+    },
+    {
+      "name": "production_must_not_import_tests",
+      "severity": "error",
+      "from": { "path": "^(bin|src)/" },
+      "to": { "path": "^test/" }
+    },
+    {
+      "name": "src_must_not_import_bin",
+      "severity": "error",
+      "from": { "path": "^src/" },
+      "to": { "path": "^bin/" }
+    },
+    {
+      "name": "production_imports_resolve",
+      "severity": "error",
+      "from": { "path": "^(bin|src)/" },
+      "to": { "couldNotResolve": true }
+    },
+    {
+      "name": "production_must_not_import_dev_dependencies",
+      "severity": "error",
+      "from": { "path": "^(bin|src)/" },
+      "to": { "dependencyTypes": ["npm-dev"] }
+    }
+  ],
+  "options": {
+    "doNotFollow": { "path": "(^|/)node_modules(/|$)" }
+  }
+}

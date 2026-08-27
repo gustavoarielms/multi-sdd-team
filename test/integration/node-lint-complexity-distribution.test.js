@@ -10,6 +10,7 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const packagePath = path.join("@gustavoarielms", "sdd-codegraph-cli");
 const adapterPath = path.join("src", "node-lint-complexity-adapter.js");
 const coverageAdapterPath = path.join("src", "node-coverage-adapter.js");
+const architectureAdapterPath = path.join("src", "node-architecture-adapter.js");
 const limits = Object.freeze({ timeoutMs: 60000, maxOutputBytes: 262144 });
 
 async function temporaryDirectory(t, prefix) {
@@ -32,11 +33,19 @@ async function targetRepository(t) {
   const target = await temporaryDirectory(t, "adapter-distribution-target-");
   await fs.mkdir(path.join(target, "src"));
   await fs.writeFile(path.join(target, "src", "clean.js"), "export function clean(value) { return value ?? 0; }\n");
-  for (const args of [["init"], ["add", "--", "src/clean.js"]]) {
+  await fs.writeFile(path.join(target, "package.json"), "{\"type\":\"module\"}\n");
+  for (const args of [["init"], ["add", "--", "package.json", "src/clean.js"]]) {
     const result = spawnSync("git", ["-C", target, ...args], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
   }
   return target;
+}
+
+async function assertArchitectureAdapter(modulePath, target) {
+  const module = await import(pathToFileURL(modulePath));
+  const result = await module.runNodeArchitecture({ target, limits: { ...limits, timeoutMs: 120000 } });
+  assert.equal(result.status, "pass");
+  assert.equal(result.checks.length, 5);
 }
 
 async function assertAdapterPasses(modulePath, target) {
@@ -57,16 +66,34 @@ test("source, project-local, global, and packed consumers use the package-owned 
   const cache = await temporaryDirectory(t, "adapter-distribution-cache-");
   await assertAdapterPasses(path.join(repositoryRoot, adapterPath), target);
   await assertCoverageAdapter(path.join(repositoryRoot, coverageAdapterPath));
+  await assertArchitectureAdapter(path.join(repositoryRoot, architectureAdapterPath), target);
 
   const localConsumer = await temporaryDirectory(t, "adapter-local-consumer-");
   runNpm(localConsumer, cache, ["install", "--ignore-scripts", "--no-package-lock", repositoryRoot]);
   await assertAdapterPasses(path.join(localConsumer, "node_modules", packagePath, adapterPath), target);
   await assertCoverageAdapter(path.join(localConsumer, "node_modules", packagePath, coverageAdapterPath));
+  const sentinel = path.join(localConsumer, "forged-analyzer-evaluated");
+  const consumerDependency = path.join(
+    localConsumer,
+    "node_modules",
+    "dependency-cruiser",
+    "src",
+    "main",
+    "index.mjs",
+  );
+  await fs.mkdir(path.dirname(consumerDependency), { recursive: true });
+  await fs.writeFile(
+    consumerDependency,
+    `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(sentinel)}, "evaluated"); throw new Error("forged analyzer");\n`,
+  );
+  await assertArchitectureAdapter(path.join(localConsumer, "node_modules", packagePath, architectureAdapterPath), target);
+  await assert.rejects(fs.access(sentinel), { code: "ENOENT" });
 
   const globalPrefix = await temporaryDirectory(t, "adapter-global-prefix-");
   runNpm(globalPrefix, cache, ["install", "--global", "--prefix", globalPrefix, "--ignore-scripts", repositoryRoot]);
   await assertAdapterPasses(path.join(globalPrefix, "lib", "node_modules", packagePath, adapterPath), target);
   await assertCoverageAdapter(path.join(globalPrefix, "lib", "node_modules", packagePath, coverageAdapterPath));
+  await assertArchitectureAdapter(path.join(globalPrefix, "lib", "node_modules", packagePath, architectureAdapterPath), target);
 
   const packedDirectory = await temporaryDirectory(t, "adapter-packed-artifact-");
   const pack = JSON.parse(runNpm(packedDirectory, cache, ["pack", repositoryRoot, "--json", "--ignore-scripts"]));
@@ -79,4 +106,5 @@ test("source, project-local, global, and packed consumers use the package-owned 
   ]);
   await assertAdapterPasses(path.join(packedConsumer, "node_modules", packagePath, adapterPath), target);
   await assertCoverageAdapter(path.join(packedConsumer, "node_modules", packagePath, coverageAdapterPath));
+  await assertArchitectureAdapter(path.join(packedConsumer, "node_modules", packagePath, architectureAdapterPath), target);
 });

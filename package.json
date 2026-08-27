@@ -7,7 +7,7 @@
     "sdd-codegraph": "bin/sdd-codegraph.js"
   },
   "engines": {
-    "node": "^22.14.0 || >=24.0.0"
+    "node": "^22.14.0 || ^24.0.0 || >=26.0.0"
   },
   "license": "MIT",
   "author": "rcarnicer (original project)",
@@ -43,15 +43,18 @@
     "docs",
     "codex",
     "governance",
+    "scripts",
     "src",
-    "setup.sh"
+    "setup.sh",
+    "vendor"
   ],
   "scripts": {
-    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/engineering-gate-runtime.js && node --check src/git-change-selector.js && node --check src/node-eslint-policy.js && node --check src/node-lint-complexity-worker.js && node --check src/node-lint-complexity-adapter.js && node --check src/engineering-gates.js && node --check src/node-test-suite-adapter.js && node --check src/node-test-reporter.js && node --check src/coverage-map-worker.js && node --check src/node-coverage-adapter.js && npm test",
+    "check": "node --check bin/sdd-codegraph.js && node --check src/installer.js && node --check src/governance-validator.js && node --check src/governance-checks.js && node --check src/governance-trust.js && node --check src/engineering-gate-runtime.js && node --check src/git-change-selector.js && node --check src/node-eslint-policy.js && node --check src/node-lint-complexity-worker.js && node --check src/node-lint-complexity-adapter.js && node --check src/node-architecture-contract.js && node --check src/node-architecture-runtime-topology.js && node --check src/node-architecture-worker.js && node --check src/node-architecture-adapter.js && node --check scripts/generate-node-architecture-runtime.js && node --check scripts/verify-node-architecture-runtime.js && node --check src/engineering-gates.js && node --check src/node-test-suite-adapter.js && node --check src/node-test-reporter.js && node --check src/coverage-map-worker.js && node --check src/node-coverage-adapter.js && npm test",
     "check:governance": "node --test test/unit/governance-schema.test.js test/unit/governance-checks.test.js test/integration/governance-schema.test.js test/integration/governance-checks.test.js",
     "gates": "node bin/sdd-codegraph.js run-gates .",
     "governance": "node bin/sdd-codegraph.js check-governance .",
     "setup": "./setup.sh --global",
+    "verify:node-architecture-runtime": "node scripts/verify-node-architecture-runtime.js",
     "test": "node --test test/unit/*.test.js && node --test test/integration/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
     "test:integration": "node --test test/integration/*.test.js"
@@ -60,6 +63,7 @@
     "@eslint/js": "10.0.1",
     "ajv": "8.20.0",
     "c8": "12.0.0",
+    "dependency-cruiser": "18.2.0",
     "eslint": "10.8.1",
     "globals": "17.11.0",
     "istanbul-lib-coverage": "3.2.2"

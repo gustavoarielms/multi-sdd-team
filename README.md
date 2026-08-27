@@ -12,7 +12,7 @@ schemas, deterministic checks, and review contracts.
 > [`@gustavoarielms/sdd-codegraph-cli`](https://www.npmjs.com/package/@gustavoarielms/sdd-codegraph-cli).
 >
 > **Runtime requirement:** the cross-platform Node.js CLI requires Node.js
-> 22.14.0 through 22.x, or 24.0.0 or newer. The repository checkout also provides a Bash setup script
+> 22.14.0 through 22.x, 24.x, or 26.0.0 or newer; Node.js 25 is unsupported. The repository checkout also provides a Bash setup script
 > for explicit Codex-only global or project installation.
 
 ## What this package is for
@@ -40,7 +40,7 @@ schemas, deterministic checks, and review contracts.
 
 ## Requirements and installation paths
 
-- Node.js 22.14.0 through 22.x, or Node.js 24.0.0 or newer, is required.
+- Node.js 22.14.0 through 22.x, Node.js 24.x, or Node.js 26.0.0 or newer is required; Node.js 25 is unsupported.
 - Codex is the runtime that reads the installed agent and orchestration
   configuration.
 - CodeGraph is external and optional for the setup script and governance-only
@@ -85,7 +85,7 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
   is missing or stale.
 - `check-governance` emits canonical JSON and exits nonzero only for failed
   deterministic checks whose approved catalog effect is `block`.
-- `run-gates` runs the nine approved deterministic engineering executors and
+- `run-gates` runs the ten approved deterministic engineering executors and
   emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
   for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
   or untrustworthy run.
@@ -109,6 +109,7 @@ The target path defaults to the current working directory.
     "unit_tests",
     "integration_tests",
     "coverage",
+    "node_architecture",
     "governance",
     "production_dependency_audit",
     "npm_package_surface",
@@ -164,8 +165,11 @@ also fixes global
 coverage `85/80/85/85`, changed-code coverage `90/85/90/90`, required unit and
 integration semantics, and five architecture boundaries. Unit, integration,
 and combined exact-count coverage are enforced with package-owned `c8@12.0.0`
-and `istanbul-lib-coverage@3.2.2` executors;
-architecture analyzer executors remain assigned to #12.
+and `istanbul-lib-coverage@3.2.2` executors. The sixth executor uses the
+content-verified vendored `dependency-cruiser@18.2.0` runtime and fixed policy
+to enforce all five architecture boundaries with bounded evidence. Its
+filesystem identity checks assume a quiescent checkout; they detect observable
+changes before/after analysis but do not claim to prevent an active swap-back.
 
 ## Codex runtime
 

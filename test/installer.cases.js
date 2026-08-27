@@ -32,11 +32,12 @@ test("package is configured for public MIT publication", async () => {
   assert.equal(metadata.version, "0.3.0");
   assert.equal(lock.version, metadata.version);
   assert.equal(lock.packages[""].version, metadata.version);
-  assert.equal(metadata.engines.node, "^22.14.0 || >=24.0.0");
+  assert.equal(metadata.engines.node, "^22.14.0 || ^24.0.0 || >=26.0.0");
   assert.deepEqual(metadata.dependencies, {
     "@eslint/js": "10.0.1",
     ajv: "8.20.0",
     c8: "12.0.0",
+    "dependency-cruiser": "18.2.0",
     eslint: "10.8.1",
     globals: "17.11.0",
     "istanbul-lib-coverage": "3.2.2",
@@ -48,8 +49,10 @@ test("package is configured for public MIT publication", async () => {
     "docs",
     "codex",
     "governance",
+    "scripts",
     "src",
     "setup.sh",
+    "vendor",
   ]);
   assert.equal("peerDependencies" in metadata, false);
   assert.equal("peerDependenciesMeta" in metadata, false);
@@ -64,6 +67,23 @@ test("package is configured for public MIT publication", async () => {
     "governance",
     "cli",
   ]);
+  const notice = await fs.readFile(new URL("../NOTICE.md", import.meta.url), "utf8");
+  const noticeHeader = await fs.readFile(
+    new URL("../governance/adapters/v1/node-architecture-notice-header.md", import.meta.url),
+    "utf8",
+  );
+  assert.equal(notice.startsWith(noticeHeader.trimEnd()), true);
+  assert.match(notice, /## Original project/u);
+  assert.match(notice, /@gustavoarielms\/sdd-codegraph-cli/u);
+  assert.match(notice, /CodeGraph is a separate external tool\. It is not owned, maintained, or bundled/u);
+  assert.match(notice, /<!-- BEGIN GENERATED NODE ARCHITECTURE RUNTIME NOTICES -->/u);
+  assert.match(notice, /<!-- END GENERATED NODE ARCHITECTURE RUNTIME NOTICES -->/u);
+  assert.match(notice, /dependency-cruiser@18\.2\.0/u);
+  const inventory = JSON.parse(await fs.readFile(
+    new URL("../vendor/node-architecture-runtime/licenses/inventory.json", import.meta.url),
+    "utf8",
+  ));
+  for (const item of inventory) assert.match(notice, new RegExp(`- ${item.package.replaceAll("/", "\\/")}@${item.version} — ${item.license}`, "u"));
 });
 
 test("README publication status does not embed a release version", async () => {
@@ -148,6 +168,10 @@ test("npm package contains only the supported Codex distribution", async (contex
   });
   const [pack] = JSON.parse(output);
   const paths = pack.files.map((file) => file.path).sort();
+  const runtimeManifest = JSON.parse(await fs.readFile(
+    new URL("../governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json", import.meta.url),
+    "utf8",
+  ));
   const expected = [
     "LICENSE",
     "NOTICE.md",
@@ -167,7 +191,10 @@ test("npm package contains only the supported Codex distribution", async (contex
     "docs/functional-spec.md",
     "docs/technical-spec.md",
     "governance/README.md",
+    "governance/adapters/v1/node-architecture-notice-header.md",
     "governance/checks/v1/registry.json",
+    "governance/adapters/v1/node-dependency-cruiser.json",
+    "governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json",
     "governance/examples/v1/active-rule-exception.json",
     "governance/examples/v1/approved-architecture-rule.json",
     "governance/examples/v1/architecture-review-result.json",
@@ -190,6 +217,8 @@ test("npm package contains only the supported Codex distribution", async (contex
     "governance/schemas/v1/rule-catalog.schema.json",
     "governance/schemas/v1/rule.schema.json",
     "package.json",
+    "scripts/generate-node-architecture-runtime.js",
+    "scripts/verify-node-architecture-runtime.js",
     "setup.sh",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
@@ -201,11 +230,16 @@ test("npm package contains only the supported Codex distribution", async (contex
     "src/governance-validator.js",
     "src/installer.js",
     "src/node-coverage-adapter.js",
+    "src/node-architecture-adapter.js",
+    "src/node-architecture-contract.js",
+    "src/node-architecture-runtime-topology.js",
+    "src/node-architecture-worker.js",
     "src/node-eslint-policy.js",
     "src/node-lint-complexity-adapter.js",
     "src/node-lint-complexity-worker.js",
     "src/node-test-reporter.js",
     "src/node-test-suite-adapter.js",
+    ...runtimeManifest.files.map((file) => `vendor/node-architecture-runtime/${file.path}`),
   ].sort();
 
   assert.deepEqual(paths, expected);

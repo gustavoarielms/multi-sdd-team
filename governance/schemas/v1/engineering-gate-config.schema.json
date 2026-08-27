@@ -20,8 +20,8 @@
     },
     "executors": {
       "type": "array",
-      "minItems": 9,
-      "maxItems": 9,
+      "minItems": 10,
+      "maxItems": 10,
       "uniqueItems": true,
       "prefixItems": [
         { "const": "javascript_syntax" },
@@ -29,6 +29,7 @@
         { "const": "unit_tests" },
         { "const": "integration_tests" },
         { "const": "coverage" },
+        { "const": "node_architecture" },
         { "const": "governance" },
         { "const": "production_dependency_audit" },
         { "const": "npm_package_surface" },
