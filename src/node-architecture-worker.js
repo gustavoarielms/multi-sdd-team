@@ -200,6 +200,7 @@ async function readTargetManifest(target) {
   return {
     dependencies: validateDependencyMap(value.dependencies),
     devDependencies: validateDependencyMap(value.devDependencies),
+    imports: value.imports,
   };
 }
 
@@ -386,18 +387,87 @@ async function validateGraphEdges(graph, context) {
   }
 }
 
-function npmEdgePackage(edge) {
-  return edge.dependencyTypes.some((type) => /^npm(?:-|$)/u.test(type)) ? packageName(edge.module) : undefined;
+async function captureImportScope(directory, state) {
+  if (directory === state.target) return undefined;
+  if (state.scopes.has(directory)) return state.scopes.get(directory);
+  state.directories.set(directory, await captureDirectory(directory, state.target));
+  const manifestPath = path.join(directory, "package.json");
+  let scope;
+  try {
+    scope = { path: manifestPath, identity: await captureFile(manifestPath, state.target, NODE_ARCHITECTURE_LIMITS.manifestBytes) };
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    scope = await captureImportScope(path.dirname(directory), state);
+  }
+  state.scopes.set(directory, scope);
+  return scope;
+}
+
+async function captureImportScopes(input, target) {
+  const state = { target, scopes: new Map(), directories: new Map() };
+  for (const file of input.production_files) await captureImportScope(path.dirname(path.join(target, file.path)), state);
+  return state;
+}
+
+async function revalidateImportScopes(state) {
+  for (const [directory, identity] of state.directories) {
+    if (!sameIdentity(identity, await captureDirectory(directory, state.target))) fail("input");
+  }
+  for (const scope of new Set(state.scopes.values())) {
+    if (scope && !sameIdentity(scope.identity, await captureFile(scope.path, state.target))) fail("input");
+  }
+}
+
+async function sourceImports(source, context) {
+  const directory = path.dirname(path.join(context.target, source));
+  const scope = context.importScopes.scopes.get(directory);
+  if (!scope) return context.targetManifest.imports;
+  if (!sameIdentity(scope.identity, await captureFile(scope.path, context.target))) fail("input");
+  const value = JSON.parse(await fs.readFile(scope.identity.realpath, "utf8"));
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid alias scope");
+  return value.imports;
+}
+
+function aliasTargets(imports, specifier) {
+  if (!imports || typeof imports !== "object" || Array.isArray(imports)) throw new Error("missing alias provenance");
+  if (Object.hasOwn(imports, specifier)) return [imports[specifier]];
+  const matches = Object.keys(imports).filter((key) => {
+    const parts = key.split("*");
+    return parts.length === 2 && specifier.startsWith(parts[0]) && specifier.endsWith(parts[1]);
+  });
+  return matches.map((key) => imports[key]);
+}
+
+function unambiguousAliasPackage(targets) {
+  const pending = [...targets];
+  const names = new Set();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") names.add(packageName(value));
+    else if (value && typeof value === "object") pending.push(...Object.values(value));
+    else throw new Error("ambiguous alias target");
+  }
+  if (names.size !== 1) throw new Error("ambiguous alias package");
+  return [...names][0];
+}
+
+async function npmEdgePackage(edge, context, source) {
+  if (!edge.dependencyTypes.some((type) => /^npm(?:-|$)/u.test(type))) return undefined;
+  if (!edge.module.startsWith("#")) return packageName(edge.module);
+  const resolved = context.graph.get(edge.resolved);
+  if (resolved?.kind !== "file") throw new Error("invalid resolved package alias");
+  // The declaration retains the npm key across nested subpaths and physical symlinks.
+  return unambiguousAliasPackage(aliasTargets(await sourceImports(source, context), edge.module));
 }
 
 function isDevelopmentOnly(name, manifest) {
   return Object.hasOwn(manifest.devDependencies, name) && !Object.hasOwn(manifest.dependencies, name);
 }
 
-function collectDevelopmentPackages(graph, context, details) {
+async function collectDevelopmentPackages(graph, context, details) {
   for (const source of context.production) {
     for (const edge of graph.get(source).dependencies) {
-      const name = npmEdgePackage(edge);
+      const name = await npmEdgePackage(edge, context, source);
       if (name && isDevelopmentOnly(name, context.targetManifest)) {
         const detail = { kind: "package", source, package: name };
         details.set(detailKey(detail), detail);
@@ -414,19 +484,59 @@ function packageName(specifier) {
   return name;
 }
 
+function validateDirectedCycle(members, target, context) {
+  if (new Set(members).size !== members.length || !members.includes(context.source)
+    || members[(members.indexOf(context.source) + 1) % members.length] !== target) {
+    throw new Error("inconsistent directed cycle");
+  }
+  for (const [index, member] of members.entries()) {
+    const next = members[(index + 1) % members.length];
+    if (!context.graph.get(member)?.dependencies.some((edge) => context.graph.get(edge.resolved)?.source === next)) {
+      throw new Error("cycle edge outside graph");
+    }
+  }
+}
+
+function productionCycle(source, target, context) {
+  if (!context.production.has(target)) return undefined;
+  // A native witness may detour outside production. Find one return path, never enumerate cycles.
+  const queue = [target];
+  const previous = new Map([[target, undefined]]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    if (current === source) {
+      const backwards = [];
+      for (let member = source; member !== undefined; member = previous.get(member)) backwards.push(member);
+      return [source, ...backwards.reverse().slice(0, -1)];
+    }
+    const targets = context.graph.get(current).dependencies
+      .map((edge) => context.graph.get(edge.resolved).source)
+      .filter((member) => context.production.has(member)).sort(compareCodeUnits);
+    for (const member of targets) {
+      if (previous.has(member)) continue;
+      previous.set(member, current);
+      queue.push(member);
+    }
+  }
+  return undefined;
+}
+
 async function cycleDetail(violation, context) {
+  if (violation.cycle !== undefined && !Array.isArray(violation.cycle)) throw new Error("invalid cycle declaration");
   const reportedCycle = (violation.cycle ?? []).map((member) => member?.name);
-  const raw = (reportedCycle.length > 0 ? reportedCycle : [context.source, violation.to])
-    .filter((member, index, values) => typeof member === "string" && member !== values[index - 1]);
+  const raw = reportedCycle.length > 0 ? reportedCycle : [context.source, violation.to];
   const normalized = [];
   for (const member of raw) {
     const local = await localPath(context.target, member);
-    if (normalized.at(-1) !== local) normalized.push(local);
+    if (context.graph.get(member)?.source !== local) throw new Error("cycle member outside graph");
+    normalized.push(local);
   }
   if (normalized.length > 1 && normalized.at(-1) === normalized[0]) normalized.pop();
-  const members = canonicalizeCycle(normalized);
-  if (members.some((member) => !context.production.has(member))) throw new Error("cycle outside production inventory");
-  return { kind: "cycle", members };
+  const target = await localPath(context.target, violation.to);
+  validateDirectedCycle(normalized, target, context);
+  const members = normalized.every((member) => context.production.has(member))
+    ? normalized : productionCycle(context.source, target, context);
+  return members ? { kind: "cycle", members: canonicalizeCycle(members) } : undefined;
 }
 
 async function productionTestDetail(violation, context) {
@@ -453,10 +563,10 @@ function unresolvedDetail(violation, context) {
   return { kind: "unresolved", source: context.source, specifier };
 }
 
-function developmentPackageDetail(violation, context) {
+async function developmentPackageDetail(violation, context) {
   const edges = context.graph.get(context.source).dependencies.filter((edge) => edge.resolved === violation.to
     && (violation.unresolvedTo === undefined || edge.module === violation.unresolvedTo));
-  const names = new Set(edges.map(npmEdgePackage));
+  const names = new Set(await Promise.all(edges.map((edge) => npmEdgePackage(edge, context, context.source))));
   if (names.size !== 1 || names.has(undefined) || !edges.every((edge) => edge.dependencyTypes.includes("npm-dev"))) {
     throw new Error("ambiguous development dependency violation");
   }
@@ -483,7 +593,7 @@ async function normalizeViolation(violation, context) {
   return { rule, detail: await normalizers[rule.rule_id](violation, detailContext) };
 }
 
-async function normalizeViolations(result, input, target, targetManifest) {
+async function normalizeViolations(result, input, target, targetManifest, importScopes) {
   if ([
     Boolean(result && typeof result === "object"),
     Array.isArray(result?.modules),
@@ -498,11 +608,11 @@ async function normalizeViolations(result, input, target, targetManifest) {
   if (!graphWithinLimits(moduleCount, edgeCount)) fail("resource");
   const production = new Set(input.production_files.map((file) => file.path));
   const tests = new Set(input.test_files.map((file) => file.path));
-  const context = { target, targetManifest, production, tests };
+  const context = { target, targetManifest, production, tests, importScopes };
   context.graph = await validateGraphModules(result.modules, context);
   await validateGraphEdges(context.graph, context);
   const details = new Map(ARCHITECTURE_RULES.map((rule) => [rule.check_id, new Map()]));
-  collectDevelopmentPackages(context.graph, context, details.get("production_must_not_import_dev_dependencies"));
+  await collectDevelopmentPackages(context.graph, context, details.get("production_must_not_import_dev_dependencies"));
   for (const violation of result.summary.violations) {
     const { rule, detail } = await normalizeViolation(violation, context);
     if (detail) details.get(rule.check_id).set(detailKey(detail), detail);
@@ -555,6 +665,7 @@ async function analyze() {
     await rejectTargetControls(targetState.target);
     return readTargetManifest(targetState.target);
   });
+  const importScopes = await phase("input", () => captureImportScopes(input, targetState.target));
   const runtimeState = await phase("runtime", verifyRuntime);
   const output = await phase("analyzer", async () => {
     const analyzer = await import(pathToFileURL(runtimeState.entryPath).href);
@@ -574,8 +685,9 @@ async function analyze() {
     return result.output;
   });
   const normalized = await phase("evidence", () => normalizeViolations(
-    JSON.parse(output), input, targetState.target, targetManifest,
+    JSON.parse(output), input, targetState.target, targetManifest, importScopes,
   ));
+  await phase("input", () => revalidateImportScopes(importScopes));
   await revalidate(input, targetState, runtimeState);
   return {
     protocol_version: NODE_ARCHITECTURE_PROTOCOL_VERSION,

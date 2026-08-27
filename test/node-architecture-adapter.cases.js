@@ -17,6 +17,7 @@ import {
   validateArchitecturePolicy,
 } from "../src/node-architecture-adapter.js";
 import {
+  NODE_ARCHITECTURE_LIMITS,
   compareCodeUnits,
   detailKey,
   graphWithinLimits,
@@ -206,6 +207,117 @@ test("root dependency declarations govern every production package edge", async 
   assert.deepEqual([nested.status, overlap.status], ["fail", "pass"]);
   assert.deepEqual(nested.checks.map((check) => check.status), ["pass", "pass", "pass", "pass", "fail"]);
   assert.equal(nested.evidence.filter((item) => item.summary === "Development-only dependency imported by src/index.js: left-pad.").length, 1);
+
+  const aliases = await repository(t, {
+    "package.json": JSON.stringify({
+      type: "module", dependencies: { dep: "1.0.0", "@scope/dep": "1.0.0", renamed: "npm:original@1.0.0" },
+      imports: { "#dep": "dep", "#scoped": "@scope/dep/sub.js", "#renamed": "renamed/sub.js", "#local": "./helper.js", "#builtin": "fs" },
+    }),
+    "src/index.js": "import '#dep'; import '#scoped'; import '#renamed'; import '#local';\n",
+    "helper.js": "export default 1;\n",
+    "node_modules/dep/package.json": '{"name":"dep","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/dep/index.js": "module.exports = 1;\n",
+    "node_modules/@scope/dep/package.json": '{"name":"@scope/dep","version":"1.0.0"}\n',
+    "node_modules/@scope/dep/sub.js": "module.exports = 1;\n",
+    "node_modules/renamed/package.json": '{"name":"original","version":"1.0.0"}\n',
+    "node_modules/renamed/sub.js": "module.exports = 1;\n",
+  });
+  const aliasExecution = spawnSync(process.execPath, ["src/index.js"], { cwd: aliases, encoding: "utf8" });
+  assert.equal(aliasExecution.status, 0, aliasExecution.stderr);
+  const aliasManifest = JSON.parse(await fs.readFile(path.join(aliases, "package.json"), "utf8"));
+  const outcomes = [];
+  for (const [dependencies, devDependencies] of [
+    [aliasManifest.dependencies, {}],
+    [{}, aliasManifest.dependencies],
+    [aliasManifest.dependencies, aliasManifest.dependencies],
+  ]) {
+    await fs.writeFile(path.join(aliases, "package.json"), JSON.stringify({ ...aliasManifest, dependencies, devDependencies }));
+    outcomes.push(await runNodeArchitecture({ target: aliases, limits }));
+  }
+  assert.deepEqual(outcomes.map((outcome) => outcome.status), ["pass", "fail", "pass"]);
+  assert.deepEqual(outcomes[1].checks.map((check) => check.status), ["pass", "pass", "pass", "pass", "fail"]);
+  for (const name of ["dep", "@scope/dep", "renamed"]) {
+    assert.equal(outcomes[1].evidence.filter((item) => item.summary === `Development-only dependency imported by src/index.js: ${name}.`).length, 1);
+  }
+  await fs.writeFile(path.join(aliases, "src/index.js"), "import '#builtin';\n");
+  assert.equal(spawnSync(process.execPath, ["src/index.js"], { cwd: aliases, encoding: "utf8" }).status, 0);
+  // The pinned analyzer reports this builtin alias unresolved; preserve its normal rule failure.
+  const builtinAlias = await runNodeArchitecture({ target: aliases, limits });
+  assert.equal(builtinAlias.status, "fail");
+  assert.deepEqual(builtinAlias.checks.map((check) => check.status), ["pass", "pass", "pass", "fail", "pass"]);
+  await fs.writeFile(path.join(aliases, "src/index.js"), "import '#missing';\n");
+  const unresolved = await runNodeArchitecture({ target: aliases, limits });
+  assert.equal(unresolved.status, "fail");
+  assert.deepEqual(unresolved.checks.map((check) => check.status), ["pass", "pass", "pass", "fail", "pass"]);
+
+  const nestedAlias = await repository(t, {
+    "package.json": '{"type":"module","devDependencies":{"dep":"1.0.0"},"imports":{"#dep":"dep/node_modules/other/index.js"}}\n',
+    "src/index.js": "import 'dep/node_modules/other/index.js';\n",
+    "node_modules/dep/package.json": '{"name":"dep","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/dep/index.js": "module.exports = 1;\n",
+    "node_modules/dep/node_modules/other/package.json": '{"name":"other","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/dep/node_modules/other/index.js": "module.exports = 1;\n",
+    "node_modules/other/package.json": '{"name":"other","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/other/index.js": "module.exports = 1;\n",
+  });
+  const attributionResults = [];
+  for (const directSpecifier of ["dep/node_modules/other/index.js", "dep"]) {
+    if (directSpecifier === "dep") {
+      await fs.rm(path.join(nestedAlias, "node_modules/dep"), { recursive: true });
+      await fs.symlink("other", path.join(nestedAlias, "node_modules/dep"));
+      await fs.writeFile(path.join(nestedAlias, "package.json"), '{"type":"module","devDependencies":{"dep":"1.0.0"},"imports":{"#dep":"dep"}}\n');
+    }
+    for (const specifier of [directSpecifier, "#dep"]) {
+      await fs.writeFile(path.join(nestedAlias, "src/index.js"), `import ${JSON.stringify(specifier)};\n`);
+      const execution = spawnSync(process.execPath, ["src/index.js"], { cwd: nestedAlias, encoding: "utf8" });
+      assert.equal(execution.status, 0, execution.stderr);
+      attributionResults.push(await runNodeArchitecture({ target: nestedAlias, limits }));
+    }
+  }
+  assert.deepEqual(attributionResults.map((outcome) => outcome.status), ["fail", "fail", "fail", "fail"]);
+  for (const outcome of attributionResults) {
+    assert.deepEqual(outcome.checks.map((check) => check.status), ["pass", "pass", "pass", "pass", "fail"]);
+    assert.equal(outcome.evidence.filter((item) => item.summary === "Development-only dependency imported by src/index.js: dep.").length, 1);
+  }
+
+  const scopedAlias = await repository(t, {
+    "package.json": '{"type":"module","dependencies":{"other":"1.0.0"},"devDependencies":{"dep":"1.0.0"},"imports":{"#dep":"other"}}\n',
+    "src/package.json": '{"type":"module","imports":{"#dep":{"node":"dep","default":"dep/index.js"}}}\n',
+    "src/nested/index.js": "import '#dep';\n",
+    "node_modules/dep/package.json": '{"name":"dep","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/dep/index.js": "module.exports = 1;\n",
+    "node_modules/other/package.json": '{"name":"other","version":"1.0.0","main":"index.js"}\n',
+    "node_modules/other/index.js": "module.exports = 1;\n",
+  });
+  for (const imports of [
+    { "#dep": { node: "dep", default: "dep/index.js" } },
+    { "#*": "dep/index.js" },
+    { "#dep": ["dep", "dep/index.js"] },
+  ]) {
+    await fs.writeFile(path.join(scopedAlias, "src/package.json"), JSON.stringify({ type: "module", imports }));
+    const execution = spawnSync(process.execPath, ["src/nested/index.js"], { cwd: scopedAlias, encoding: "utf8" });
+    assert.equal(execution.status, 0, execution.stderr);
+    const result = await runNodeArchitecture({ target: scopedAlias, limits });
+    assert.equal(result.status, "fail");
+    assert.deepEqual(result.checks.map((check) => check.status), ["pass", "pass", "pass", "pass", "fail"]);
+    assert.equal(result.evidence.filter((item) => item.summary === "Development-only dependency imported by src/nested/index.js: dep.").length, 1);
+  }
+  for (const imports of [
+    { "#dep": { node: "other", default: "dep" } },
+    { "#dep": ["other", "dep"] },
+    { "#d*": "other", "#*": "dep" },
+    { "#dep": { browser: null, default: "other" } },
+  ]) {
+    await fs.writeFile(path.join(scopedAlias, "src/package.json"), JSON.stringify({ type: "module", imports }));
+    const result = await runNodeArchitecture({ target: scopedAlias, limits });
+    assert.equal(result.status, "error", JSON.stringify({ imports, result }));
+    assertSafeArchitectureError(result, "NODE_ARCHITECTURE_EVIDENCE_INVALID");
+  }
+  await fs.writeFile(path.join(scopedAlias, "src/package.json"), " ".repeat(NODE_ARCHITECTURE_LIMITS.manifestBytes + 1));
+  assertSafeArchitectureError(await runNodeArchitecture({ target: scopedAlias, limits }), "NODE_ARCHITECTURE_INPUT_INVALID");
+  await fs.rm(path.join(scopedAlias, "src/package.json"));
+  await fs.symlink(path.join(aliases, "package.json"), path.join(scopedAlias, "src/package.json"));
+  assertSafeArchitectureError(await runNodeArchitecture({ target: scopedAlias, limits }), "NODE_ARCHITECTURE_INPUT_INVALID");
 });
 
 test("the real analyzer reports each approved architecture violation", async (t) => {
@@ -236,6 +348,31 @@ test("the real analyzer reports each approved architecture violation", async (t)
   assert.deepEqual(selfLoopResult.checks.map((check) => check.rule_id), ARCHITECTURE_RULES.map((rule) => rule.rule_id));
   assert.deepEqual(selfLoopResult.checks.map((check) => check.status), ["fail", "pass", "pass", "pass", "pass"]);
   assert.equal(selfLoopResult.evidence.filter((item) => item.summary === "Directed production cycle: src/self.js -> src/self.js.").length, 1);
+
+  const mixed = await repository(t, {
+    "package.json": '{"type":"module"}\n',
+    "src/index.js": "import '../test/helper.js';\n",
+    "test/helper.js": "import '../src/index.js';\n",
+  });
+  const mixedResult = await runNodeArchitecture({ target: mixed, limits });
+  assert.equal(mixedResult.status, "fail");
+  assert.deepEqual(mixedResult.checks.map((check) => check.status), ["pass", "fail", "pass", "pass", "pass"]);
+  await fs.writeFile(path.join(mixed, "src/index.js"), "import '../helper.js';\n");
+  await fs.writeFile(path.join(mixed, "helper.js"), "import './src/index.js';\n");
+  assert.equal((await runNodeArchitecture({ target: mixed, limits })).status, "pass");
+
+  const overlapping = await repository(t, {
+    "package.json": '{"type":"module"}\n',
+    "src/a.js": "import './b.js'; import '../test/to-c.js';\n",
+    "src/b.js": "import './c.js'; import '../test/to-a.js';\n",
+    "src/c.js": "import './a.js'; import '../test/to-b.js';\n",
+    "test/to-a.js": "import '../src/a.js';\n",
+    "test/to-b.js": "import '../src/b.js';\n",
+    "test/to-c.js": "import '../src/c.js';\n",
+  });
+  const overlapResult = await runNodeArchitecture({ target: overlapping, limits });
+  assert.equal(overlapResult.status, "fail");
+  assert.deepEqual(overlapResult.checks.map((check) => check.status), ["fail", "fail", "pass", "pass", "pass"]);
 });
 
 test("target analyzer controls and unsafe manifests fail closed", async (t) => {
@@ -653,6 +790,7 @@ test("package runtime assets fail closed before analyzer import", async (t) => {
     [{ ...module, dependencies: [{ ...edge, coreModule: true }] }],
     [{ ...module, dependencies: [{ ...edge, dependencyTypes: "npm-dev" }] }],
     [{ ...module, dependencies: [{ ...edge, couldNotResolve: "false" }] }],
+    [{ ...module, dependencies: [{ ...edge, module: "#ambiguous", resolved: "src/index.js", dependencyTypes: ["npm-no-pkg"] }] }],
   ];
   for (const modules of malformedGraphs) {
     await installAnalyzerFixture(copyRoot, `export async function cruise() {
@@ -660,15 +798,80 @@ test("package runtime assets fail closed before analyzer import", async (t) => {
     }\n`);
     assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_EVIDENCE_INVALID");
   }
+  for (const initial of [undefined, '{"imports":{"#dep":"dep"}}\n']) {
+    const scopePath = path.join(target, "src/package.json");
+    if (initial !== undefined) await fs.writeFile(scopePath, initial);
+    await installAnalyzerFixture(copyRoot, `import fs from "node:fs/promises";
+      export async function cruise() {
+        await fs.writeFile(${JSON.stringify(scopePath)}, '{"imports":{"#dep":"other"}}');
+        return { exitCode: 0, output: ${JSON.stringify(JSON.stringify({ modules: [module], summary: { violations: [] } }))} };
+      }\n`);
+    assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_INPUT_INVALID");
+    await fs.rm(scopePath);
+  }
   for (const violation of [
     { from: "src/index.js", to: "missing.js", rule: { name: "unknown", severity: "error" } },
     { from: "missing.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "error" } },
     { from: "src/index.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "error" } },
     { from: "src/index.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "warning" } },
+    { from: "src/index.js", to: "src/index.js", rule: { name: "no_production_cycles", severity: "error" } },
   ]) {
     await installAnalyzerFixture(copyRoot, `export async function cruise() {
       return { exitCode: 0, output: ${JSON.stringify(JSON.stringify({ modules: [module], summary: { violations: [violation] } }))} };
     }\n`);
     assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_EVIDENCE_INVALID");
   }
+
+  const selfEdge = { ...edge, module: "./index.js", resolved: "src/index.js" };
+  for (const cycle of [
+    null, {}, [{ name: "src/index.js" }, {}],
+    [{ name: "src/index.js" }, { name: "missing.js" }],
+    [{ name: "src/index.js" }, { name: path.join(packageRoot, "src/node-architecture-worker.js") }],
+    [{ name: "src/index.js" }, { name: "src/index.js" }, { name: "src/index.js" }],
+  ]) {
+    const invalidCycle = {
+      modules: [{ ...module, dependencies: [selfEdge] }],
+      summary: { violations: [{ from: "src/index.js", to: "src/index.js", cycle, rule: { name: "no_production_cycles", severity: "error" } }] },
+    };
+    await installAnalyzerFixture(copyRoot, `export async function cruise() {
+      return { exitCode: 0, output: ${JSON.stringify(JSON.stringify(invalidCycle))} };
+    }\n`);
+    assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_EVIDENCE_INVALID");
+  }
+
+  const cycleTarget = await repository(t, {
+    "package.json": '{"type":"module"}\n',
+    "src/a.js": "import './b.js';\n",
+    "src/b.js": "import '../helper.js'; import './a.js';\n",
+    "helper.js": "import './src/a.js';\n",
+  });
+  const cycleGraph = {
+    modules: [
+      { source: "src/a.js", dependencies: [{ ...edge, module: "./b.js", resolved: "src/b.js" }] },
+      { source: "src/b.js", dependencies: [{ ...edge, module: "../helper.js", resolved: "helper.js" }, { ...edge, module: "./a.js", resolved: "src/a.js" }] },
+      { source: "helper.js", dependencies: [{ ...edge, module: "./src/a.js", resolved: "src/a.js" }] },
+    ],
+    summary: { violations: [
+      ["src/a.js", "src/b.js", "helper.js"], ["src/b.js", "src/a.js"], ["src/b.js", "helper.js", "src/a.js"],
+    ].map((members) => ({
+      from: members[0], to: members[1], cycle: members.map((name) => ({ name })), rule: { name: "no_production_cycles", severity: "error" },
+    })) },
+  };
+  const permuted = structuredClone(cycleGraph);
+  permuted.modules.reverse();
+  for (const entry of permuted.modules) entry.dependencies.reverse();
+  permuted.summary.violations.reverse();
+  for (const violation of permuted.summary.violations) violation.cycle.push(violation.cycle.shift());
+  const reports = [];
+  for (const graph of [cycleGraph, permuted]) {
+    await installAnalyzerFixture(copyRoot, `export async function cruise() {
+      return { exitCode: 0, output: ${JSON.stringify(JSON.stringify(graph))} };
+    }\n`);
+    const report = await copied.runNodeArchitecture({ target: cycleTarget, limits });
+    assert.equal(report.status, "fail");
+    assert.deepEqual(report.checks.map((check) => check.status), ["fail", "pass", "pass", "pass", "pass"]);
+    reports.push(report.evidence.map(({ evidence_id, check_id, summary, location }) => ({ evidence_id, check_id, summary, location })));
+  }
+  assert.deepEqual(reports[0], reports[1]);
+  assert.equal(reports[0].filter((item) => item.summary === "Directed production cycle: src/a.js -> src/b.js -> src/a.js.").length, 1);
 });
