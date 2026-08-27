@@ -18,6 +18,7 @@ export const UNIT_TEST_NAMES = Object.freeze(new Set([
   "syncCodeGraph initializes a new project",
   "checkCodeGraph rejects pending changes",
   "the package-owned policy fixes exact recommended errors and classic complexity",
+  "the architecture policy and cycle normalization are exact and deterministic",
 ]));
 
 export function classifyTestName(name) {

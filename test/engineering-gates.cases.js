@@ -31,6 +31,7 @@ import {
   validateEngineeringGateRun,
 } from "../src/governance-validator.js";
 import { runNodeLintComplexity } from "../src/node-lint-complexity-adapter.js";
+import { ARCHITECTURE_RULES, runNodeArchitecture } from "../src/node-architecture-adapter.js";
 import {
   COVERAGE_LIMITS,
   meetsCoverageThreshold,
@@ -61,6 +62,7 @@ const validConfiguration = {
     "unit_tests",
     "integration_tests",
     "coverage",
+    "node_architecture",
     "governance",
     "production_dependency_audit",
     "npm_package_surface",
@@ -208,6 +210,37 @@ function executorSet(statuses = {}) {
         }));
         return { status, reason_code: `COVERAGE_${status.toUpperCase()}`, summary: "Coverage was evaluated.", evidence, checks };
       }
+      if (executorId === "node_architecture" && status !== "error") {
+        const definitions = [
+          ["no_production_cycles", "ARCH-NO-CYCLES-001"],
+          ["production_must_not_import_tests", "ARCH-PROD-NO-TEST-001"],
+          ["src_must_not_import_bin", "ARCH-SRC-NO-BIN-001"],
+          ["production_imports_resolve", "ARCH-IMPORT-RESOLUTION-001"],
+          ["production_must_not_import_dev_dependencies", "ARCH-PROD-NO-DEV-DEPS-001"],
+        ];
+        const collectedAt = new Date().toISOString();
+        const evidence = definitions.map(([checkId], index) => ({
+          schema_version: "1.0.0",
+          evidence_id: `evidence:${checkId}`,
+          kind: "static_analysis",
+          level: "deterministic",
+          outcome: status === "fail" && index === 0 ? "fail" : "pass",
+          summary: `${checkId} produced bounded evidence.`,
+          check_id: checkId,
+          collected_at: collectedAt,
+          collected_by: { kind: "deterministic", id: "sdd_engineering_gates", runtime: "ci" },
+          redaction: { applied: false, categories: [] },
+        }));
+        const checks = definitions.map(([checkId, ruleId], index) => ({
+          check_id: checkId,
+          rule_id: ruleId,
+          status: status === "fail" && index === 0 ? "fail" : "pass",
+          gate_effect: "block",
+          summary: `${checkId} produced a bounded result.`,
+          evidence_ids: [`evidence:${checkId}`],
+        }));
+        return { status, reason_code: `NODE_ARCHITECTURE_${status.toUpperCase()}`, summary: "Architecture was evaluated.", evidence, checks };
+      }
       if (executorId !== "governance" || status === "error") {
         return {
           status,
@@ -296,21 +329,22 @@ test("engineering gate configuration is strict and requires the exact executor a
     "governance-schema.cases.js",
     "installer.cases.js",
     "node-lint-complexity-adapter.cases.js",
+    "node-architecture-adapter.cases.js",
     "integration/node-lint-complexity-distribution.test.js",
   ];
   const inventory = (await Promise.all(inventoryFiles.map(async (relative) => {
     const source = await fs.readFile(path.join(repositoryRoot, "test", relative), "utf8");
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
-  assert.equal(UNIT_TEST_NAMES.size, 17);
-  assert.equal(inventory.length, 89);
-  assert.equal(new Set(inventory).size, 89);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 17);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 72);
+  assert.equal(UNIT_TEST_NAMES.size, 18);
+  assert.equal(inventory.length, 97);
+  assert.equal(new Set(inventory).size, 97);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 18);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 79);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
-  assert.equal(unitFiles.length, 5);
-  assert.equal(integrationFiles.length, 6);
+  assert.equal(unitFiles.length, 6);
+  assert.equal(integrationFiles.length, 7);
   assert.equal(meetsCoverageThreshold({ covered: 89, total: 100 }, 90), false);
   assert.equal(meetsCoverageThreshold({ covered: 9, total: 10 }, 90), true);
   assert.equal(meetsCoverageThreshold({ covered: 0, total: 0 }, 90), true);
@@ -438,6 +472,22 @@ test("passing and functional-failure runs preserve canonical status and exit sem
   assert.equal(failed.document.outcome, "failed");
   assert.equal(failed.document.results.at(-1).status, "pass");
   assert.equal((await validateEngineeringGateRun(failed.document)).ok, true);
+
+  await fs.mkdir(path.join(target, "src"));
+  await fs.writeFile(path.join(target, "package.json"), "{\"type\":\"module\"}\n");
+  await fs.writeFile(path.join(target, "src/self.js"), "import './self.js';\n");
+  assert.equal(spawnSync("git", ["-C", target, "add", "--", "package.json", "src/self.js"]).status, 0);
+  const executors = executorSet();
+  executors.node_architecture = runNodeArchitecture;
+  const selfLoop = await runConfiguredGates(target, { executors });
+  assert.equal(selfLoop.exitCode, 1);
+  assert.equal(selfLoop.document.outcome, "failed");
+  assert.equal(selfLoop.document.results[5].status, "fail");
+  const architectureChecks = selfLoop.document.results[5].checks;
+  assert.deepEqual(architectureChecks.map((check) => check.rule_id), ARCHITECTURE_RULES.map((rule) => rule.rule_id));
+  assert.deepEqual(architectureChecks.map((check) => check.status), ["fail", "pass", "pass", "pass", "pass"]);
+  assert.equal(selfLoop.document.results.slice(6).every((item) => item.status === "pass"), true);
+  assert.equal((await validateEngineeringGateRun(selfLoop.document)).ok, true);
 });
 
 test("the real Node lint and complexity adapter preserves runner exit and evidence semantics", async (t) => {
@@ -729,13 +779,13 @@ test("result validation enforces complete governance details and evidence owners
   assert.equal((await validateEngineeringGateRun(wrongGovernanceEvidenceProducer)).ok, false);
 
   const missingGovernanceCheck = structuredClone(result.document);
-  missingGovernanceCheck.results[5].checks = [{
+  missingGovernanceCheck.results[6].checks = [{
     check_id: "governance_catalog_integrity",
     rule_id: "GOV-CATALOG-INTEGRITY-001",
     status: "pass",
     gate_effect: "block",
     summary: "Incomplete governance detail.",
-    evidence_ids: missingGovernanceCheck.results[5].evidence_ids,
+    evidence_ids: missingGovernanceCheck.results[6].evidence_ids,
   }];
   assert.equal((await validateEngineeringGateRun(missingGovernanceCheck)).ok, false);
 
@@ -785,6 +835,77 @@ test("result validation enforces complete governance details and evidence owners
   reorderedCoverage.results[4].checks.reverse();
   assert.equal((await validateEngineeringGateRun(reorderedCoverage)).ok, false);
 
+  const reorderedArchitecture = structuredClone(result.document);
+  reorderedArchitecture.results[5].checks.reverse();
+  assert.equal((await validateEngineeringGateRun(reorderedArchitecture)).ok, false);
+
+  const nonBlockingArchitecture = structuredClone(result.document);
+  nonBlockingArchitecture.results[5].checks[0].gate_effect = "none";
+  assert.equal((await validateEngineeringGateRun(nonBlockingArchitecture)).ok, false);
+
+  const architectureEvidenceOwnedByAnotherCheck = structuredClone(result.document);
+  const architectureResult = architectureEvidenceOwnedByAnotherCheck.results[5];
+  const architectureEvidence = architectureEvidenceOwnedByAnotherCheck.evidence.find(
+    (item) => item.evidence_id === architectureResult.checks[0].evidence_ids[0],
+  );
+  architectureEvidence.check_id = architectureResult.checks[1].check_id;
+  assert.equal((await validateEngineeringGateRun(architectureEvidenceOwnedByAnotherCheck)).ok, false);
+
+  const architectureEvidenceAbsentFromExecutor = structuredClone(result.document);
+  architectureEvidenceAbsentFromExecutor.results[5].evidence_ids.shift();
+  assert.equal((await validateEngineeringGateRun(architectureEvidenceAbsentFromExecutor)).ok, false);
+
+  const architectureEvidenceWithWrongOutcome = structuredClone(result.document);
+  const wrongOutcomeResult = architectureEvidenceWithWrongOutcome.results[5];
+  architectureEvidenceWithWrongOutcome.evidence.find(
+    (item) => item.evidence_id === wrongOutcomeResult.checks[0].evidence_ids[0],
+  ).outcome = "fail";
+  assert.equal((await validateEngineeringGateRun(architectureEvidenceWithWrongOutcome)).ok, false);
+
+  const passingArchitectureWithDetail = structuredClone(result.document);
+  const passingArchitectureResult = passingArchitectureWithDetail.results[5];
+  passingArchitectureResult.checks[0].evidence_ids.push(passingArchitectureResult.checks[1].evidence_ids[0]);
+  assert.equal((await validateEngineeringGateRun(passingArchitectureWithDetail)).ok, false);
+
+  const completedArchitectureWithoutChecks = structuredClone(result.document);
+  delete completedArchitectureWithoutChecks.results[5].checks;
+  assert.equal((await validateEngineeringGateRun(completedArchitectureWithoutChecks)).ok, false);
+
+  const failedArchitecture = await runConfiguredGates(target, {
+    executors: executorSet({ node_architecture: "fail" }),
+  });
+  assert.equal((await validateEngineeringGateRun(failedArchitecture.document)).ok, true);
+  const inconsistentArchitectureStatus = structuredClone(failedArchitecture.document);
+  inconsistentArchitectureStatus.results[5].status = "pass";
+  assert.equal((await validateEngineeringGateRun(inconsistentArchitectureStatus)).ok, false);
+
+  const unsupportedChecks = structuredClone(result.document);
+  unsupportedChecks.results[0].checks = structuredClone(unsupportedChecks.results[5].checks);
+  assert.equal((await validateEngineeringGateRun(unsupportedChecks)).ok, false);
+
+  const unboundedArchitectureEvidence = structuredClone(result.document);
+  const unboundedArchitectureResult = unboundedArchitectureEvidence.results[5];
+  const unboundedArchitectureCheck = unboundedArchitectureResult.checks[0];
+  const extraArchitectureEvidence = Array.from({ length: 21 }, (_, index) => ({
+    ...unboundedArchitectureEvidence.evidence.find(
+      (item) => item.evidence_id === unboundedArchitectureCheck.evidence_ids[0],
+    ),
+    evidence_id: `evidence:architecture_extra_${String(index).padStart(2, "0")}`,
+  }));
+  const extraArchitectureEvidenceIds = extraArchitectureEvidence.map((item) => item.evidence_id);
+  unboundedArchitectureEvidence.evidence.push(...extraArchitectureEvidence);
+  unboundedArchitectureCheck.evidence_ids.push(...extraArchitectureEvidenceIds);
+  unboundedArchitectureResult.evidence_ids.splice(1, 0, ...extraArchitectureEvidenceIds);
+  assert.equal((await validateEngineeringGateRun(unboundedArchitectureEvidence)).ok, false);
+
+  const erroredArchitecture = await runConfiguredGates(target, {
+    executors: executorSet({ node_architecture: "error" }),
+  });
+  assert.equal((await validateEngineeringGateRun(erroredArchitecture.document)).ok, true);
+  const erroredArchitectureWithChecks = structuredClone(erroredArchitecture.document);
+  erroredArchitectureWithChecks.results[5].checks = structuredClone(result.document.results[5].checks);
+  assert.equal((await validateEngineeringGateRun(erroredArchitectureWithChecks)).ok, false);
+
   const orphanEvidence = structuredClone(result.document);
   orphanEvidence.evidence.push({
     ...orphanEvidence.evidence[0],
@@ -810,7 +931,7 @@ test("an executor error exits two and leaves following executors not_run", async
   assert.equal(result.document.outcome, "blocked");
   assert.deepEqual(
     result.document.results.map((item) => item.status),
-    ["pass", "pass", "pass", "pass", "pass", "pass", "error", "not_run", "not_run"],
+    ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "error", "not_run", "not_run"],
   );
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
 });
@@ -943,9 +1064,9 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   assert.ok(Date.now() - cleanupStarted >= 190);
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.outcome, "blocked");
-  assert.equal(result.document.results[6].status, "error");
-  assert.equal(result.document.results[6].reason_code, "EXECUTOR_TIMEOUT");
-  assert.equal(result.document.results.slice(7).every((item) => item.status === "not_run"), true);
+  assert.equal(result.document.results[7].status, "error");
+  assert.equal(result.document.results[7].reason_code, "EXECUTOR_TIMEOUT");
+  assert.equal(result.document.results.slice(8).every((item) => item.status === "not_run"), true);
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
 
   let boundarySettled;
@@ -2212,8 +2333,8 @@ test("unsafe tracked source paths and unknown governance layouts block execution
   assert.equal(spawnSync("git", ["-C", target, "add", "-u"], { encoding: "utf8" }).status, 0);
   const unknown = await runConfiguredGates(target, { executors: executorSet({ governance: "error" }) });
   assert.equal(unknown.exitCode, 2);
-  assert.equal(unknown.document.results[5].reason_code, "GOVERNANCE_ERROR");
-  assert.equal(unknown.document.results.slice(6).every((item) => item.status === "not_run"), true);
+  assert.equal(unknown.document.results[6].reason_code, "GOVERNANCE_ERROR");
+  assert.equal(unknown.document.results.slice(7).every((item) => item.status === "not_run"), true);
 });
 
 test("invalid generated evidence fails the complete result contract without leaking values", async (t) => {

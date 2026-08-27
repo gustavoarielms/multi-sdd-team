@@ -1,190 +1,262 @@
-# Functional Specification — Issue #11: test suites and coverage gates
+# Functional Specification — Issue #12: deterministic Node.js architecture boundaries
 
 ## Scope
 
-This change makes the approved Engineering Quality Profile test and coverage
-requirements executable for the Node adapter. It reorganizes the existing test
-inventory into explicit unit and integration suites, adds deterministic coverage
-evaluation, and replaces the single `test_suite` engineering-gate executor with
-separate suite and coverage executors.
+This change makes the five approved architecture rules in the Engineering
+Quality Profile v1 executable for Node.js production modules. It adds one
+package-owned `node_architecture` executor to `run-gates`; it does not add a
+new CLI command, change aggregate outcomes or exit codes, alter the approved
+profile/adapter/schema versions (`1.0.0`), or accept target-owned analyzer
+configuration.
 
-The scope is limited to the Node 22.14.0 and 24.19.0 supported runtimes. It
-does not change the public CLI command names, the aggregate outcomes, or process
-exit meanings.
+The executor analyzes only tracked JavaScript production modules under `bin/`
+and `src/`. The package engine contract is exactly
+`^22.14.0 || ^24.0.0 || >=26.0.0`; the required validation matrix is Node
+22.14.0 and 24.19.0, and Node 25 is explicitly unsupported.
 
 ## Objectives
 
-- Preserve every one of the 89 existing tests exactly once: 17 unit tests and
-  72 integration tests.
-- Make `npm run test:unit` run only the required unit suite, `npm run
-  test:integration` run only the required integration suite, and `npm test`
-  run both suites sequentially.
-- Make a missing, empty, undiscovered, skipped, todo, or irreconcilable suite a
-  trustworthy-execution error, not a passing result.
-- Measure unit and integration coverage separately, combine their Istanbul
-  coverage maps, and evaluate global and changed/new production coverage using
-  exact item counts.
-- Keep deterministic gate results bounded and machine-readable across source,
-  project-local installation, global installation, and packed-consumer use.
+- Enforce the five already-approved rules deterministically, with one ordered
+  blocking check per profile architecture condition.
+- Use exactly `dependency-cruiser@18.2.0` and its runtime graph packaged with
+  this package, through a package-owned content manifest and JSON policy whose
+  SHA-256 values are trusted before code is imported.
+- Treat unavailable, malformed, incomplete, unsafe, or target-influenced
+  analysis as an execution error, never as a pass.
+- Keep canonical evidence reproducible, bounded, and free of raw analyzer
+  output, graph payloads, command lines, environment values, or target data
+  beyond normalized paths and short summaries.
 
 ## User-visible contract
 
-`sdd-codegraph run-gates [target] --comparison-base <full-sha>` keeps its
-current CLI shape. Its canonical JSON and aggregate meanings remain:
+`sdd-codegraph run-gates [target] --comparison-base <full-sha>` retains its
+shape and result semantics:
 
 | Outcome | Exit code | Meaning |
 |---|---:|---|
-| `passed` | 0 | Every executed required gate passed. |
-| `failed` | 1 | A trustworthy functional rule failure was found. |
+| `passed` | 0 | Every required executor passed. |
+| `failed` | 1 | One or more trustworthy policy violations were found. |
 | `blocked` | 2 | Execution was incomplete or untrustworthy. |
 
-Executor status remains `pass`, `fail`, `error`, or `not_run`. An `error`
-stops later executors, which are reported as `not_run`; a trustworthy `fail`
-does not conceal later trustworthy failures.
+Executor statuses remain `pass`, `fail`, `error`, and `not_run`. A
+trustworthy architecture violation is `fail`; a precondition, containment,
+protocol, analyzer, timeout, output-limit, or execution problem is `error`.
+An `error` stops later executors and marks them `not_run`; a `fail` permits
+later required executors to run.
 
-An executor is not settled merely because its timeout has fired. The runner
-propagates cancellation to the executor and the executor propagates it to every
-child process it started. Only after those processes have exited and owned
-temporary resources have been cleaned may the runner emit that executor's
-`error` and mark later executors `not_run`.
-
-This cleanup boundary is not an operating-system sandbox. It verifies only
-processes that remain attributable to a package-owned process identity, group,
-session, or observable ancestry when bounded inventory begins. A process that
-has already detached and been reparented outside that attributable domain is a
-documented portability residual and is not claimed as contained by
-`run-gates`.
-
-The exact ordered executor allowlist becomes:
+The exact package-owned executor allowlist becomes:
 
 1. `javascript_syntax`
 2. `node_lint_complexity`
 3. `unit_tests`
 4. `integration_tests`
 5. `coverage`
-6. `governance`
-7. `production_dependency_audit`
-8. `npm_package_surface`
-9. `forbidden_references`
+6. `node_architecture`
+7. `governance`
+8. `production_dependency_audit`
+9. `npm_package_surface`
+10. `forbidden_references`
 
-Target configuration continues to select only this complete package-owned
-allowlist. It cannot provide commands, plugins, thresholds, baselines,
-exceptions, or coverage configuration.
+Target configuration may select only this complete allowlist. It cannot
+provide a dependency-cruiser configuration, baseline, exception, plugin,
+command, executable, version, rule, path, network input, or suppression.
+
+## Approved rule contract
+
+The executor returns five checks in this exact profile order. Each check is
+applicable, has `status: pass|fail`, uses `gate_effect: block`, and owns its
+evidence. The `check_id` is the existing profile condition.
+
+| Order | Check ID | Rule ID | Requirement |
+|---:|---|---|---|
+| 1 | `no_production_cycles` | `ARCH-NO-CYCLES-001` | The production graph contains no directed dependency cycle. |
+| 2 | `production_must_not_import_tests` | `ARCH-PROD-NO-TEST-001` | A module in `bin/` or `src/` does not depend on a module in `test/`. |
+| 3 | `src_must_not_import_bin` | `ARCH-SRC-NO-BIN-001` | A module in `src/` does not depend on a module in `bin/`. |
+| 4 | `production_imports_resolve` | `ARCH-IMPORT-RESOLUTION-001` | Every analyzed production import resolves under the pinned analyzer. |
+| 5 | `production_must_not_import_dev_dependencies` | `ARCH-PROD-NO-DEV-DEPS-001` | Production code does not import a package declared only in `devDependencies`. |
+
+For the last rule, a package declared in both `dependencies` and
+`devDependencies` is not development-only. A target `package.json` is
+required and is itself part of the trusted analysis input: missing, malformed,
+unsafe, or non-contained manifests block the run rather than changing the
+classification.
+
+The executor is `pass` only when all five checks pass, and `fail` when one or
+more checks fail. An executor `error` has no `checks` array because a
+`pass|fail` check cannot represent an untrustworthy measurement.
+
+## Determinism, containment, and evidence
+
+The production inventory is the package-owned tracked-file inventory matching
+`bin/**/*.js` and `src/**/*.js`. An empty inventory is an error. Each listed
+path must be a normalized relative path that resolves, after realpath, within
+the target root; traversal, absolute paths, backslash variants, missing files,
+and symlinks escaping the target are errors. The worker, JSON policy, runtime
+content manifest, and complete dependency-cruiser runtime graph are physically
+packaged under the installed package root. Before dynamic import, the worker
+validates the trusted manifest digest and SHA-256 of every declared runtime
+file. It then dynamically imports only the verified contained entry URL. A
+consumer's hoisted dependency, override, `cwd`, target, or `PATH` cannot select
+the analyzer.
+
+This contract assumes the target and package filesystems are quiescent during a
+run. It captures each input's realpath and `dev`, `ino`, `size`, and `mtime_ns`
+before use and verifies them again after analysis; any difference is an error.
+An attacker able to swap a file and restore the same observable identity and
+metadata between checks is a documented residual (swap-back) and is not claimed
+as detected.
+
+The worker receives only the target root and this fixed inventory. It invokes
+the installed analyzer API through a fixed package-owned entry point, fixed
+policy, explicit arguments, and an empty/sanitized environment. It must not
+use a shell, `PATH` lookup, `npx`, global installation, target configuration
+autodiscovery, target baseline, plugin loading, or network access. The target
+is rejected if dependency-cruiser configuration or baseline material could
+alter the result. The exact root-only denylist is:
+
+- `.dependency-cruiser.js`, `.dependency-cruiser.cjs`,
+  `.dependency-cruiser.json`, `.dependency-cruiser.yaml`,
+  `.dependency-cruiser.yml`, `.dependency-cruiser.mjs`;
+- `dependency-cruiser.js`, `dependency-cruiser.cjs`,
+  `dependency-cruiser.json`, `dependency-cruiser.yaml`,
+  `dependency-cruiser.yml`, `dependency-cruiser.mjs`;
+- `.dependency-cruiser-known-violations.json` and
+  `dependency-cruiser-known-violations.json`; and
+- root `package.json` keys `dependency-cruiser` and `dependencyCruiser`.
+
+Every listed filesystem entry is rejected if it exists, including a symlink,
+directory, or non-regular file; it is checked before analysis and never read.
+No other glob or near-match is denied by this contract (for example,
+`dependency-cruiser.local.json` is permitted).
+
+The fixed policy enables analyzer validation and contains exactly five rules:
+production `from.path` `^(bin|src)/` for checks 1, 2, 4, and 5; `src`-only
+`from.path` `^src/` for check 3; and, respectively, `to.circular: true`,
+`to.path: ^test/`, `to.path: ^bin/`, `to.couldNotResolve: true`, and
+`to.dependencyTypes: ["npm-dev"]`. Altering any literal, order, or policy
+shape blocks the run rather than weakening a rule.
+
+The runtime bundle is committed at `vendor/node-architecture-runtime/`; its
+committed manifest is
+`governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json`.
+`scripts/generate-node-architecture-runtime.js` derives it only from the local
+lockfile installation produced by `npm ci --offline --ignore-scripts`, with no
+network or lifecycle hook. `scripts/verify-node-architecture-runtime.js`
+regenerates in a temporary directory and byte-compares paths, ordering, bytes,
+manifest, licenses, and `NOTICE.md`; `npm pack --ignore-scripts` must contain
+the same assets. Missing/mismatched third-party license inventory or required
+license text is an error.
+
+The executor rejects an analysis before it begins when any approved resource
+limit is exceeded: target manifest over 1 MiB; more than 10,000 tracked input
+files across production and test inventories; a source file over 2 MiB; more
+than 64 MiB across those files; 20,000 graph modules; or 100,000 graph edges.
+The worker is started with a 256 MiB heap cap and it does not follow internals
+of external dependencies. A limit is an `error`, never a truncated pass/fail.
+
+The worker-to-adapter report is an internal strict JSON protocol. It identifies
+the protocol version, analyzer identity/version, fixed policy digest, analyzed
+files, full per-rule violation totals, and only normalized bounded findings.
+Unknown fields, wrong keys, wrong versions, wrong digest, duplicate or unsafe
+paths, count/detail disagreement, unexpected rule/check identity, or invalid
+ordering make the result an `error`.
+
+For each rule, the adapter emits one deterministic summary evidence item and
+at most 20 normalized detail evidence items, ordered canonically. Full totals
+remain in the summary even when details are capped. Details use the existing
+evidence schema (`location`, `summary`, and `check_id` linked to the rule); no
+schema extension is introduced. Evidence must be sorted before IDs are
+assigned. Potentially unsafe text is redacted or replaced with a stable safe
+summary.
+
+A reported directed cycle is canonicalized by rotating it to the
+lexicographically smallest module path without reversing its direction. Equal
+cycles are deduplicated and the canonical representations are sorted. A
+one-module self-loop is a valid directed cycle, represented by that path once,
+and produces the normal cycle-rule `fail`, not an executor `error`. This
+makes equivalent analyzer output reproducible across traversal order.
 
 ## Acceptance criteria
 
-- The suite inventory guard proves `17 + 72 = 89`, with no duplicate or
-  unclassified test name.
-- Unit and integration test roots are explicit, disjoint, present, and
-  non-empty. The test runner is invoked once for each suite.
-- A unit failure or integration failure produces the corresponding executor
-  `fail`; suite discovery, runner, parser, timeout, output-overflow, skipped,
-  todo, or inconsistent-result problems produce `error`.
-- Coverage is collected with package-owned exact dependencies
-  `c8@12.0.0` and `istanbul-lib-coverage@3.2.2`; no runtime download, `npx`,
-  shell command, or `PATH` selection is permitted.
-- The coverage executor evaluates the union of separate unit and integration
-  Istanbul maps with `--all` over the exact production inventory.
-- Global thresholds are lines 85, branches 80, functions 85, and statements
-  85. Changed/new thresholds are 90, 85, 90, and 90 respectively. Each check
-  uses `covered * 100 >= threshold * total`, never a rounded percentage.
-- `--comparison-base` is a required full commit SHA. The effective base is its
-  deterministic merge base. Changed/new scope contains committed, staged, and
-  unstaged changes; complete new files; and non-ignored untracked production
-  files. Deleted files are excluded and renames use the final path.
-- An untracked production file participates fully in changed/new coverage but
-  is excluded from the global denominator until it is tracked.
-- `.c8rc*`, `.nycrc*`, `package.json` `c8`/`nyc` configuration, and inline
-  `c8`, `istanbul`, or `nyc` ignore directives are rejected fail-closed.
-- Evidence contains only normalized statuses, counts, bounded locations,
-  reason codes, summaries, and redaction metadata; it does not contain raw
-  child output or coverage payloads.
-- The contract passes in source, project-local, global, and packed-consumer
-  installations on Node 22.14.0 and 24.19.0.
-- A runner timeout must cancel the suite or coverage adapter, terminate its
-  child process tree, await process exit and temporary-directory cleanup, and
-  only then emit the terminal executor result. This outer-timeout race is a
-  required test case.
-- `ENG-TEST-SUITE-001` remains in the catalog only as a deprecated historical
-  rule with no active automation or gate effect. It is not bound by `node-v1`,
-  not present in the engineering executor registry, and not treated as an
-  approved rule by governance validation or trust bindings.
-- The coverage executor contains exactly two ordered checks: `coverage_global`
-  for `TEST-COVERAGE-GLOBAL-001`, then `coverage_changed` for
-  `TEST-COVERAGE-CHANGED-001`. Each applicable check is `pass` or `fail` with
-  blocking effect. With no applicable changed/new production items,
-  `coverage_changed` is canonically `pass` with gate effect `none` and owned
-  evidence outcome `not_applicable`; `coverage_global` is always applicable.
+- `dependency-cruiser@18.2.0` and its complete runtime graph are packaged
+  under this package; the trusted content-manifest digest and every runtime
+  file SHA-256 are verified before its contained entry is dynamically imported.
+- The fixed policy invokes dependency-cruiser with validation enabled and the
+  five exact approved literals; trust validation and real semantic fixtures
+  reject every changed policy literal, order, or rule shape.
+- The committed runtime bundle, manifest, generator, verifier, third-party
+  package/version/license inventory, and required license texts are
+  deterministically regenerated from the local lockfile installation, then
+  byte-compared and included by `npm pack --ignore-scripts`. The future root
+  `NOTICE.md` describes these bundled third-party notices and is not a
+  CodeGraph artifact.
+- The registry, configuration, runtime allowlist, schema validation, trust
+  bindings, package surface, and run result require exactly ten executors with
+  `node_architecture` sixth and its five exact rule IDs in profile order.
+- The architecture executor evaluates only the fixed tracked `bin/` and
+  `src/` production inventory and a separately bounded tracked `test/`
+  inventory used only to validate test targets; missing target manifest or
+  empty production inventory is `error`.
+- Each individual approved violation produces a blocking `fail`, with all five
+  checks present in fixed order and correctly linked evidence.
+- A production cycle, production-to-test dependency, `src`-to-`bin`
+  dependency, unresolved production import, and dev-only package import are
+  each detected by an independent integration fixture.
+- Cycles and all other details remain byte-for-byte stable when the analyzer
+  returns equivalent violations in a different order. At most 20 details per
+  rule are emitted while the summary retains the true total.
+- A target-owned dependency-cruiser configuration or baseline, analyzer
+  absence/version mismatch, malformed worker output, unexpected report field,
+  wrong policy digest, timeout, output overflow, signal, unsafe inventory
+  path, symlink escape, missing manifest, malformed manifest, local resolution
+  outside target, or empty production scope returns `error` and blocks later
+  executors.
+- Each denylisted root entry (the fourteen exact dependency-cruiser names) is
+  rejected even when it is a symlink, directory, or other non-regular file;
+  only the two listed package keys are rejected, and near-matches remain
+  permitted.
+- The manifest/input/graph/heap bounds are enforced before or during analysis
+  without truncation. Pre/post identity checks detect observable input changes;
+  the swap-back filesystem residual is documented rather than treated as proof
+  of immutable storage.
+- The adapter never records raw subprocess output, unbounded graph data,
+  analyzer configuration, arbitrary errors, or secret-bearing target text in
+  canonical evidence.
+- The result is valid in source, project-local, global, and packed-consumer
+  installations, including a packed-consumer fixture proving that a hoisted or
+  overridden consumer dependency cannot replace the packaged verified runtime,
+  on Node 22.14.0 and 24.19.0. The declared engine accepts Node
+  22.14+, Node 24+, and Node 26+ as stated above; Node 25 must be rejected.
+  Green CI alone is not proof of these semantic fixtures; the specified
+  deterministic tests are required.
 
 ## Use cases
 
-### Successful suite and coverage run
+### Compliant production graph
 
-Given a target with the exact gate configuration, two populated suites, a
-valid full comparison SHA, and coverage satisfying both threshold groups, when
-the user runs `run-gates`, then unit, integration, and coverage executors pass
-and the command emits one canonical `passed` document with exit 0.
+Given a target with a contained manifest, non-empty tracked production
+inventory, package-owned analyzer policy, and no violations, when `run-gates`
+runs, then `node_architecture` passes with the five ordered passing checks and
+bounded summary evidence.
 
-### A trustworthy test assertion failure
+### Architectural violation
 
-Given a valid unit or integration invocation whose test runner reports an
-assertion failure, when its executor runs, then it reports `fail`, preserves
-the stable aggregate semantics, and the final exit is 1 unless a later executor
-error blocks the run.
+Given a valid target whose production graph contains one of the five forbidden
+relationships, when the executor runs, then that check and the executor fail,
+all applicable checks remain reported in their fixed order, and later required
+executors continue.
 
-### New code misses coverage
+### Untrustworthy analysis input or execution
 
-Given global coverage that passes but changed/new coverage below an approved
-threshold, when coverage is evaluated, then the coverage executor fails and
-its bounded evidence distinguishes the global and changed/new checks.
+Given a missing/malformed manifest, empty production scope, unsafe path,
+escaping symlink, target-owned analyzer config/baseline, wrong package-owned
+asset, analyzer protocol/version/digest mismatch, timeout, signal, or output
+overflow, when the executor runs, then it returns `error`, the run becomes
+`blocked`, and subsequent executors are `not_run`.
 
-### Untrustworthy analysis input
+### Large violation set
 
-Given a missing or invalid comparison base, forbidden coverage configuration or
-suppression, unsafe path, timeout, overflow, malformed map, or irreconcilable
-test result, when the relevant executor runs, then it returns `error`, the run
-is `blocked` with exit 2, and remaining executors are `not_run`.
-
-### No changed production items
-
-Given a valid comparison base and no changed/new production coverage items,
-when coverage is evaluated, then `coverage_global` is evaluated normally and
-`coverage_changed` is recorded as `pass` with gate effect `none`; its only
-applicability evidence has outcome `not_applicable`. The coverage executor
-passes if, and only if, the global check passes.
-
-## Test classification matrix and cardinality guard
-
-The following are the only unit tests (17). The implementation must assert this
-set and classify every other current inventory test as integration (72).
-
-| Source inventory | Unit test name |
-|---|---|
-| `engineering-gates.test.js` | engineering gate configuration is strict and requires the exact executor allowlist |
-| `governance-checks.test.js` | a warning governance failure remains non-blocking |
-| `governance-schema.test.js` | candidate, unverified, or unreproduced findings cannot recommend a blocking gate effect |
-| `governance-schema.test.js` | a passing gate cannot retain blocking findings |
-| `governance-schema.test.js` | a gate cannot pass by omitting an eligible blocking finding |
-| `governance-schema.test.js` | approved rules and exceptions require human authority |
-| `governance-schema.test.js` | evidence rejects raw output fields and inconsistent redaction metadata |
-| `governance-schema.test.js` | pure JSON parser rejects markdown fences and surrounding prose |
-| `governance-schema.test.js` | review validation rejects role, non-Codex runtime, gate count, and reference mismatches |
-| `governance-schema.test.js` | validation errors do not echo rejected payload values |
-| `governance-schema.test.js` | catalog integrity rejects invalid documents, duplicate rules, proposed blocks, missing human approval, and orphan checks |
-| `governance-schema.test.js` | deterministic check results require bounded evidence linked to rule and check |
-| `installer.test.js` | mergeManagedBlock preserves unmanaged content and replaces the managed block |
-| `installer.test.js` | setTomlKey preserves unrelated settings |
-| `installer.test.js` | syncCodeGraph initializes a new project |
-| `installer.test.js` | checkCodeGraph rejects pending changes |
-| `node-lint-complexity-adapter.test.js` | the package-owned policy fixes exact recommended errors and classic complexity |
-
-In particular, these three `governance-schema` tests are integration tests,
-not unit tests: `all governance schemas compile in strict Draft 2020-12 mode`,
-`canonical Engineering Quality Profile v1 is strict, approved, and
-trust-bound`, and `governance examples satisfy their schemas and
-cross-reference integrity`.
-
-The cardinality guard must verify the approved 17-name set, that its complement
-contains 72 tests, and that the two sets are disjoint with a combined total of
-89. It must fail when a test is lost, duplicated, renamed without the matrix
-being updated, or left unclassified.
+Given more than 20 violations for one rule, when evidence is emitted, then
+the result reports the exact violation total and only the first 20 canonical
+details for that rule. Reordering equivalent analyzer output cannot alter the
+result.

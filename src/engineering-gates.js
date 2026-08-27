@@ -14,6 +14,7 @@ import {
   validateEngineeringGateConfiguration,
   validateEngineeringGateRun,
   validateEngineeringQualityProfile,
+  validateArchitectureAdapterTrust,
   validateGovernanceCatalog,
   validateGovernanceDocument,
 } from "./governance-validator.js";
@@ -26,6 +27,7 @@ import {
 } from "./engineering-gate-runtime.js";
 import { runNodeLintComplexity } from "./node-lint-complexity-adapter.js";
 import { runNodeCoverage } from "./node-coverage-adapter.js";
+import { runNodeArchitecture } from "./node-architecture-adapter.js";
 import { runIntegrationTests, runUnitTests } from "./node-test-suite-adapter.js";
 import { runTrustedGit } from "./git-change-selector.js";
 
@@ -42,6 +44,9 @@ const PRODUCER = Object.freeze({ kind: "deterministic", id: "sdd_engineering_gat
 const REQUIRED_PACKAGE_ASSETS = Object.freeze([
   "bin/sdd-codegraph.js",
   "governance/checks/v1/registry.json",
+  "governance/adapters/v1/node-architecture-notice-header.md",
+  "governance/adapters/v1/node-dependency-cruiser.json",
+  "governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json",
   "governance/gates/v1/registry.json",
   "governance/profiles/v1/engineering-quality-profile.json",
   "governance/rules/v1/catalog.json",
@@ -57,11 +62,19 @@ const REQUIRED_PACKAGE_ASSETS = Object.freeze([
   "src/coverage-map-worker.js",
   "src/git-change-selector.js",
   "src/node-coverage-adapter.js",
+  "src/node-architecture-adapter.js",
+  "src/node-architecture-contract.js",
+  "src/node-architecture-runtime-topology.js",
+  "src/node-architecture-worker.js",
   "src/node-eslint-policy.js",
   "src/node-lint-complexity-adapter.js",
   "src/node-lint-complexity-worker.js",
   "src/node-test-reporter.js",
   "src/node-test-suite-adapter.js",
+  "scripts/generate-node-architecture-runtime.js",
+  "scripts/verify-node-architecture-runtime.js",
+  "vendor/node-architecture-runtime/node_modules/dependency-cruiser/src/main/index.mjs",
+  "vendor/node-architecture-runtime/licenses/inventory.json",
 ]);
 
 let policyPromise;
@@ -114,8 +127,9 @@ async function loadPolicy() {
   ]).then(async ([registry, catalog, checkRegistry, profile]) => {
     const registryStructure = await validateGovernanceDocument("engineering-gate-registry.schema.json", registry);
     const profileValidation = await validateEngineeringQualityProfile(profile, catalog);
+    const architectureTrust = await validateArchitectureAdapterTrust();
     const governance = await validateGovernanceCatalog(catalog, checkRegistry, registry, profile);
-    if (!registryStructure.valid || !profileValidation.ok || !governance.ok) {
+    if (!registryStructure.valid || !profileValidation.ok || !architectureTrust.ok || !governance.ok) {
       throw new Error("Engineering gate policy is invalid.");
     }
     return {
@@ -162,6 +176,7 @@ export const ENGINEERING_EXECUTOR_IDS = Object.freeze([
   "unit_tests",
   "integration_tests",
   "coverage",
+  "node_architecture",
   "governance",
   "production_dependency_audit",
   "npm_package_surface",
@@ -451,7 +466,11 @@ async function runExecutorWorker(implementation) {
 }
 
 async function javascriptSyntax(context) {
-  const listed = await listTrackedFiles(context.target, ["*.js", "*.sh"], context.limits);
+  const listed = await listTrackedFiles(context.target, [
+    "*.js",
+    "*.sh",
+    ":(exclude,glob)vendor/node-architecture-runtime/**",
+  ], context.limits);
   if (listed.status === "error") return listed;
   for (const relative of listed.files) {
     const executable = relative.endsWith(".sh") ? "bash" : process.execPath;
@@ -560,7 +579,11 @@ async function forbiddenReferences(context) {
   const extensionPath = ["(^|/)", "extensions", "/"].join("");
   const promptPath = ["(^|/)", "prompts", "/"].join("");
   const pattern = `(^|[^[:alnum:]_])${runtime}([^[:alnum:]_]|$)|${child}|${vendor}|${retiredExtensions}|${extensionPath}|(^|/)agents/.*\\.md|${promptPath}`;
-  const command = await runBoundedCommand("git", ["-C", context.target, "grep", "-nI", "-i", "-E", pattern, "--", "."], {
+  const command = await runBoundedCommand("git", [
+    "-C", context.target, "grep", "-nI", "-i", "-E", pattern, "--", ".",
+    ":(exclude)package-lock.json",
+    ":(exclude,glob)vendor/node-architecture-runtime/**",
+  ], {
     cwd: context.target,
     ...context.limits,
   });
@@ -581,6 +604,7 @@ const DEFAULT_EXECUTORS = Object.freeze({
   unit_tests: runUnitTests,
   integration_tests: runIntegrationTests,
   coverage: runNodeCoverage,
+  node_architecture: runNodeArchitecture,
   governance,
   production_dependency_audit: productionDependencyAudit,
   npm_package_surface: npmPackageSurface,

@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
   APPROVED_GOVERNANCE_RULES,
@@ -6,9 +9,95 @@ import {
   CANONICAL_GOVERNANCE_CHECK_BINDINGS,
   ENGINEERING_QUALITY_PROFILE_TRUST,
   GOVERNANCE_APPROVAL_AUTHORITY,
+  NODE_ARCHITECTURE_ADAPTER_TRUST,
   governanceDocumentDigest,
   governanceRuleDigest,
 } from "./governance-trust.js";
+
+const packageRootPath = fileURLToPath(new URL("../", import.meta.url));
+const architectureTrustKeys = Object.freeze([
+  "analyzer_id",
+  "analyzer_version",
+  "notice_header_path",
+  "policy_digest",
+  "policy_path",
+  "runtime_entry",
+  "runtime_manifest_digest",
+  "runtime_manifest_path",
+  "runtime_root_path",
+]);
+
+function safeTrustPath(value) {
+  return typeof value === "string" && value.length > 0 && !path.isAbsolute(value) && !value.includes("\\")
+    && value.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function rawDigest(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function compareCodeUnits(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function validTrustShape(trust) {
+  if (!trust || typeof trust !== "object" || Array.isArray(trust)) return false;
+  const actual = Object.keys(trust).sort(compareCodeUnits);
+  const expected = [...architectureTrustKeys].sort(compareCodeUnits);
+  return JSON.stringify(actual) === JSON.stringify(expected);
+}
+
+async function resolveTrustedAsset(root, relative, expectedType) {
+  const real = await fs.realpath(path.join(root, relative));
+  const nested = path.relative(root, real);
+  if (nested.startsWith("..") || path.isAbsolute(nested)) throw new Error("escaped trusted asset");
+  if (!(await fs.stat(real))[expectedType]()) throw new Error("invalid trusted asset type");
+  return real;
+}
+
+async function trustedArchitectureContent(trust, packageRoot) {
+  const root = await fs.realpath(packageRoot);
+  const policy = await resolveTrustedAsset(root, trust.policy_path, "isFile");
+  const manifest = await resolveTrustedAsset(root, trust.runtime_manifest_path, "isFile");
+  const runtimeRoot = await resolveTrustedAsset(root, trust.runtime_root_path, "isDirectory");
+  await resolveTrustedAsset(root, trust.notice_header_path, "isFile");
+  await resolveTrustedAsset(runtimeRoot, trust.runtime_entry, "isFile");
+  return Promise.all([
+    fs.readFile(policy),
+    fs.readFile(manifest),
+    fs.readFile(path.join(runtimeRoot, "node_modules/dependency-cruiser/package.json")),
+  ]);
+}
+
+export async function validateArchitectureAdapterTrust(
+  trust = NODE_ARCHITECTURE_ADAPTER_TRUST,
+  packageRoot = packageRootPath,
+) {
+  const errors = [];
+  if (!validTrustShape(trust)) {
+    return { ok: false, errors: ["node architecture trust shape is not canonical"] };
+  }
+  const pathFields = ["notice_header_path", "policy_path", "runtime_entry", "runtime_manifest_path", "runtime_root_path"];
+  if (pathFields.some((field) => !safeTrustPath(trust[field]))) {
+    return { ok: false, errors: ["node architecture trust path is invalid"] };
+  }
+  try {
+    const [policyBytes, manifestBytes, analyzerManifestBytes] = await trustedArchitectureContent(trust, packageRoot);
+    if (rawDigest(policyBytes) !== trust.policy_digest) errors.push("node architecture policy digest does not match trust");
+    if (rawDigest(manifestBytes) !== trust.runtime_manifest_digest) {
+      errors.push("node architecture runtime manifest digest does not match trust");
+    }
+    const analyzer = JSON.parse(analyzerManifestBytes.toString("utf8"));
+    if (analyzer.name !== trust.analyzer_id || analyzer.version !== trust.analyzer_version) {
+      errors.push("node architecture analyzer identity does not match trust");
+    }
+  } catch {
+    errors.push("node architecture trusted asset is unavailable");
+  }
+  return errors.length === 0 ? { ok: true, errors: [] } : { ok: false, errors };
+}
 
 const schemasUrl = new URL("../governance/schemas/v1/", import.meta.url);
 const agentResultSchemaName = "agent-result.schema.json";
@@ -608,6 +697,56 @@ function validateCoverageSubresults(result, value, errors) {
   if (result.status !== expectedStatus) errors.push("coverage executor status does not match its subresults");
 }
 
+const ARCHITECTURE_CHECK_BINDINGS = Object.freeze([
+  Object.freeze(["no_production_cycles", "ARCH-NO-CYCLES-001"]),
+  Object.freeze(["production_must_not_import_tests", "ARCH-PROD-NO-TEST-001"]),
+  Object.freeze(["src_must_not_import_bin", "ARCH-SRC-NO-BIN-001"]),
+  Object.freeze(["production_imports_resolve", "ARCH-IMPORT-RESOLUTION-001"]),
+  Object.freeze(["production_must_not_import_dev_dependencies", "ARCH-PROD-NO-DEV-DEPS-001"]),
+]);
+
+function validateArchitectureEvidence(check, evidenceId, evidenceIndex, result, value, errors) {
+  const evidence = value.evidence.find((candidate) => candidate.evidence_id === evidenceId);
+  if (!result.evidence_ids.includes(evidenceId)) errors.push("architecture subresult evidence is absent from its executor");
+  if (evidence?.check_id !== check.check_id) errors.push("architecture evidence belongs to another subresult");
+  const expectedOutcome = check.status === "pass" ? "pass" : "fail";
+  if (evidence?.outcome !== expectedOutcome) errors.push("architecture evidence outcome does not match its subresult");
+  if (check.status === "pass" && evidenceIndex > 0) errors.push("passing architecture subresult has unexpected detail evidence");
+}
+
+function validateArchitectureCheck(check, binding, result, value, orderedEvidenceIds, errors) {
+  if (!binding || check.check_id !== binding[0] || check.rule_id !== binding[1]) {
+    errors.push("architecture subresult rule binding does not match canonical policy");
+  }
+  if (check.gate_effect !== "block") errors.push("architecture subresult must remain blocking");
+  if (check.evidence_ids.length < 1 || check.evidence_ids.length > 21) {
+    errors.push("architecture subresult evidence is not bounded");
+  }
+  for (const [evidenceIndex, evidenceId] of check.evidence_ids.entries()) {
+    orderedEvidenceIds.push(evidenceId);
+    validateArchitectureEvidence(check, evidenceId, evidenceIndex, result, value, errors);
+  }
+}
+
+function validateArchitectureSubresults(result, value, errors) {
+  const checks = result.checks ?? [];
+  if (checks.length !== ARCHITECTURE_CHECK_BINDINGS.length) errors.push("architecture subresults do not match the canonical check order");
+  const orderedEvidenceIds = [];
+  checks.forEach((check, index) => validateArchitectureCheck(
+    check,
+    ARCHITECTURE_CHECK_BINDINGS[index],
+    result,
+    value,
+    orderedEvidenceIds,
+    errors,
+  ));
+  if (JSON.stringify(result.evidence_ids) !== JSON.stringify(orderedEvidenceIds)) {
+    errors.push("architecture executor evidence must equal the ordered subresult union");
+  }
+  const expectedStatus = checks.every((check) => check.status === "pass") ? "pass" : "fail";
+  if (result.status !== expectedStatus) errors.push("architecture executor status does not match its subresults");
+}
+
 function validateExecutorEvidenceOutcomes(result, value, errors) {
   const expectedOutcome = result.status === "pass"
     ? "pass"
@@ -628,8 +767,32 @@ function validateExecutorEvidenceOutcomes(result, value, errors) {
   if (!primaryEvidenceSeen) errors.push("engineering executor lacks primary status evidence");
 }
 
+function validateEngineeringSubresults(result, context) {
+  const { value, rulesById, checkRegistry, errors } = context;
+  const structuredExecutors = ["governance", "coverage", "node_architecture"];
+  if (!structuredExecutors.includes(result.executor_id) && result.checks) {
+    errors.push("executor contains unsupported subresults");
+  }
+  const completed = ["pass", "fail"].includes(result.status);
+  if (result.executor_id === "governance" && completed) {
+    validateGovernanceSubresults(result, value, checkRegistry, rulesById, errors);
+  }
+  if (result.executor_id === "coverage" && completed) validateCoverageSubresults(result, value, errors);
+  if (result.executor_id === "node_architecture" && completed) {
+    if (!result.checks) errors.push("architecture executor requires canonical subresults");
+    validateArchitectureSubresults(result, value, errors);
+  }
+  if (["coverage", "node_architecture"].includes(result.executor_id)
+    && result.status === "error" && result.checks) {
+    errors.push("structured executor error result cannot contain subresults");
+  }
+  if (!structuredExecutors.includes(result.executor_id) || !result.checks) {
+    validateExecutorEvidenceOutcomes(result, value, errors);
+  }
+}
+
 function validateEngineeringResult(result, expected, context, errorSeen) {
-  const { value, rulesById, checkRegistry, referencedCounts, errors } = context;
+  const { value, rulesById, referencedCounts, errors } = context;
   if (JSON.stringify(result.rule_ids) !== JSON.stringify(expected.rule_ids)) {
     errors.push("engineering result rule binding does not match the registry");
   }
@@ -638,21 +801,7 @@ function validateEngineeringResult(result, expected, context, errorSeen) {
   }
   const nextErrorSeen = validateEngineeringExecutionOrder(result, value.run_error, errorSeen, errors);
   validateEngineeringEvidenceOwnership(result, value, referencedCounts, errors);
-  if (!["governance", "coverage"].includes(result.executor_id) && result.checks) {
-    errors.push("executor contains unsupported subresults");
-  }
-  if (result.executor_id === "governance" && ["pass", "fail"].includes(result.status)) {
-    validateGovernanceSubresults(result, value, checkRegistry, rulesById, errors);
-  }
-  if (result.executor_id === "coverage" && ["pass", "fail"].includes(result.status)) {
-    validateCoverageSubresults(result, value, errors);
-  }
-  if (result.executor_id === "coverage" && result.status === "error" && result.checks) {
-    errors.push("coverage error result cannot contain subresults");
-  }
-  if (!["governance", "coverage"].includes(result.executor_id) || !result.checks) {
-    validateExecutorEvidenceOutcomes(result, value, errors);
-  }
+  validateEngineeringSubresults(result, context);
   return nextErrorSeen;
 }
 

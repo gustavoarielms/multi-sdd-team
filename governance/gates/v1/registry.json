@@ -38,6 +38,19 @@
       "max_output_bytes": 262144
     },
     {
+      "executor_id": "node_architecture",
+      "implementation": "node_architecture",
+      "rule_ids": [
+        "ARCH-NO-CYCLES-001",
+        "ARCH-PROD-NO-TEST-001",
+        "ARCH-SRC-NO-BIN-001",
+        "ARCH-IMPORT-RESOLUTION-001",
+        "ARCH-PROD-NO-DEV-DEPS-001"
+      ],
+      "timeout_ms": 120000,
+      "max_output_bytes": 262144
+    },
+    {
       "executor_id": "governance",
       "implementation": "governance",
       "rule_ids": [

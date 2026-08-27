@@ -12,6 +12,18 @@ export const ENGINEERING_QUALITY_PROFILE_TRUST = Object.freeze({
   digest: "sha256:a428ece53d85b3af2f5fb0987cb08f45ace2dab43df28da95cbd15f581ff0348",
 });
 
+export const NODE_ARCHITECTURE_ADAPTER_TRUST = Object.freeze({
+  analyzer_id: "dependency-cruiser",
+  analyzer_version: "18.2.0",
+  policy_path: "governance/adapters/v1/node-dependency-cruiser.json",
+  policy_digest: "sha256:f8fc4bdb4ab39a58dcf26a5ad4bb9b95b33c74369c1dabc997d7f9f99bed954b",
+  runtime_manifest_path: "governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json",
+  runtime_manifest_digest: "sha256:bea9c09a6cea35a75c2ab018eb64ace3c5dcf1f4f932c8065c79b0ea8bfa00bf",
+  runtime_root_path: "vendor/node-architecture-runtime",
+  runtime_entry: "node_modules/dependency-cruiser/src/main/index.mjs",
+  notice_header_path: "governance/adapters/v1/node-architecture-notice-header.md",
+});
+
 export const CANONICAL_GOVERNANCE_CHECK_BINDINGS = Object.freeze({
   governance_catalog_integrity: Object.freeze({ rule_id: "GOV-CATALOG-INTEGRITY-001", implementation: "governance_catalog_integrity" }),
   codex_role_catalog: Object.freeze({ rule_id: "GOV-CODEX-ROLE-CATALOG-001", implementation: "codex_role_catalog" }),
@@ -48,6 +60,18 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
   coverage: Object.freeze({
     implementation: "coverage",
     rule_ids: Object.freeze(["TEST-COVERAGE-GLOBAL-001", "TEST-COVERAGE-CHANGED-001"]),
+    timeout_ms: 120000,
+    max_output_bytes: 262144,
+  }),
+  node_architecture: Object.freeze({
+    implementation: "node_architecture",
+    rule_ids: Object.freeze([
+      "ARCH-NO-CYCLES-001",
+      "ARCH-PROD-NO-TEST-001",
+      "ARCH-SRC-NO-BIN-001",
+      "ARCH-IMPORT-RESOLUTION-001",
+      "ARCH-PROD-NO-DEV-DEPS-001",
+    ]),
     timeout_ms: 120000,
     max_output_bytes: 262144,
   }),

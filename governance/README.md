@@ -139,10 +139,10 @@ incomplete layouts fail closed with a bounded machine-readable result.
 `sdd-codegraph run-gates [target]` reads the target's
 `.sdd-codegraph/gates.json`, validates the exact v1 executor allowlist, runs the
 package-owned executors in registry order, validates the complete result, and
-writes one `engineering-gate-run` JSON document to stdout. The nine executors
+writes one `engineering-gate-run` JSON document to stdout. The ten executors
 cover tracked JavaScript and shell syntax, package-owned Node.js lint and
 per-function complexity, explicit unit and integration suites, combined global
-and changed/new coverage, the five individual governance checks, production
+and changed/new coverage, five Node.js architecture-boundary checks, the five individual governance checks, production
 dependency audit, npm package surface, and approved forbidden references.
 
 Executor states are deliberately distinct:
@@ -209,7 +209,13 @@ separate unit and integration maps, and uses exact covered/total item
 arithmetic. Global coverage contains tracked production files; changed/new
 coverage additionally includes complete, non-ignored untracked production
 files. Deleted files are excluded and renames use their final path.
-Architecture analyzers remain future work under #12.
+Architecture uses exactly `dependency-cruiser@18.2.0` from the package's
+content-manifest-verified vendored runtime. It receives separate tracked
+production/test inventories, applies the fixed five-rule policy, rejects target
+configuration and baselines, and caps detail evidence at 20 per rule while
+retaining full totals. Input and runtime identities are checked before and
+after analysis under a quiescent-filesystem assumption; active swap-back is an
+explicit residual rather than a prevented condition.
 
 Because changed-code coverage is blocking, `run-gates` requires an explicit
 full comparison commit and records both the supplied SHA and effective merge
