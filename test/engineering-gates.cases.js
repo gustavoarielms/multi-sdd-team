@@ -1056,12 +1056,16 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
     }, { once: true });
   });
   const nativeSetTimeout = globalThis.setTimeout;
-  t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
-    nativeSetTimeout(callback, delay === 60000 ? 20 : [1000, 2000].includes(delay) ? 50 : delay, ...args)
+  // Leave process identity and cleanup deadlines intact during Git preflight.
+  const timeoutMock = t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
+    nativeSetTimeout(callback, delay === 60000 ? 20 : delay, ...args)
   ));
 
   const result = await runConfiguredGates(target, { executors });
-  assert.equal(cleanupCompleted, true);
+  timeoutMock.mock.restore();
+  const failureReason = result.document.run_error?.reason_code
+    ?? result.document.results.find((item) => item.status === "error")?.reason_code;
+  assert.equal(cleanupCompleted, true, failureReason);
   assert.ok(Date.now() - cleanupStarted >= 190);
   assert.equal(result.exitCode, 2);
   assert.equal(result.document.outcome, "blocked");
@@ -1082,7 +1086,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
       boundarySettled({ type: "error", error: new Error("terminated") });
       await nonCooperativeExecution;
     },
-  }, 20);
+  }, 20, 50);
   assert.ok(Date.now() - nonCooperativeStarted < 250);
   assert.equal(forcedTerminationCompleted, true);
   assert.equal(nonCooperative.reason_code, "EXECUTOR_TIMEOUT");
