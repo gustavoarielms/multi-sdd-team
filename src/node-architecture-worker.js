@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isBuiltin } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { isContained } from "./engineering-gate-runtime.js";
@@ -164,6 +165,9 @@ async function validateInventoryMembers(input, combined, target) {
     if (!validInventoryMember(file, production, target, seen)) throw new Error("invalid input inventory");
     const current = await captureFile(path.join(target, file.path), target, NODE_ARCHITECTURE_LIMITS.fileBytes);
     if (!sameIdentity(file.identity, current)) throw new Error("input identity mismatch");
+    if (production && path.relative(target, current.realpath).split(path.sep).join("/") !== file.path) {
+      throw new Error("production identity changed rule domain");
+    }
     aggregate += current.size;
     if (aggregate > NODE_ARCHITECTURE_LIMITS.aggregateBytes) throw new Error("aggregate source limit");
     seen.add(file.path);
@@ -308,13 +312,98 @@ async function verifyRuntime() {
 }
 
 async function localPath(target, candidate) {
-  if (typeof candidate !== "string" || candidate.includes("\\")) throw new Error("unsafe analyzer path");
+  if (!safeText(candidate) || candidate.includes("\\")) throw new Error("unsafe analyzer path");
   const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(target, candidate);
-  const real = await fs.realpath(absolute);
-  if (!isContained(target, real)) throw new Error("analyzer path escaped target");
-  const relative = path.relative(target, real).split(path.sep).join("/");
-  if (!safeJavaScriptPath(relative)) throw new Error("invalid analyzer local path");
+  const captured = await captureFile(absolute, target);
+  const relative = path.relative(target, captured.realpath).split(path.sep).join("/");
+  if (!safeRelativePath(relative)) throw new Error("invalid analyzer local path");
   return relative;
+}
+
+function graphPathKind(value, candidate) {
+  if (!safeText(candidate) || candidate.includes("\\")) throw new Error("invalid graph path");
+  if (["coreModule", "couldNotResolve"].some((key) => Object.hasOwn(value, key) && typeof value[key] !== "boolean")) {
+    throw new Error("invalid graph flags");
+  }
+  if (value.coreModule === true) {
+    if (value.couldNotResolve === true || !isBuiltin(candidate) && !isBuiltin(`node:${candidate}`)) {
+      throw new Error("invalid builtin graph node");
+    }
+    return "builtin";
+  }
+  return value.couldNotResolve === true ? "unresolved" : "file";
+}
+
+function validGraphEdge(edge) {
+  return edge && typeof edge === "object" && !Array.isArray(edge)
+    && safeText(edge.module) && typeof edge.coreModule === "boolean"
+    && typeof edge.couldNotResolve === "boolean" && Array.isArray(edge.dependencyTypes)
+    && edge.dependencyTypes.every((type) => safeText(type));
+}
+
+function repeatedGraphLeaf(previous, current, context) {
+  return !context.production.has(current.source) && previous.kind === current.kind && previous.source === current.source
+    && previous.dependencies.length === 0 && current.dependencies.length === 0;
+}
+
+async function validateGraphModules(modules, context) {
+  const graph = new Map();
+  const physical = new Set();
+  for (const module of modules) {
+    const kind = graphPathKind(module, module.source);
+    const source = kind === "file" ? await localPath(context.target, module.source) : module.source;
+    const previous = graph.get(module.source);
+    if (previous) {
+      if (!repeatedGraphLeaf(previous, { kind, source, dependencies: module.dependencies }, context)) {
+        throw new Error("ambiguous graph module");
+      }
+      continue;
+    }
+    if (kind === "file") {
+      if (physical.has(source)) throw new Error("ambiguous physical graph module");
+      physical.add(source);
+    } else if (module.dependencies.length !== 0) throw new Error("invalid virtual graph module");
+    graph.set(module.source, { kind, source, dependencies: module.dependencies });
+  }
+  for (const source of context.production) {
+    const module = graph.get(source);
+    if (module?.kind !== "file" || module.source !== source) throw new Error("incomplete production graph");
+  }
+  return graph;
+}
+
+async function validateGraphEdges(graph, context) {
+  for (const module of graph.values()) {
+    for (const edge of module.dependencies) {
+      if (!validGraphEdge(edge)) throw new Error("invalid graph edge");
+      const kind = graphPathKind(edge, edge.resolved);
+      const targetModule = graph.get(edge.resolved);
+      if (targetModule?.kind !== kind) throw new Error("incomplete dependency graph");
+      if (kind === "file" && await localPath(context.target, edge.resolved) !== targetModule.source) {
+        throw new Error("inconsistent dependency graph");
+      }
+    }
+  }
+}
+
+function npmEdgePackage(edge) {
+  return edge.dependencyTypes.some((type) => /^npm(?:-|$)/u.test(type)) ? packageName(edge.module) : undefined;
+}
+
+function isDevelopmentOnly(name, manifest) {
+  return Object.hasOwn(manifest.devDependencies, name) && !Object.hasOwn(manifest.dependencies, name);
+}
+
+function collectDevelopmentPackages(graph, context, details) {
+  for (const source of context.production) {
+    for (const edge of graph.get(source).dependencies) {
+      const name = npmEdgePackage(edge);
+      if (name && isDevelopmentOnly(name, context.targetManifest)) {
+        const detail = { kind: "package", source, package: name };
+        details.set(detailKey(detail), detail);
+      }
+    }
+  }
 }
 
 function packageName(specifier) {
@@ -365,12 +454,16 @@ function unresolvedDetail(violation, context) {
 }
 
 function developmentPackageDetail(violation, context) {
-  const importedPackage = packageName(violation.unresolvedTo ?? violation.to);
-  if ([
-    Object.hasOwn(context.targetManifest.devDependencies, importedPackage),
-    !Object.hasOwn(context.targetManifest.dependencies, importedPackage),
-  ].includes(false)) throw new Error("invalid development dependency classification");
-  return { kind: "package", source: context.source, package: importedPackage };
+  const edges = context.graph.get(context.source).dependencies.filter((edge) => edge.resolved === violation.to
+    && (violation.unresolvedTo === undefined || edge.module === violation.unresolvedTo));
+  const names = new Set(edges.map(npmEdgePackage));
+  if (names.size !== 1 || names.has(undefined) || !edges.every((edge) => edge.dependencyTypes.includes("npm-dev"))) {
+    throw new Error("ambiguous development dependency violation");
+  }
+  const name = [...names][0];
+  return isDevelopmentOnly(name, context.targetManifest)
+    ? { kind: "package", source: context.source, package: name }
+    : undefined;
 }
 
 async function normalizeViolation(violation, context) {
@@ -405,12 +498,14 @@ async function normalizeViolations(result, input, target, targetManifest) {
   if (!graphWithinLimits(moduleCount, edgeCount)) fail("resource");
   const production = new Set(input.production_files.map((file) => file.path));
   const tests = new Set(input.test_files.map((file) => file.path));
+  const context = { target, targetManifest, production, tests };
+  context.graph = await validateGraphModules(result.modules, context);
+  await validateGraphEdges(context.graph, context);
   const details = new Map(ARCHITECTURE_RULES.map((rule) => [rule.check_id, new Map()]));
+  collectDevelopmentPackages(context.graph, context, details.get("production_must_not_import_dev_dependencies"));
   for (const violation of result.summary.violations) {
-    const { rule, detail } = await normalizeViolation(violation, {
-      target, targetManifest, production, tests,
-    });
-    details.get(rule.check_id).set(detailKey(detail), detail);
+    const { rule, detail } = await normalizeViolation(violation, context);
+    if (detail) details.get(rule.check_id).set(detailKey(detail), detail);
   }
   return {
     graph: { module_count: moduleCount, edge_count: edgeCount },

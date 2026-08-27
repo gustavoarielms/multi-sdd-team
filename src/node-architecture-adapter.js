@@ -88,8 +88,12 @@ async function inventories(target, limits) {
   if (new Set(all).size !== all.length || all.some((file) => !safeJavaScriptPath(file))) failPreflight("input");
   let aggregate = 0;
   const captured = new Map();
+  const productionPaths = new Set(production.files);
   for (const relative of all) {
     const value = await captureIdentity(target, relative, NODE_ARCHITECTURE_LIMITS.fileBytes);
+    if (productionPaths.has(relative) && path.relative(target, value.realpath).split(path.sep).join("/") !== relative) {
+      failPreflight("input");
+    }
     aggregate += value.size;
     if (aggregate > NODE_ARCHITECTURE_LIMITS.aggregateBytes) failPreflight("resource");
     captured.set(relative, value);

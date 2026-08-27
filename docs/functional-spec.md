@@ -75,7 +75,9 @@ evidence. The `check_id` is the existing profile condition.
 | 4 | `production_imports_resolve` | `ARCH-IMPORT-RESOLUTION-001` | Every analyzed production import resolves under the pinned analyzer. |
 | 5 | `production_must_not_import_dev_dependencies` | `ARCH-PROD-NO-DEV-DEPS-001` | Production code does not import a package declared only in `devDependencies`. |
 
-For the last rule, a package declared in both `dependencies` and
+For the last rule, the validated root `package.json` is the classification
+authority for every production npm edge, even when an ancestor/nested manifest
+changes the analyzer's native dependency type. A package declared in both `dependencies` and
 `devDependencies` is not development-only. A target `package.json` is
 required and is itself part of the trusted analysis input: missing, malformed,
 unsafe, or non-contained manifests block the run rather than changing the
@@ -91,7 +93,16 @@ The production inventory is the package-owned tracked-file inventory matching
 `bin/**/*.js` and `src/**/*.js`. An empty inventory is an error. Each listed
 path must be a normalized relative path that resolves, after realpath, within
 the target root; traversal, absolute paths, backslash variants, missing files,
-and symlinks escaping the target are errors. The worker, JSON policy, runtime
+and symlinks escaping the target are errors. Production entries must also keep
+the same relative path after realpath: a contained alias that moves an input
+outside its inventoried rule domain is rejected by both adapter and worker.
+All resolved filesystem graph nodes and edges, including npm, JSON, and
+non-production local files, are checked for containment before accepting
+evidence; every production inventory entry must be represented consistently.
+Builtins and unresolved imports are not filesystem paths. Unresolved production
+imports retain their ordinary rule failure. These acceptance checks are not an
+OS sandbox and do not prevent analyzer reads before an escaping graph is rejected.
+The worker, JSON policy, runtime
 content manifest, and complete dependency-cruiser runtime graph are physically
 packaged under the installed package root. Before dynamic import, the worker
 validates the trusted manifest digest and SHA-256 of every declared runtime
@@ -146,6 +157,13 @@ regenerates in a temporary directory and byte-compares paths, ordering, bytes,
 manifest, licenses, and `NOTICE.md`; `npm pack --ignore-scripts` must contain
 the same assets. Missing/mismatched third-party license inventory or required
 license text is an error.
+
+The forbidden-reference gate exempts only the target-relative canonical
+`governance/adapters/v1/node-dependency-cruiser-runtime-manifest.json` when it
+is a regular, physically contained, non-aliased file whose bytes match the
+package-owned trusted digest. Missing, unreadable, unsafe, or altered metadata
+has no exemption. Identical metadata copied elsewhere and first-party references
+remain subject to the existing scan; this is not a directory-wide exception.
 
 The executor rejects an analysis before it begins when any approved resource
 limit is exceeded: target manifest over 1 MiB; more than 10,000 tracked input

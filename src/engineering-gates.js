@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -9,6 +9,7 @@ import { runGovernanceChecks } from "./governance-checks.js";
 import {
   CANONICAL_ENGINEERING_GATE_BINDINGS,
   ENGINEERING_QUALITY_PROFILE_TRUST,
+  NODE_ARCHITECTURE_ADAPTER_TRUST,
 } from "./governance-trust.js";
 import {
   validateEngineeringGateConfiguration,
@@ -571,6 +572,20 @@ async function npmPackageSurface(context) {
   return evaluatePackageSurface(files);
 }
 
+async function authenticRuntimeMetadata(target) {
+  try {
+    const root = await fs.realpath(target);
+    const file = path.join(root, NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_path);
+    const real = await fs.realpath(file);
+    if (!isContained(root, real) || real !== file || !(await fs.lstat(file)).isFile()) return false;
+    const bytes = await fs.readFile(file);
+    return `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+      === NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_digest;
+  } catch {
+    return false;
+  }
+}
+
 async function forbiddenReferences(context) {
   const runtime = ["p", "i"].join("");
   const child = ["P", "I_SUBAGENT_CHILD"].join("");
@@ -579,10 +594,13 @@ async function forbiddenReferences(context) {
   const extensionPath = ["(^|/)", "extensions", "/"].join("");
   const promptPath = ["(^|/)", "prompts", "/"].join("");
   const pattern = `(^|[^[:alnum:]_])${runtime}([^[:alnum:]_]|$)|${child}|${vendor}|${retiredExtensions}|${extensionPath}|(^|/)agents/.*\\.md|${promptPath}`;
+  const metadataExclusion = await authenticRuntimeMetadata(context.target)
+    ? [`:(exclude,literal)${NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_path}`] : [];
   const command = await runBoundedCommand("git", [
     "-C", context.target, "grep", "-nI", "-i", "-E", pattern, "--", ".",
     ":(exclude)package-lock.json",
     ":(exclude,glob)vendor/node-architecture-runtime/**",
+    ...metadataExclusion,
   ], {
     cwd: context.target,
     ...context.limits,

@@ -139,6 +139,15 @@ only these five approved identities into its protocol. Any unexpected,
 unclassified, duplicate, or ambiguous analyzer violation is an error rather
 than silently omitted evidence.
 
+For `ARCH-PROD-NO-DEV-DEPS-001`, collect every production npm edge and apply
+`Object.hasOwn(root.devDependencies, name) && !Object.hasOwn(root.dependencies, name)`.
+Do not depend on a native `npm-dev` violation: a nested manifest may classify
+the same package differently. Reconcile native fifth-rule violations only after
+validating their rule, production source, matching graph edges, native type,
+and unambiguous package attribution. Root overlap contributes no violation;
+malformed or ambiguous data remains an evidence error. Deduplicate by the
+existing source/package canonical key, preserving full totals and the detail cap.
+
 ## Input, containment, and fail-closed contract
 
 1. Resolve the supplied target with `realpath`; this is the target root.
@@ -150,6 +159,10 @@ than silently omitted evidence.
 3. For every inventory member, require a safe relative slash-separated path,
    require its realpath to remain inside the target root, and reject missing,
    absolute, traversal, backslash, duplicate, or symlink-escaping members.
+   In both adapter and worker, production members must additionally retain
+   exactly their inventoried target-relative path after realpath; contained
+   production aliases return `NODE_ARCHITECTURE_INPUT_INVALID`. This does not
+   impose a general symlink prohibition on unrelated inputs.
 4. Enforce these pre-analysis limits: manifest at most 1 MiB; at most 10,000
    production plus test files; at most 2 MiB per file; and at most 64 MiB in
    aggregate. Start the worker with `--max-old-space-size=256`; reject a graph
@@ -259,6 +272,18 @@ The allowed detail object is determined solely by its rule; its keys are exact:
 | `ARCH-IMPORT-RESOLUTION-001` | `{ "kind": "unresolved", "source": path, "specifier": text }` | `source` is in `files`; `specifier` is non-empty safe text of at most 1024 characters. Key: `source + "\\u0000" + specifier`. |
 | `ARCH-PROD-NO-DEV-DEPS-001` | `{ "kind": "package", "source": path, "package": text }` | `source` is in `files`; `package` is a valid non-empty package name. Key: `source + "\\u0000" + package`. |
 
+Validate the complete graph before normalizing violations, including when its
+violation list is empty. Every production inventory member must appear with
+the same source identity and rule domain. Every edge must have valid resolution
+flags/types and reference a consistent graph node. Repeated identical terminal
+nodes from different npm/subpath imports may coalesce, but duplicate production
+nodes, conflicting nodes, or incomplete graph membership are errors. Builtins
+must identify real Node builtins; unresolved nodes remain non-filesystem nodes
+and retain the unresolved rule semantics. Generic contained filesystem nodes
+need not be production JavaScript (npm targets, JSON, and other local files are
+valid); they must be regular contained files. This is acceptance-time validation,
+not an OS sandbox or a guarantee against analyzer reads before rejection.
+
 All local analyzer-resolved paths, including every production source, cycle
 member, and edge target, must be realpath-validated as contained by the target
 before conversion to their relative protocol path. Production sources and cycle
@@ -327,6 +352,13 @@ The implementation must update all exact-cardinality consumers together:
 
 No CLI option, target override, public plugin hook, policy baseline, or
 evidence-schema field is added.
+
+`forbidden_references` conditionally adds one literal exclusion for the exact
+target-relative `NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_path`, only
+after verifying a regular contained non-aliased file and SHA-256 against
+`NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_digest`. Failure to read or
+authenticate it leaves the scan unchanged. No target-supplied digest, copied-path
+metadata, broader directory exclusion, or first-party suppression is accepted.
 
 ## Verification plan
 

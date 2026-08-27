@@ -31,6 +31,7 @@ import {
   validateEngineeringGateRun,
 } from "../src/governance-validator.js";
 import { runNodeLintComplexity } from "../src/node-lint-complexity-adapter.js";
+import { NODE_ARCHITECTURE_ADAPTER_TRUST } from "../src/governance-trust.js";
 import { ARCHITECTURE_RULES, runNodeArchitecture } from "../src/node-architecture-adapter.js";
 import {
   COVERAGE_LIMITS,
@@ -337,10 +338,10 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 18);
-  assert.equal(inventory.length, 97);
-  assert.equal(new Set(inventory).size, 97);
+  assert.equal(inventory.length, 101);
+  assert.equal(new Set(inventory).size, 101);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 18);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 79);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 83);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 6);
@@ -2315,6 +2316,44 @@ test("comparison-base resolves a full commit to its effective merge base", async
   });
   assert.equal(hostile.status, "error");
   assert.equal(hostile.reason_code, "GIT_OUTPUT_MALFORMED");
+});
+
+test("only authentic canonical runtime metadata is exempt from forbidden references", async (t) => {
+  const target = await configuredTarget(t);
+  const relative = NODE_ARCHITECTURE_ADAPTER_TRUST.runtime_manifest_path;
+  const canonical = path.join(target, relative);
+  const bytes = await fs.readFile(path.join(repositoryRoot, relative));
+  await fs.mkdir(path.dirname(canonical), { recursive: true });
+  await fs.writeFile(canonical, bytes);
+  assert.equal(spawnSync("git", ["-C", target, "add", "."], { encoding: "utf8" }).status, 0);
+  const execute = async () => {
+    const child = spawn(process.execPath, [
+      path.join(repositoryRoot, "src/engineering-gates.js"), "--engineering-executor-worker", "forbidden_references",
+    ], {
+      detached: process.platform !== "win32", env: { ...process.env, SDD_ENGINEERING_EXECUTOR_BOUNDARY: "1" },
+      shell: false, stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    return runExecutorBoundaryWithTimeout(createExecutorBoundary(child, {
+      target, limits: { timeoutMs: 10000, maxOutputBytes: 262144 },
+    }), 10000);
+  };
+  assert.equal((await execute()).status, "pass");
+  await fs.appendFile(canonical, "\n");
+  assert.equal((await execute()).status, "fail");
+  await fs.writeFile(canonical, bytes);
+  const copied = path.join(target, "copied-metadata.json");
+  await fs.writeFile(copied, bytes);
+  assert.equal(spawnSync("git", ["-C", target, "add", "."], { encoding: "utf8" }).status, 0);
+  assert.equal((await execute()).status, "fail");
+  await fs.writeFile(copied, ["prom", "pts/retired.md\n"].join(""));
+  assert.equal((await execute()).status, "fail");
+  await fs.rm(copied);
+  const outside = await temporaryDirectory(t);
+  const directory = path.dirname(canonical);
+  await fs.rename(directory, path.join(outside, "v1"));
+  await fs.symlink(path.join(outside, "v1"), directory);
+  // The tracked regular file remains readable through the escaping parent.
+  assert.equal((await execute()).status, "fail");
 });
 
 test("unsafe tracked source paths and unknown governance layouts block execution", async (t) => {

@@ -141,6 +141,73 @@ test("the real analyzer passes a contained acyclic production graph", async (t) 
   assert.deepEqual(result.checks.map((check) => check.rule_id), ARCHITECTURE_RULES.map((rule) => rule.rule_id));
 });
 
+test("the real analyzer rejects every resolved filesystem escape", async (t) => {
+  const outside = await repository(t, { "outside.js": "export default 1;\n" });
+  const target = await repository(t, {
+    "package.json": '{"type":"module"}\n',
+    "src/index.js": "export default 1;\n",
+  });
+  const external = path.join(outside, "outside.js");
+  await fs.symlink(external, path.join(target, "src/linked.js"));
+  const imports = [path.relative(path.join(target, "src"), external), "./linked.js"];
+  const outcomes = [];
+  for (const specifier of imports) {
+    await fs.writeFile(path.join(target, "src/index.js"), `import ${JSON.stringify(specifier)};\n`);
+    outcomes.push(await runNodeArchitecture({ target, limits }));
+  }
+  for (const outcome of outcomes) assertSafeArchitectureError(outcome, "NODE_ARCHITECTURE_EVIDENCE_INVALID");
+});
+
+test("production aliases are rejected by both adapter and worker", async (t) => {
+  const target = await repository(t, {
+    "package.json": '{"type":"module"}\n',
+    "src/index.js": "export default 1;\n",
+    "entry.js": "import './test/helper.js';\n",
+    "test/helper.js": "export default 1;\n",
+  });
+  let input;
+  await runNodeArchitecture({ target, limits }, {
+    runCommand: async (_executable, _args, options) => {
+      input = JSON.parse(options.input);
+      return { status: "error", reason_code: "COMMAND_FAILED" };
+    },
+  });
+  await fs.rm(path.join(target, "src/index.js"));
+  await fs.symlink("../entry.js", path.join(target, "src/index.js"));
+  const real = await fs.realpath(path.join(target, "src/index.js"));
+  const stat = await fs.stat(real, { bigint: true });
+  input.production_files[0].identity = {
+    realpath: real, dev: String(stat.dev), ino: String(stat.ino), size: Number(stat.size), mtime_ns: String(stat.mtimeNs),
+  };
+  const worker = spawnSync(process.execPath, [path.join(packageRoot, "src/node-architecture-worker.js")], {
+    cwd: target, input: JSON.stringify(input), encoding: "utf8", env: {},
+  });
+  const adapter = await runNodeArchitecture({ target, limits });
+  assert.deepEqual({ exit: worker.status, report: JSON.parse(worker.stdout) }, {
+    exit: 2, report: { protocol_version: "1.0.0", error_category: "input" },
+  });
+  assertSafeArchitectureError(adapter, "NODE_ARCHITECTURE_INPUT_INVALID");
+});
+
+test("root dependency declarations govern every production package edge", async (t) => {
+  const target = await repository(t, {
+    "package.json": '{"type":"module","devDependencies":{"left-pad":"1.3.0"}}\n',
+    "src/package.json": '{"type":"module","dependencies":{"left-pad":"1.3.0"}}\n',
+    "src/index.js": "import 'left-pad'; import 'left-pad/index.js'; import 'node:fs'; import './data.json' with { type: 'json' }; import '../helper.js';\n",
+    "src/data.json": '{}\n',
+    "helper.js": "export default 1;\n",
+    "node_modules/left-pad/package.json": '{"name":"left-pad","version":"1.3.0","main":"index.js"}\n',
+    "node_modules/left-pad/index.js": "module.exports = value => value;\n",
+  });
+  const nested = await runNodeArchitecture({ target, limits });
+  await fs.rm(path.join(target, "src/package.json"));
+  await fs.writeFile(path.join(target, "package.json"), '{"type":"module","dependencies":{"left-pad":"1.3.0"},"devDependencies":{"left-pad":"1.3.0"}}\n');
+  const overlap = await runNodeArchitecture({ target, limits });
+  assert.deepEqual([nested.status, overlap.status], ["fail", "pass"]);
+  assert.deepEqual(nested.checks.map((check) => check.status), ["pass", "pass", "pass", "pass", "fail"]);
+  assert.equal(nested.evidence.filter((item) => item.summary === "Development-only dependency imported by src/index.js: left-pad.").length, 1);
+});
+
 test("the real analyzer reports each approved architecture violation", async (t) => {
   const target = await repository(t, {
     "package.json": "{\"type\":\"module\",\"devDependencies\":{\"left-pad\":\"1.3.0\"}}\n",
@@ -571,5 +638,37 @@ test("package runtime assets fail closed before analyzer import", async (t) => {
     const resource = await copied.runNodeArchitecture({ target, limits });
     assertSafeArchitectureError(resource, "NODE_ARCHITECTURE_RESOURCE_LIMIT");
     assert.doesNotMatch(JSON.stringify(resource), /20001|100001|dependencies/u);
+  }
+
+  const module = { source: "src/index.js", dependencies: [] };
+  const edge = { module: "./missing.js", resolved: "missing.js", coreModule: false, couldNotResolve: false, dependencyTypes: ["local", "import"] };
+  const malformedGraphs = [
+    [{ ...module, coreModule: "false" }],
+    [],
+    [module, module],
+    [{ ...module, source: "src\\index.js" }],
+    [{ ...module, source: "not-present.js" }],
+    [{ ...module, dependencies: [null] }],
+    [{ ...module, dependencies: [edge] }],
+    [{ ...module, dependencies: [{ ...edge, coreModule: true }] }],
+    [{ ...module, dependencies: [{ ...edge, dependencyTypes: "npm-dev" }] }],
+    [{ ...module, dependencies: [{ ...edge, couldNotResolve: "false" }] }],
+  ];
+  for (const modules of malformedGraphs) {
+    await installAnalyzerFixture(copyRoot, `export async function cruise() {
+      return { exitCode: 0, output: ${JSON.stringify(JSON.stringify({ modules, summary: { violations: [] } }))} };
+    }\n`);
+    assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_EVIDENCE_INVALID");
+  }
+  for (const violation of [
+    { from: "src/index.js", to: "missing.js", rule: { name: "unknown", severity: "error" } },
+    { from: "missing.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "error" } },
+    { from: "src/index.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "error" } },
+    { from: "src/index.js", to: "missing.js", rule: { name: "production_must_not_import_dev_dependencies", severity: "warning" } },
+  ]) {
+    await installAnalyzerFixture(copyRoot, `export async function cruise() {
+      return { exitCode: 0, output: ${JSON.stringify(JSON.stringify({ modules: [module], summary: { violations: [violation] } }))} };
+    }\n`);
+    assertSafeArchitectureError(await copied.runNodeArchitecture({ target, limits }), "NODE_ARCHITECTURE_EVIDENCE_INVALID");
   }
 });
