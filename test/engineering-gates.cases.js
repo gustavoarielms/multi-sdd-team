@@ -2594,6 +2594,17 @@ function proofReference(result, name, uri, sha256) {
   return evidenceId;
 }
 
+async function assertProofRejectsCoherentTime(root, files, manifestPath, mutate) {
+  const modified = structuredClone(files);
+  mutate(modified);
+  modified["implementation.json"].evidence.find((entry) => entry.evidence_id === "evidence:proof-review").artifact.sha256 = proofJsonHash(modified["review.json"]);
+  modified["revalidation.json"].evidence.find((entry) => entry.evidence_id === "evidence:proof-final").artifact.sha256 = proofJsonHash(modified["final.json"]);
+  await fs.rm(manifestPath, { force: true });
+  for (const [name, value] of Object.entries(modified)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+  await assert.rejects(assembleProof(root), /PROOF_TIME/);
+  for (const [name, value] of Object.entries(files)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+}
+
 const proofCoverageIds = new Set(["coverage_global", "coverage_changed", "coverage_unit", "coverage_integration"]);
 
 function rewriteProofCoverageSummaries(run, rewrite) {
@@ -2636,7 +2647,8 @@ async function proofFixture(t) {
   const capture = (run, nodeVersion, layout, second, value) => ({
     schema_version: "1.0.0", node_version: nodeVersion, layout, snapshot_before: { ...value }, snapshot_after: { ...value },
     exit_code: run.outcome === "passed" ? 0 : 1,
-    run: { ...structuredClone(run), run_id: `run:proof-${second}`, started_at: at(second), completed_at: at(second + 1) },
+    run: { ...structuredClone(run), run_id: `run:proof-${second}`, started_at: at(second), completed_at: at(second + 1),
+      evidence: run.evidence.map((entry) => ({ ...entry, collected_at: at(second + 1) })) },
   });
   const first = capture(initial, "22.14.0", "source", 0, snapshot);
   const matrix = { schema_version: "1.0.0", captures: ["22.14.0", "24.19.0"].flatMap((version, nodeIndex) =>
@@ -2646,8 +2658,11 @@ async function proofFixture(t) {
   review.run_id = "run:proof-review";
   review.started_at = at(2);
   review.completed_at = at(3);
+  for (const evidence of review.evidence) evidence.collected_at = at(3);
+  review.findings[0].reported_at = at(3);
   review.findings[0].rule_id = "ARCH-PROD-NO-TEST-001";
   review.gate_decisions[0].run_id = review.run_id;
+  review.gate_decisions[0].decided_at = at(3);
   review.gate_decisions[0].evaluated_rule_ids = [review.findings[0].rule_id];
   const implementation = {
     schema_version: "1.0.0", run_id: "run:proof-implementation", parent_run_id: review.run_id,
@@ -2660,9 +2675,12 @@ async function proofFixture(t) {
   revalidation.parent_run_id = review.run_id;
   revalidation.started_at = at(30);
   revalidation.completed_at = at(31);
+  for (const evidence of revalidation.evidence) evidence.collected_at = at(31);
   revalidation.findings[0].status = "resolved";
+  revalidation.findings[0].reported_at = at(31);
   revalidation.gate_decisions[0].run_id = revalidation.run_id;
   revalidation.gate_decisions[0].status = "pass";
+  revalidation.gate_decisions[0].decided_at = at(31);
   revalidation.gate_decisions[0].blocking_finding_ids = [];
   revalidation.evidence[0].outcome = "pass";
   revalidation.handoff = { next_owner: "orchestrator", summary: "Original finding revalidated.", unresolved_finding_ids: [] };
@@ -2806,6 +2824,21 @@ test("quality proof requires the complete ordered remediation chain and eight eq
     await assert.rejects(assembleProof(root), /PROOF_/, name);
     await fs.writeFile(path.join(root, name), JSON.stringify(files[name]));
   }
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    const review = value["review.json"];
+    review.findings[0].reported_at = "2020-01-01T00:00:00.000Z";
+    review.gate_decisions[0].decided_at = "2020-01-01T00:00:00.000Z";
+  });
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    const review = value["review.json"];
+    const evidence = structuredClone(review.evidence[0]);
+    evidence.evidence_id = "evidence:outside-review-window";
+    evidence.collected_at = "2020-01-01T00:00:00.000Z";
+    review.evidence.push(evidence);
+  });
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    value["final.json"].captures[0].run.evidence[0].collected_at = "2020-01-01T00:00:00.000Z";
+  });
   const first = files["final.json"].captures[0].run;
   const equivalent = structuredClone(first);
   equivalent.run_id = "run:different";

@@ -303,12 +303,24 @@ function validateResolvedFinding(finding, resolved) {
   requireProof(resolved.validation_status === "verified" && resolved.rule_status === "approved", "PROOF_REVALIDATION");
 }
 
+function validateRunTimes(result) {
+  const started = time(result.started_at);
+  const completed = time(result.completed_at);
+  const timestamps = [
+    ...(result.evidence ?? []).map((entry) => entry.collected_at),
+    ...(result.findings ?? []).map((finding) => finding.reported_at),
+    ...(result.gate_decisions ?? []).map((gate) => gate.decided_at),
+  ];
+  requireProof(timestamps.every((timestamp) => time(timestamp) >= started && time(timestamp) <= completed), "PROOF_TIME");
+}
+
 function validateTimes(initial, review, implementation, matrix, revalidation) {
   const runs = [initial.run, review, implementation, ...matrix.captures.map((capture) => capture.run), revalidation];
   requireProof(new Set(runs.map((run) => run.run_id)).size === runs.length, "PROOF_DUPLICATE_RUN");
   let completed = 0;
   for (const run of runs) {
     requireProof(time(run.started_at) >= completed && time(run.completed_at) >= time(run.started_at), "PROOF_SEQUENCE");
+    validateRunTimes(run);
     completed = time(run.completed_at);
   }
 }

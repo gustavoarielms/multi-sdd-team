@@ -399,8 +399,10 @@ Cada evidencia utiliza `schema_version: "1.0.0"`, `kind: "document"`,
 `artifact.media_type: "application/json"`, junto con los campos normales
 summary/collected_at/collected_by/redaction del contrato. Estos resultados
 observados no sustituyen los findings ni las decisiones de gate del reviewer.
-El `collected_at` del enlace debe estar dentro del intervalo started_at/completed_at
-del handoff; en particular, la observación del implementer precede a la matriz.
+Todo `evidence[].collected_at`, `finding[].reported_at` y
+`gate_decisions[].decided_at` debe estar dentro del intervalo
+`started_at`/`completed_at` de su propio run/envelope; en particular, la observación
+del implementer precede a la matriz.
 Los IDs `evidence:proof-initial` y `evidence:proof-final` deben figurar en
 `finding.evidence_ids` y en **cada** gate required que evalúe
 `ARCH-PROD-NO-TEST-001`; ese gate también debe incluir el finding ID.
