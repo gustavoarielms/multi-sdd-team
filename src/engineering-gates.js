@@ -694,7 +694,7 @@ function assembleDocument(startedAt, results, evidence, runError, comparisonBase
     || results.some((result) => result.status === "error" || result.status === "not_run");
   const failed = !blocked && results.some((result) => result.status === "fail" && result.gate_effect === "block");
   return {
-    schema_version: "1.0.0",
+    schema_version: "1.1.0",
     run_id: `run:engineering-gates-${randomUUID()}`,
     producer: PRODUCER,
     started_at: startedAt,

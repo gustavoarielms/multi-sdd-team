@@ -596,8 +596,16 @@ function validateEngineeringExecutionOrder(result, runError, errorSeen, errors) 
   return errorSeen || result.status === "error";
 }
 
+const COVERAGE_OBSERVATIONS = Object.freeze(["coverage_unit", "coverage_integration"]);
+
+function coverageObservationIds(result, value) {
+  return value.schema_version === "1.1.0" && result.executor_id === "coverage"
+    && ["pass", "fail"].includes(result.status) ? COVERAGE_OBSERVATIONS : [];
+}
+
 function validateEngineeringEvidenceOwnership(result, value, referencedCounts, errors) {
-  const allowedCheckIds = new Set([result.executor_id, ...(result.checks ?? []).map((check) => check.check_id)]);
+  const observations = coverageObservationIds(result, value);
+  const allowedCheckIds = new Set([result.executor_id, ...(result.checks ?? []).map((check) => check.check_id), ...observations]);
   for (const evidenceId of result.evidence_ids) {
     referencedCounts.set(evidenceId, (referencedCounts.get(evidenceId) ?? 0) + 1);
     const evidence = value.evidence.find((candidate) => candidate.evidence_id === evidenceId);
@@ -606,6 +614,11 @@ function validateEngineeringEvidenceOwnership(result, value, referencedCounts, e
       continue;
     }
     if (!allowedCheckIds.has(evidence.check_id)) errors.push("engineering evidence belongs to another executor");
+    const observation = COVERAGE_OBSERVATIONS.find((checkId) => evidence.check_id === checkId
+      || evidence.evidence_id === `evidence:${checkId}`);
+    if (observation && !observations.includes(observation)) {
+      errors.push("coverage observations require a completed coverage executor in version 1.1.0");
+    }
     const governanceCheckEvidence = result.executor_id === "governance"
       && (result.checks ?? []).some((check) => check.check_id === evidence.check_id);
     const expectedProducerId = governanceCheckEvidence ? "sdd_governance_checker" : "sdd_engineering_gates";
@@ -670,6 +683,9 @@ function validateCoverageCheck(check, binding, result, value, errors) {
   if (!binding || check.check_id !== binding[0] || check.rule_id !== binding[1]) {
     errors.push("coverage subresult rule binding does not match canonical policy");
   }
+  if (value.schema_version === "1.1.0" && check.evidence_ids[0] !== `evidence:${check.check_id}`) {
+    errors.push("coverage subresult evidence identifier is not canonical");
+  }
   const notApplicable = validateCoverageEvidence(check, result, value, errors);
   if (check.check_id === "coverage_global" && check.gate_effect !== "block") {
     errors.push("global coverage must remain blocking");
@@ -677,6 +693,32 @@ function validateCoverageCheck(check, binding, result, value, errors) {
   if (check.check_id === "coverage_changed" && !notApplicable && check.gate_effect !== "block") {
     errors.push("changed coverage must remain blocking unless it is exactly not applicable");
   }
+}
+
+function validCoverageObservationCounts(summary) {
+  const metrics = ["lines", "branches", "functions", "statements"];
+  const entries = summary.split(", ");
+  if (entries.length !== metrics.length) return false;
+  return entries.every((entry, index) => {
+    const match = /^(lines|branches|functions|statements) (0|[1-9][0-9]*)\/(0|[1-9][0-9]*)$/.exec(entry);
+    if (!match || match[0] !== entry || match[1] !== metrics[index]) return false;
+    const covered = Number(match[2]);
+    const total = Number(match[3]);
+    return Number.isSafeInteger(covered) && Number.isSafeInteger(total) && covered <= total;
+  });
+}
+
+function validateCoverageObservations(result, value, errors) {
+  return coverageObservationIds(result, value).map((checkId) => {
+    const evidenceId = `evidence:${checkId}`;
+    const evidence = value.evidence.find((item) => item.evidence_id === evidenceId);
+    if (!evidence || evidence.check_id !== checkId || evidence.kind !== "test_result"
+      || evidence.level !== "deterministic" || evidence.outcome !== "observed"
+      || !validCoverageObservationCounts(evidence.summary)) {
+      errors.push("coverage suite observation must contain canonical observed counts");
+    }
+    return evidenceId;
+  });
 }
 
 function validateCoverageSubresults(result, value, errors) {
@@ -690,8 +732,9 @@ function validateCoverageSubresults(result, value, errors) {
       if (!expectedEvidenceIds.includes(evidenceId)) expectedEvidenceIds.push(evidenceId);
     }
   }
+  expectedEvidenceIds.push(...validateCoverageObservations(result, value, errors));
   if (JSON.stringify(result.evidence_ids) !== JSON.stringify(expectedEvidenceIds)) {
-    errors.push("coverage executor evidence must equal the ordered deduplicated subresult union");
+    errors.push("coverage executor evidence must equal the ordered subresult and versioned observation union");
   }
   const expectedStatus = checks.every((check) => check.status === "pass") ? "pass" : "fail";
   if (result.status !== expectedStatus) errors.push("coverage executor status does not match its subresults");
