@@ -386,7 +386,7 @@ function evidence(checkId, outcome, counts) {
   };
 }
 
-function coverageResult(globalCounts, changedCounts) {
+function coverageResult(globalCounts, changedCounts, suiteCounts) {
   const globalPass = passes(globalCounts, GLOBAL_THRESHOLDS);
   const changedApplicable = METRICS.some((metric) => changedCounts[metric].total > 0);
   const changedPass = !changedApplicable || passes(changedCounts, CHANGED_THRESHOLDS);
@@ -397,7 +397,8 @@ function coverageResult(globalCounts, changedCounts) {
     { check_id: "coverage_changed", rule_id: "TEST-COVERAGE-CHANGED-001", status: changedPass ? "pass" : "fail", gate_effect: changedApplicable ? "block" : "none", summary: changedEvidence.summary, evidence_ids: [changedEvidence.evidence_id] },
   ];
   const status = globalPass && changedPass ? "pass" : "fail";
-  return { status, reason_code: status === "pass" ? "COVERAGE_PASSED" : "COVERAGE_FAILED", summary: "Combined unit and integration coverage was evaluated with exact item counts.", evidence: [globalEvidence, changedEvidence], checks };
+  const observations = ["unit", "integration"].map((suite) => evidence(`coverage_${suite}`, "observed", suiteCounts[suite]));
+  return { status, reason_code: status === "pass" ? "COVERAGE_PASSED" : "COVERAGE_FAILED", summary: "Combined unit and integration coverage was evaluated with exact item counts.", evidence: [globalEvidence, changedEvidence, ...observations], checks };
 }
 
 async function prepareCoverage(context, runner, state) {
@@ -449,11 +450,16 @@ async function collectCoverageMaps(context, runner, state, prepared) {
     readOwnedCoverageMap(integration.mapPath, state.temporaryRoot, context.target, allowed, context.limits),
   ]);
   const combined = createCoverageMap(unitValue);
+  const suiteCounts = {
+    unit: summaryCounts(combined),
+    integration: summaryCounts(createCoverageMap(integrationValue)),
+  };
   combined.merge(integrationValue);
-  return { combined };
+  return { combined, suiteCounts };
 }
 
-function evaluateCoverage(context, production, combined, state) {
+function evaluateCoverage(context, production, maps, state) {
+  const { combined, suiteCounts } = maps;
   state.phase = "evaluation";
   const globalMap = createCoverageMap();
   for (const relative of production.tracked) {
@@ -469,7 +475,7 @@ function evaluateCoverage(context, production, combined, state) {
     if (!combined.data[absolute]) throw new Error("missing changed coverage source");
     addCounts(changedCounts, selectChangedCoverage(combined.fileCoverageFor(absolute), changed, locationBudget));
   }
-  return coverageResult(globalCounts, changedCounts);
+  return coverageResult(globalCounts, changedCounts, suiteCounts);
 }
 
 function coverageError(error, context, phase) {
@@ -494,7 +500,7 @@ export async function runNodeCoverage(context, runner = runBoundedCommand) {
     if (prepared.result) return prepared.result;
     const maps = await collectCoverageMaps(context, runner, state, prepared);
     if (maps.result) return maps.result;
-    return evaluateCoverage(context, prepared.production, maps.combined, state);
+    return evaluateCoverage(context, prepared.production, maps, state);
   } catch (error) {
     return coverageError(error, context, state.phase);
   } finally {

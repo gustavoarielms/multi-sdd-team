@@ -2,7 +2,7 @@
 
 ## Status
 
-- Contract version: `1.0.0`
+- Shared contract version: `1.0.0`; engineering gate runs emit `1.1.0`
 - Schema dialect: [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12)
 - Validator used by this repository: Ajv 8 in strict mode
 - Structured emission and handoff validation: implemented for architecture, quality, and security review gates
@@ -144,6 +144,17 @@ cover tracked JavaScript and shell syntax, package-owned Node.js lint and
 per-function complexity, explicit unit and integration suites, combined global
 and changed/new coverage, five Node.js architecture-boundary checks, the five individual governance checks, production
 dependency audit, npm package surface, and approved forbidden references.
+
+Engineering gate runs emit version `1.1.0`, including blocked runs. Completed
+coverage results contain, in order, `coverage_global`, `coverage_changed`,
+`coverage_unit`, and `coverage_integration` evidence. The latter two retain
+exact per-suite lines, branches, functions, and statements counts as `observed`
+evidence; they add no checks, thresholds, or gate effects. They are forbidden
+when coverage is `error` or `not_run`. Evidence subdocuments remain `1.0.0`.
+The validator continues accepting historical `1.0.0` runs with exactly the
+original two coverage evidence items. Old validators can reject `1.1.0`; there
+is no automatic downgrade. Document validity alone does not establish approval
+eligibility, and historical runs cannot close the issue #13 proof.
 
 Executor states are deliberately distinct:
 

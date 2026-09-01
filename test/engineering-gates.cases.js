@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -44,6 +45,8 @@ import {
 import { collectProductionChanges, parseChangedLineIntervals } from "../src/git-change-selector.js";
 import nodeTestReporter from "../src/node-test-reporter.js";
 import { runNodeTestSuite } from "../src/node-test-suite-adapter.js";
+import { assembleProof, captureSnapshot, gateSemantics, PROOF_LIMITS, readProofJson, verifyProof } from "../src/quality-proof.js";
+import { captureGates, finalCaptures, materializeLaunchers, prepareFixture } from "../scripts/quality-proof.js";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const cliPath = path.join(repositoryRoot, "bin", "sdd-codegraph.js");
@@ -209,6 +212,15 @@ function executorSet(statuses = {}) {
           summary: `${checkId} exact counts were evaluated.`,
           evidence_ids: [`evidence:${checkId}`],
         }));
+        for (const checkId of ["coverage_unit", "coverage_integration"]) {
+          evidence.push({
+            ...evidence[0],
+            evidence_id: `evidence:${checkId}`,
+            check_id: checkId,
+            outcome: "observed",
+            summary: "lines 1/2, branches 0/0, functions 1/2, statements 1/2",
+          });
+        }
         return { status, reason_code: `COVERAGE_${status.toUpperCase()}`, summary: "Coverage was evaluated.", evidence, checks };
       }
       if (executorId === "node_architecture" && status !== "error") {
@@ -338,10 +350,10 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 18);
-  assert.equal(inventory.length, 101);
-  assert.equal(new Set(inventory).size, 101);
+  assert.equal(inventory.length, 109);
+  assert.equal(new Set(inventory).size, 109);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 18);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 83);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 91);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 6);
@@ -453,6 +465,7 @@ test("engineering gate configuration is strict and requires the exact executor a
 test("passing and functional-failure runs preserve canonical status and exit semantics", async (t) => {
   const target = await configuredTarget(t);
   const passing = await runConfiguredGates(target, { executors: executorSet() });
+  assert.equal(passing.document.schema_version, "1.1.0");
   assert.equal(passing.exitCode, 0);
   assert.equal(passing.document.outcome, "passed");
   assert.deepEqual(passing.document.quality_profile, {
@@ -554,7 +567,15 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
       await fs.writeFile(outsideMap, JSON.stringify(syntheticCoverage(productionFile, uncoveredLast, baselineFile)));
       await fs.symlink(outsideMap, mapPath);
     } else {
-      const mapValue = syntheticCoverage(productionFile, uncoveredLast, baselineFile);
+      const mapValue = syntheticCoverage(productionFile, mapMode === "complementary" ? options.env.SDD_TEST_SUITE === "unit" : uncoveredLast, baselineFile);
+      if (mapMode === "complementary" && options.env.SDD_TEST_SUITE === "integration") {
+        const baseline = mapValue[baselineFile];
+        for (const identifier of Object.keys(baseline.s)) {
+          baseline.s[identifier] = 0;
+          baseline.f[identifier] = 0;
+          baseline.b[identifier] = [0];
+        }
+      }
       const firstStatement = mapValue[productionFile].statementMap["0"];
       if (mapMode === "out-of-file") firstStatement.end.line = 11;
       if (mapMode === "missing-location") delete firstStatement.start.line;
@@ -578,6 +599,19 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   ]);
   const coveragePassing = await runNodeCoverage(coverageContext, coverageRunner(false));
   assert.equal(coveragePassing.status, "pass");
+  assert.deepEqual(changedFailure.evidence.map((item) => [item.check_id, item.outcome]), [
+    ["coverage_global", "pass"], ["coverage_changed", "fail"],
+    ["coverage_unit", "observed"], ["coverage_integration", "observed"],
+  ]);
+  const complementary = await runNodeCoverage(coverageContext, coverageRunner(false, "complementary"));
+  assert.equal(complementary.status, "pass");
+  assert.deepEqual(complementary.evidence.map((item) => item.summary), [
+    "lines 110/110, branches 110/110, functions 110/110, statements 110/110",
+    "lines 10/10, branches 10/10, functions 10/10, statements 10/10",
+    "lines 100/110, branches 100/110, functions 100/110, statements 100/110",
+    "lines 10/110, branches 10/110, functions 10/110, statements 10/110",
+  ]);
+  assert.deepEqual(complementary.checks.map((check) => check.check_id), ["coverage_global", "coverage_changed"]);
   const outsideSuite = await temporaryDirectory(t);
   await fs.writeFile(path.join(outsideSuite, "external.test.js"), "throw new Error('external suite executed');\n");
   const integrationRoot = path.join(coverageTarget, "test", "integration");
@@ -749,6 +783,63 @@ test("executors receive immutable package-owned quality profile identity", async
 test("result validation enforces complete governance details and evidence ownership", async (t) => {
   const target = await configuredTarget(t);
   const result = await runConfiguredGates(target, { executors: executorSet() });
+  assert.equal(result.document.schema_version, "1.1.0");
+  assert.equal(result.exitCode, 0);
+  const historical = structuredClone(result.document);
+  historical.schema_version = "1.0.0";
+  historical.results[4].evidence_ids = historical.results[4].evidence_ids.slice(0, 2);
+  historical.evidence = historical.evidence.filter((item) => !["coverage_unit", "coverage_integration"].includes(item.check_id));
+  assert.equal((await validateEngineeringGateRun(historical)).ok, true);
+  const historicalWithObservations = { ...result.document, schema_version: "1.0.0" };
+  assert.equal((await validateEngineeringGateRun(historicalWithObservations)).ok, false);
+  assert.equal((await validateEngineeringGateRun({ ...historical, schema_version: "1.1.0" })).ok, false);
+  assert.equal((await validateEngineeringGateRun({ ...historical, schema_version: "1.2.0" })).ok, false);
+
+  const invalidObservations = [
+    (document, item) => { item.outcome = "pass"; },
+    (document, item) => { item.kind = "command_result"; },
+    (document, item) => { item.level = "observed"; },
+    (document, item) => { item.check_id = "coverage_integration"; },
+    (document, item) => { item.evidence_id = "evidence:coverage_unit_alias"; document.results[4].evidence_ids[2] = item.evidence_id; },
+    (document, item) => { item.collected_by.runtime = "manual"; },
+    (document) => { document.results[4].evidence_ids.pop(); document.evidence = document.evidence.filter((item) => item.check_id !== "coverage_integration"); },
+    (document, item) => { document.results[4].evidence_ids.push(item.evidence_id); },
+    (document, item) => { document.results[4].checks[0].evidence_ids = [item.evidence_id]; },
+    (document, item) => { document.results[0].evidence_ids.push(item.evidence_id); },
+    (document, item) => { document.evidence.push({ ...item, evidence_id: "evidence:coverage_extra" }); document.results[4].evidence_ids.push("evidence:coverage_extra"); },
+  ];
+  for (const mutate of invalidObservations) {
+    const invalid = structuredClone(result.document);
+    mutate(invalid, invalid.evidence.find((item) => item.check_id === "coverage_unit"));
+    assert.equal((await validateEngineeringGateRun(invalid)).ok, false, mutate.toString());
+  }
+  for (const counts of ["-1/2", "3/2", "1.5/2", "1/9007199254740992", "9007199254740992/9007199254740992", "01/2", "NaN/2"]) {
+    const invalid = structuredClone(result.document);
+    invalid.evidence.find((item) => item.check_id === "coverage_unit").summary = `lines ${counts}, branches 0/0, functions 1/2, statements 1/2`;
+    assert.equal((await validateEngineeringGateRun(invalid)).ok, false, counts);
+  }
+  const invalidSummary = structuredClone(result.document);
+  invalidSummary.evidence.find((item) => item.check_id === "coverage_unit").summary = "lines 1/2, branches 0/0, functions 1/2";
+  assert.equal((await validateEngineeringGateRun(invalidSummary)).ok, false);
+  invalidSummary.evidence.find((item) => item.check_id === "coverage_unit").summary = "branches 0/0, lines 1/2, functions 1/2, statements 1/2";
+  assert.equal((await validateEngineeringGateRun(invalidSummary)).ok, false);
+
+  for (const statuses of [{ coverage: "error" }, { unit_tests: "error" }]) {
+    const incomplete = await runConfiguredGates(target, { executors: executorSet(statuses) });
+    assert.equal((await validateEngineeringGateRun(incomplete.document)).ok, true);
+    const observation = structuredClone(result.document.evidence.find((item) => item.check_id === "coverage_unit"));
+    incomplete.document.evidence.push(observation);
+    incomplete.document.results[4].evidence_ids.push(observation.evidence_id);
+    assert.equal((await validateEngineeringGateRun(incomplete.document)).ok, false);
+    const disguised = structuredClone(incomplete.document);
+    const disguisedObservation = disguised.evidence.find((item) => item.evidence_id === observation.evidence_id);
+    disguisedObservation.check_id = "coverage";
+    disguisedObservation.outcome = "inconclusive";
+    assert.equal((await validateEngineeringGateRun(disguised)).ok, false);
+    incomplete.document.results[4].checks = structuredClone(result.document.results[4].checks);
+    incomplete.document.results[4].checks[0].check_id = "coverage_unit";
+    assert.equal((await validateEngineeringGateRun(incomplete.document)).ok, false);
+  }
 
   const missingComparisonBase = structuredClone(result.document);
   delete missingComparisonBase.comparison_base;
@@ -935,6 +1026,14 @@ test("an executor error exits two and leaves following executors not_run", async
     ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "error", "not_run", "not_run"],
   );
   assert.equal((await validateEngineeringGateRun(result.document)).ok, true);
+  const mixed = await runConfiguredGates(target, {
+    executors: executorSet({ integration_tests: "fail", coverage: "error" }),
+  });
+  assert.equal(mixed.document.schema_version, "1.1.0");
+  assert.equal(mixed.exitCode, 2);
+  assert.equal(mixed.document.outcome, "blocked");
+  assert.deepEqual(mixed.document.results.slice(3).map((item) => item.status), ["fail", "error", "not_run", "not_run", "not_run", "not_run", "not_run"]);
+  assert.equal((await validateEngineeringGateRun(mixed.document)).ok, true);
 });
 
 test("lint warnings are observed evidence but primary executor evidence remains mandatory", async (t) => {
@@ -2466,6 +2565,7 @@ test("source, project-local, and global package CLIs enforce the same target con
     assert.equal(execution.status, 2);
     assert.equal(execution.stderr, "");
     const document = JSON.parse(execution.stdout);
+    assert.equal(document.schema_version, "1.1.0");
     assert.equal(document.run_error.reason_code, "CONFIGURATION_MISSING");
     assert.equal((await validateEngineeringGateRun(document)).ok, true);
   }
@@ -2479,5 +2579,539 @@ test("source, project-local, and global package CLIs enforce the same target con
       "})().catch((error) => { console.error(error); process.exit(1); });",
     ].join("\n")], { cwd: root, encoding: "utf8", env });
     assert.equal(execution.status, 0, execution.stderr);
+  }
+});
+
+function proofJsonHash(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function proofReference(result, name, uri, sha256) {
+  const evidenceId = `evidence:proof-${name}`;
+  result.evidence.push({ schema_version: "1.0.0", evidence_id: evidenceId, kind: "document", level: "observed", outcome: "observed",
+    summary: "Bounded proof reference observed for this handoff.", artifact: { uri, sha256, media_type: "application/json" },
+    collected_at: result.completed_at, collected_by: result.producer, redaction: { applied: false, categories: [] } });
+  return evidenceId;
+}
+
+async function assertProofRejectsCoherentTime(root, files, manifestPath, mutate) {
+  const modified = structuredClone(files);
+  mutate(modified);
+  modified["implementation.json"].evidence.find((entry) => entry.evidence_id === "evidence:proof-review").artifact.sha256 = proofJsonHash(modified["review.json"]);
+  modified["revalidation.json"].evidence.find((entry) => entry.evidence_id === "evidence:proof-final").artifact.sha256 = proofJsonHash(modified["final.json"]);
+  await fs.rm(manifestPath, { force: true });
+  for (const [name, value] of Object.entries(modified)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+  await assert.rejects(assembleProof(root), /PROOF_TIME/);
+  for (const [name, value] of Object.entries(files)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+}
+
+const proofCoverageIds = new Set(["coverage_global", "coverage_changed", "coverage_unit", "coverage_integration"]);
+
+function rewriteProofCoverageSummaries(run, rewrite) {
+  for (const evidence of run.evidence) {
+    if (proofCoverageIds.has(evidence.evidence_id.replace(/^evidence:/, ""))) evidence.summary = rewrite(evidence.summary);
+  }
+  for (const result of run.results) for (const check of result.checks ?? []) {
+    if (proofCoverageIds.has(check.check_id)) check.summary = rewrite(check.summary);
+  }
+}
+
+function assertProofEquivalenceProjection(first) {
+  const coverageVariant = structuredClone(first);
+  rewriteProofCoverageSummaries(coverageVariant, () => "different instrumental coverage counts");
+  assert.deepEqual(gateSemantics(first), gateSemantics(coverageVariant));
+  for (const mutate of [
+    (value) => { value.results.find((result) => result.executor_id === "coverage").status = "fail"; },
+    (value) => { value.evidence.find((entry) => entry.evidence_id === "evidence:coverage_global").evidence_id = "evidence:other"; },
+    (value) => { value.evidence.find((entry) => !proofCoverageIds.has(entry.evidence_id.replace(/^evidence:/, ""))).summary = "different non-coverage summary"; },
+  ]) {
+    const different = structuredClone(first);
+    mutate(different);
+    assert.notDeepEqual(gateSemantics(first), gateSemantics(different));
+  }
+}
+
+async function proofFixture(t) {
+  const target = await configuredTarget(t);
+  const root = await temporaryDirectory(t);
+  const initial = (await runConfiguredGates(target, { executors: executorSet({ node_architecture: "fail" }) })).document;
+  const architecture = initial.results[5];
+  architecture.checks[0].status = "pass";
+  architecture.checks[1].status = "fail";
+  initial.evidence.find((item) => item.check_id === architecture.checks[0].check_id).outcome = "pass";
+  initial.evidence.find((item) => item.check_id === architecture.checks[1].check_id).outcome = "fail";
+  const passing = (await runConfiguredGates(target, { executors: executorSet() })).document;
+  const snapshot = await captureSnapshot(target, comparisonBases.get(target));
+  const finalSnapshot = { ...snapshot, digest: `sha256:${"b".repeat(64)}` };
+  const at = (second) => new Date(Date.UTC(2026, 7, 28, 10, 0, second)).toISOString();
+  const capture = (run, nodeVersion, layout, second, value) => ({
+    schema_version: "1.0.0", node_version: nodeVersion, layout, snapshot_before: { ...value }, snapshot_after: { ...value },
+    exit_code: run.outcome === "passed" ? 0 : 1,
+    run: { ...structuredClone(run), run_id: `run:proof-${second}`, started_at: at(second), completed_at: at(second + 1),
+      evidence: run.evidence.map((entry) => ({ ...entry, collected_at: at(second + 1) })) },
+  });
+  const first = capture(initial, "22.14.0", "source", 0, snapshot);
+  const matrix = { schema_version: "1.0.0", captures: ["22.14.0", "24.19.0"].flatMap((version, nodeIndex) =>
+    ["source", "local", "global", "packed"].map((layout, layoutIndex) => capture(passing, version, layout, 10 + nodeIndex * 8 + layoutIndex * 2, finalSnapshot))) };
+  rewriteProofCoverageSummaries(matrix.captures[1].run, (summary) => summary.replace(/(\d+)\/(\d+)/g, (_, covered, total) => `${Number(covered) + 1}/${Number(total) + 1}`));
+  const review = JSON.parse(await fs.readFile(path.join(repositoryRoot, "governance/examples/v1/architecture-review-result.json"), "utf8"));
+  review.run_id = "run:proof-review";
+  review.started_at = at(2);
+  review.completed_at = at(3);
+  for (const evidence of review.evidence) evidence.collected_at = at(3);
+  review.findings[0].reported_at = at(3);
+  review.findings[0].rule_id = "ARCH-PROD-NO-TEST-001";
+  review.gate_decisions[0].run_id = review.run_id;
+  review.gate_decisions[0].decided_at = at(3);
+  review.gate_decisions[0].evaluated_rule_ids = [review.findings[0].rule_id];
+  const implementation = {
+    schema_version: "1.0.0", run_id: "run:proof-implementation", parent_run_id: review.run_id,
+    producer: { kind: "agent", id: "implementer", role: "implementer", runtime: "codex" },
+    task: review.task, started_at: at(4), completed_at: at(5), outcome: "completed", evidence: [], findings: [], gate_decisions: [],
+    handoff: { next_owner: "architecture_reviewer", summary: "Fixture dependency removed; behavior preserved.", unresolved_finding_ids: [] },
+  };
+  const revalidation = structuredClone(review);
+  revalidation.run_id = "run:proof-revalidation";
+  revalidation.parent_run_id = review.run_id;
+  revalidation.started_at = at(30);
+  revalidation.completed_at = at(31);
+  for (const evidence of revalidation.evidence) evidence.collected_at = at(31);
+  revalidation.findings[0].status = "resolved";
+  revalidation.findings[0].reported_at = at(31);
+  revalidation.gate_decisions[0].run_id = revalidation.run_id;
+  revalidation.gate_decisions[0].status = "pass";
+  revalidation.gate_decisions[0].decided_at = at(31);
+  revalidation.gate_decisions[0].blocking_finding_ids = [];
+  revalidation.evidence[0].outcome = "pass";
+  revalidation.handoff = { next_owner: "orchestrator", summary: "Original finding revalidated.", unresolved_finding_ids: [] };
+  const initialRef = proofReference(review, "initial", "initial.json", proofJsonHash(first));
+  review.findings[0].evidence_ids.push(initialRef);
+  review.gate_decisions[0].evidence_ids.push(initialRef);
+  proofReference(implementation, "review", "review.json", proofJsonHash(review));
+  proofReference(implementation, "corrected-snapshot", "urn:multi-sdd:quality-proof:corrected-snapshot", finalSnapshot.digest.slice(7));
+  const finalRef = proofReference(revalidation, "final", "final.json", proofJsonHash(matrix));
+  revalidation.findings[0].evidence_ids.push(finalRef);
+  revalidation.gate_decisions[0].evidence_ids.push(finalRef);
+  const files = { "initial.json": first, "review.json": review, "implementation.json": implementation, "final.json": matrix, "revalidation.json": revalidation };
+  for (const [name, value] of Object.entries(files)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+  return { root, target, files, snapshot, finalSnapshot };
+}
+
+test("quality proof snapshots include dirty content, modes, additions and deletions without changing Git", async (t) => {
+  const target = await configuredTarget(t);
+  const base = comparisonBases.get(target);
+  const first = await captureSnapshot(target, base);
+  await fs.writeFile(path.join(target, "added.txt"), "new");
+  const added = await captureSnapshot(target, base);
+  assert.notEqual(added.digest, first.digest);
+  await fs.chmod(path.join(target, "added.txt"), 0o755);
+  assert.notEqual((await captureSnapshot(target, base)).digest, added.digest);
+  await fs.rm(path.join(target, "added.txt"));
+  assert.deepEqual(await captureSnapshot(target, base), first);
+  await fs.appendFile(path.join(target, ".sdd-codegraph/gates.json"), "\n");
+  const dirty = await captureSnapshot(target, base);
+  assert.notEqual(dirty.digest, first.digest);
+  execFileSync("git", ["-C", target, "add", ".sdd-codegraph/gates.json"]);
+  assert.deepEqual(await captureSnapshot(target, base), dirty);
+  await fs.rm(path.join(target, ".sdd-codegraph/gates.json"));
+  assert.notEqual((await captureSnapshot(target, base)).digest, dirty.digest);
+  await assert.rejects(captureSnapshot(target, "invalid"), /PROOF_/);
+  await fs.symlink("missing-target", path.join(target, "link"));
+  const linked = await captureSnapshot(target, base);
+  await fs.rm(path.join(target, "link"));
+  await fs.symlink("another-target", path.join(target, "link"));
+  assert.notEqual((await captureSnapshot(target, base)).digest, linked.digest);
+  await fs.rm(path.join(target, ".sdd-codegraph"), { recursive: true });
+  await captureSnapshot(target, base);
+  await fs.writeFile(path.join(target, "large"), "");
+  await fs.truncate(path.join(target, "large"), PROOF_LIMITS.snapshotFileBytes + 1);
+  await assert.rejects(captureSnapshot(target, base), /PROOF_SIZE/);
+  await fs.rm(path.join(target, "large"));
+  for (let index = 0; index < 5; index += 1) {
+    await fs.writeFile(path.join(target, `large-${index}`), "");
+    await fs.truncate(path.join(target, `large-${index}`), PROOF_LIMITS.snapshotFileBytes);
+  }
+  await assert.rejects(captureSnapshot(target, base), /PROOF_SIZE/);
+});
+
+test("quality proof files reject escapes, aliases, special files and oversized JSON before use", async (t) => {
+  const root = await temporaryDirectory(t);
+  await fs.writeFile(path.join(root, "safe.json"), "{}");
+  assert.deepEqual(await readProofJson(root, "safe.json"), {});
+  for (const name of ["../safe.json", "/safe.json", "./safe.json", "a//safe.json", "a/../safe.json", "a\\safe.json"]) {
+    await assert.rejects(readProofJson(root, name), /PROOF_/);
+  }
+  await fs.symlink(path.join(root, "safe.json"), path.join(root, "alias.json"));
+  await assert.rejects(readProofJson(root, "alias.json"), /PROOF_/);
+  await fs.mkdir(path.join(root, "nested"));
+  await fs.writeFile(path.join(root, "nested/value.json"), "{}");
+  await fs.symlink(path.join(root, "nested"), path.join(root, "alias"));
+  await assert.rejects(readProofJson(root, "alias/value.json"), /PROOF_/);
+  await assert.rejects(readProofJson(root, "nested"), /PROOF_/);
+  await fs.writeFile(path.join(root, "invalid.json"), "not JSON");
+  await assert.rejects(readProofJson(root, "invalid.json"), /PROOF_/);
+  await fs.writeFile(path.join(root, "invalid.json"), Buffer.from([0xff]));
+  await assert.rejects(readProofJson(root, "invalid.json"), /PROOF_/);
+  await fs.writeFile(path.join(root, "escaped.json"), JSON.stringify({ text: 'a "quoted" value\\path' }));
+  assert.deepEqual(await readProofJson(root, "escaped.json"), { text: 'a "quoted" value\\path' });
+  await fs.writeFile(path.join(root, "collection.json"), JSON.stringify(Array(4097).fill(0)));
+  await assert.rejects(readProofJson(root, "collection.json"), /PROOF_/);
+  await fs.writeFile(path.join(root, "collection.json"), JSON.stringify("x".repeat(16385)));
+  await assert.rejects(readProofJson(root, "collection.json"), /PROOF_/);
+  await fs.writeFile(path.join(root, "deep.json"), "[".repeat(40) + "0" + "]".repeat(40));
+  await assert.rejects(readProofJson(root, "deep.json"), /PROOF_/);
+  await fs.writeFile(path.join(root, "large.json"), " ".repeat(PROOF_LIMITS.artifactBytes + 1));
+  await assert.rejects(readProofJson(root, "large.json"), /PROOF_/);
+  if (process.platform !== "win32") {
+    execFileSync("mkfifo", [path.join(root, "fifo.json")]);
+    await assert.rejects(readProofJson(root, "fifo.json"), /PROOF_/);
+  }
+});
+
+test("quality proof requires the complete ordered remediation chain and eight equivalent final captures", async (t) => {
+  const { root, files } = await proofFixture(t);
+  await assembleProof(root);
+  assert.equal((await verifyProof(root)).eligible, true);
+  const manifestPath = path.join(root, "manifest.json");
+  const original = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  for (const mutate of [
+    (value) => { value.extra = true; },
+    (value) => { value.artifacts.pop(); },
+    (value) => { value.artifacts.reverse(); },
+    (value) => { value.artifacts[1].id = value.artifacts[0].id; },
+    (value) => { value.artifacts[1].depends_on = []; },
+    (value) => { value.artifacts[1].path = "../review.json"; },
+    (value) => { value.artifacts[1].sha256 = "0".repeat(64); },
+    (value) => { value.artifacts[1].snapshot_digest = `sha256:${"f".repeat(64)}`; },
+  ]) {
+    const invalid = structuredClone(original);
+    mutate(invalid);
+    await fs.writeFile(manifestPath, JSON.stringify(invalid));
+    await assert.rejects(verifyProof(root), /PROOF_/);
+  }
+  await fs.writeFile(manifestPath, JSON.stringify(original));
+  await fs.appendFile(path.join(root, "review.json"), " ");
+  await assert.rejects(verifyProof(root), /PROOF_/);
+  await fs.writeFile(path.join(root, "review.json"), JSON.stringify(files["review.json"]));
+  await fs.link(path.join(root, "review.json"), path.join(root, "hardlink.json"));
+  const aliased = structuredClone(original);
+  aliased.artifacts[2].path = "hardlink.json";
+  await fs.writeFile(manifestPath, JSON.stringify(aliased));
+  await assert.rejects(verifyProof(root), /PROOF_FILE_ALIAS/);
+  await fs.writeFile(manifestPath, JSON.stringify(original));
+  const alterations = [
+    ["initial.json", (value) => { value.run.schema_version = "1.0.0"; }],
+    ["initial.json", (value) => { value.exit_code = 0; }],
+    ["initial.json", (value) => { value.snapshot_after.digest = `sha256:${"c".repeat(64)}`; }],
+    ["review.json", (value) => { value.handoff.next_owner = "orchestrator"; }],
+    ["implementation.json", (value) => { value.parent_run_id = "run:unrelated"; }],
+    ["final.json", (value) => { value.captures.pop(); }],
+    ["final.json", (value) => { value.captures[1].run.run_id = value.captures[0].run.run_id; }],
+    ["final.json", (value) => { value.captures[0].run.started_at = files["initial.json"].run.started_at; }],
+    ["final.json", (value) => { value.captures[1].run.results[0].reason_code = "DIFFERENT_REASON"; }],
+    ["final.json", (value) => { value.captures[0].run.results[0].status = "error"; }],
+    ["revalidation.json", (value) => { value.parent_run_id = "run:other-review"; }],
+    ["revalidation.json", (value) => { value.findings[0].finding_id = "finding:other"; }],
+    ["revalidation.json", (value) => { value.findings[0].status = "open"; }],
+    ["revalidation.json", (value) => { value.producer.id = "other_reviewer"; }],
+    ["revalidation.json", (value) => { value.findings[0].validation_status = "unverified"; value.findings[0].recommended_gate_effect = "none"; }],
+  ];
+  for (const [name, mutate] of alterations) {
+    const invalid = structuredClone(files[name]);
+    mutate(invalid);
+    await fs.writeFile(path.join(root, name), JSON.stringify(invalid));
+    await fs.rm(manifestPath, { force: true });
+    await assert.rejects(assembleProof(root), /PROOF_/, name);
+    await fs.writeFile(path.join(root, name), JSON.stringify(files[name]));
+  }
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    const review = value["review.json"];
+    review.findings[0].reported_at = "2020-01-01T00:00:00.000Z";
+    review.gate_decisions[0].decided_at = "2020-01-01T00:00:00.000Z";
+  });
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    const review = value["review.json"];
+    const evidence = structuredClone(review.evidence[0]);
+    evidence.evidence_id = "evidence:outside-review-window";
+    evidence.collected_at = "2020-01-01T00:00:00.000Z";
+    review.evidence.push(evidence);
+  });
+  await assertProofRejectsCoherentTime(root, files, manifestPath, (value) => {
+    value["final.json"].captures[0].run.evidence[0].collected_at = "2020-01-01T00:00:00.000Z";
+  });
+  const first = files["final.json"].captures[0].run;
+  const equivalent = structuredClone(first);
+  equivalent.run_id = "run:different";
+  equivalent.results[0].duration_ms += 1;
+  equivalent.evidence[0].collected_at = equivalent.completed_at;
+  assert.deepEqual(gateSemantics(first), gateSemantics(equivalent));
+  assertProofEquivalenceProjection(first);
+  const oversizedRoot = await temporaryDirectory(t);
+  for (const stage of ["initial", "review", "implementation", "final", "revalidation"]) {
+    await fs.writeFile(path.join(oversizedRoot, `${stage}.json`), " ".repeat(PROOF_LIMITS.artifactBytes - 2) + "{}");
+  }
+  await assert.rejects(assembleProof(oversizedRoot), /PROOF_SIZE/);
+  const reference = (value, name) => value.evidence.find((entry) => entry.evidence_id === `evidence:proof-${name}`);
+  const linkMutations = [
+    (value) => { delete reference(value["review.json"], "initial").artifact; },
+    (value) => { reference(value["review.json"], "initial").artifact.uri = "elsewhere/initial.json"; },
+    (value) => { reference(value["review.json"], "initial").artifact.sha256 = "f".repeat(64); },
+    (value) => { reference(value["review.json"], "initial").kind = "static_analysis"; },
+    (value) => { reference(value["review.json"], "initial").level = "static_inference"; },
+    (value) => { reference(value["review.json"], "initial").outcome = "pass"; },
+    (value) => { value["review.json"].findings[0].evidence_ids.pop(); },
+    (value) => { value["review.json"].gate_decisions[0].evidence_ids.pop(); },
+    (value) => { reference(value["implementation.json"], "review").artifact.sha256 = "f".repeat(64); },
+    (value) => { value["implementation.json"].evidence = []; },
+    (value) => { reference(value["implementation.json"], "corrected-snapshot").artifact.sha256 = files["initial.json"].snapshot_before.digest.slice(7); },
+    (value) => { delete reference(value["implementation.json"], "corrected-snapshot").artifact; },
+    (value) => { reference(value["implementation.json"], "corrected-snapshot").collected_at = files["revalidation.json"].completed_at; },
+    (value) => { reference(value["revalidation.json"], "final").artifact.sha256 = "f".repeat(64); },
+    (value) => { value["revalidation.json"].findings[0].evidence_ids.pop(); },
+    (value) => { value["revalidation.json"].gate_decisions[0].evidence_ids.pop(); },
+    (value) => { value["revalidation.json"].gate_decisions[0].required = false; },
+    (value) => { value["initial.json"].snapshot_before.digest = `sha256:${"c".repeat(64)}`; value["initial.json"].snapshot_after.digest = value["initial.json"].snapshot_before.digest; },
+    (value) => { for (const capture of value["final.json"].captures) { capture.snapshot_before.digest = `sha256:${"c".repeat(64)}`; capture.snapshot_after.digest = capture.snapshot_before.digest; } },
+  ];
+  for (const stage of ["review.json", "revalidation.json"]) for (const status of ["blocked", "not_run"]) {
+    linkMutations.push((value) => {
+      const additional = structuredClone(value[stage].gate_decisions[0]);
+      Object.assign(additional, { gate_id: "gate:additional", status, evaluated_rule_ids: ["GOV-REVIEW-HANDOFF-001"], finding_ids: [], blocking_finding_ids: [] });
+      value[stage].gate_decisions.push(additional);
+    });
+  }
+  for (const mutate of linkMutations) {
+    const modified = structuredClone(files);
+    mutate(modified);
+    await fs.rm(manifestPath, { force: true });
+    for (const [name, value] of Object.entries(modified)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+    await assert.rejects(assembleProof(root), /PROOF_/);
+  }
+  for (const [name, value] of Object.entries(files)) await fs.writeFile(path.join(root, name), JSON.stringify(value));
+  await assembleProof(root);
+  const relocated = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  await fs.copyFile(path.join(root, "initial.json"), path.join(root, "other-initial.json"));
+  relocated.artifacts[0].path = "other-initial.json";
+  await fs.writeFile(manifestPath, JSON.stringify(relocated));
+  await assert.rejects(verifyProof(root), /PROOF_LINK/);
+});
+
+async function writableProofSource(t) {
+  const source = await configuredTarget(t);
+  await fs.mkdir(path.join(source, "src"));
+  await fs.mkdir(path.join(source, "test/integration"), { recursive: true });
+  await fs.writeFile(path.join(source, "src/node-test-reporter.js"), "export const sample = 1;\n");
+  await fs.writeFile(path.join(source, "test/integration/engineering-gates.test.js"), "// test wrapper\n");
+  return source;
+}
+
+test("quality proof preparation rejects physical output aliases before creating a workspace", async (t) => {
+  const source = await writableProofSource(t);
+  const owned = await temporaryDirectory(t);
+  const alias = path.join(owned, "alias");
+  await fs.symlink(source, alias);
+  const before = await captureSnapshot(source, comparisonBases.get(source));
+  let commands = 0;
+  const runner = async () => { commands += 1; throw new Error("unexpected command"); };
+  for (const relative of ["unexpected-proof", "test/unexpected-proof"]) {
+    await assert.rejects(prepareFixture(source, path.join(alias, relative), comparisonBases.get(source), runner));
+    assert.equal(commands, 0);
+    await assert.rejects(fs.lstat(path.join(source, relative)), { code: "ENOENT" });
+    assert.deepEqual(await captureSnapshot(source, comparisonBases.get(source)), before);
+  }
+});
+
+test("quality proof preparation rejects unsafe mutation paths before commands or writes", async (t) => {
+  const cases = [
+    ["src/node-test-reporter.js", "external"], ["src/node-test-reporter.js", "internal"],
+    ["test/integration/engineering-gates.test.js", "external"], ["test/integration/engineering-gates.test.js", "internal"],
+    ["test/issue13-remediation-helper.js", "file"], ["test/issue13-remediation-helper.js", "external"],
+    ["test/issue13-remediation-helper.js", "broken"], ["src", "parent"],
+    ["test/integration", "parent"], ["test", "parent"],
+  ];
+  for (const [relative, kind] of cases) {
+    const source = await writableProofSource(t);
+    const owned = await temporaryDirectory(t);
+    const external = path.join(owned, "sentinel.js");
+    const internal = path.join(source, "sentinel.js");
+    const sentinel = "export const sentinel = 'unchanged';\n";
+    await fs.writeFile(external, sentinel);
+    await fs.writeFile(internal, sentinel);
+    const leaf = path.join(source, relative);
+    if (kind === "parent") {
+      const relocated = path.join(source, "relocated");
+      await fs.rename(leaf, relocated);
+      await fs.symlink(relocated, leaf);
+    } else {
+      await fs.rm(leaf, { force: true });
+      if (kind === "file") await fs.writeFile(leaf, sentinel);
+      else await fs.symlink(kind === "internal" ? internal : kind === "broken" ? path.join(owned, "missing") : external, leaf);
+    }
+    const before = await captureSnapshot(source, comparisonBases.get(source));
+    let commands = 0;
+    const runner = async () => { commands += 1; throw new Error("unexpected command"); };
+    const work = path.join(owned, "proof");
+    await assert.rejects(prepareFixture(source, work, comparisonBases.get(source), runner));
+    assert.equal(commands, 0, `${relative}: ${kind}`);
+    await assert.rejects(fs.lstat(work), { code: "ENOENT" });
+    assert.equal(await fs.readFile(external, "utf8"), sentinel);
+    assert.equal(await fs.readFile(internal, "utf8"), sentinel);
+    assert.deepEqual(await captureSnapshot(source, comparisonBases.get(source)), before);
+  }
+});
+
+test("quality proof preparation copies a dirty candidate and capture refuses concurrent changes", async (t) => {
+  const source = await writableProofSource(t);
+  const work = path.join(await temporaryDirectory(t), "proof");
+  const commands = [];
+  const runner = async (executable, args, options) => {
+    commands.push({ executable, args, options });
+    if (args.includes("ci")) return { status: "completed", exit_code: 0, stdout: "", stderr: "" };
+    return runBoundedCommand(executable, args, options);
+  };
+  const before = await captureSnapshot(source, comparisonBases.get(source));
+  const prepared = await prepareFixture(source, work, comparisonBases.get(source), runner);
+  assert.equal(JSON.stringify(prepared).includes(await fs.realpath(path.dirname(work))), false);
+  assert.deepEqual(await captureSnapshot(source, comparisonBases.get(source)), before);
+  const fixture = path.join(work, "target");
+  assert.match(await fs.readFile(path.join(fixture, "src/node-test-reporter.js"), "utf8"), /issue13-remediation-helper/);
+  assert.match(await fs.readFile(path.join(fixture, "test/integration/engineering-gates.test.js"), "utf8"), /issue13RemediationValue\(1\), 2/);
+  assert.equal(commands.some((command) => command.args.includes("--ignore-scripts")), true);
+  const npmCommand = commands.find((command) => command.args.includes("ci"));
+  const npmConfigs = [npmCommand.options.env.NPM_CONFIG_USERCONFIG, npmCommand.options.env.NPM_CONFIG_GLOBALCONFIG];
+  const npmCache = await fs.realpath(path.join(work, "cache"));
+  assert.notEqual(npmConfigs[0], npmConfigs[1]);
+  for (const config of npmConfigs) {
+    assert.equal(path.relative(npmCache, config).startsWith(".."), false);
+    assert.equal(JSON.stringify(prepared).includes(config), false);
+    const stat = await fs.lstat(config);
+    assert.equal(stat.isFile() && !stat.isSymbolicLink(), true);
+    assert.equal(stat.mode & 0o777, 0o600);
+    assert.equal(await fs.readFile(config, "utf8"), "");
+  }
+  await assert.rejects(prepareFixture(source, work, comparisonBases.get(source), runner));
+  const run = (await runConfiguredGates(source, { executors: executorSet() })).document;
+  const captureRunner = async (executable, args) => args[0] === "--version"
+    ? { status: "completed", exit_code: 0, stdout: "v22.14.0\n", stderr: "" }
+    : { status: "completed", exit_code: 0, stdout: JSON.stringify(run), stderr: "" };
+  const captured = await captureGates(fixture, comparisonBases.get(source), process.execPath, "source", path.join(fixture, "bin/sdd-codegraph.js"), captureRunner);
+  assert.equal(captured.exit_code, 0);
+  const blocked = (await runEngineeringGates(await temporaryDirectory(t))).document;
+  const blockedRunner = async (executable, args) => args[0] === "--version"
+    ? captureRunner(executable, args)
+    : { status: "completed", exit_code: 2, stdout: JSON.stringify(blocked), stderr: "" };
+  assert.equal((await captureGates(fixture, comparisonBases.get(source), process.execPath, "source", "entry.js", blockedRunner)).exit_code, 2);
+  const changedRunner = async (executable, args) => {
+    if (args[0] !== "--version") await fs.writeFile(path.join(fixture, "changed-during-gates.txt"), "changed");
+    return captureRunner(executable, args);
+  };
+  await assert.rejects(captureGates(fixture, comparisonBases.get(source), process.execPath, "source", "entry.js", changedRunner), /PROOF_/);
+  const { files } = await proofFixture(t);
+  for (const name of ["review.json", "implementation.json"]) await fs.writeFile(path.join(work, "dossier", name), JSON.stringify(files[name]));
+  const failed = (await runConfiguredGates(source, { executors: executorSet({ node_architecture: "fail" }) })).document;
+  const matrixRunner = async (executable, args) => {
+    if (args.includes("run-gates")) return { status: "completed", exit_code: 1, stdout: JSON.stringify(failed), stderr: "" };
+    if (args[0] === "--version") return captureRunner(executable, args);
+    return { status: "completed", exit_code: 0, stdout: args.includes("pack") ? '[{"filename":"package.tgz"}]' : "", stderr: "" };
+  };
+  await assert.rejects(finalCaptures(work, [process.execPath, process.execPath], matrixRunner), /PROOF_FINAL_GATE/);
+  const setup = (await fs.readdir(work)).find((name) => name.startsWith("launchers-"));
+  const partial = await readProofJson(path.join(work, setup), "capture-0-source.json");
+  assert.equal(partial.exit_code, 1);
+  assert.equal(partial.run.outcome, "failed");
+  assert.equal((await fs.readdir(path.join(work, "dossier"))).includes("final.json"), false);
+  const launchersBeforeMismatch = new Set((await fs.readdir(work)).filter((name) => name.startsWith("launchers-")));
+  let gateRun = 0;
+  const mismatchRunner = async (executable, args) => {
+    if (args.includes("run-gates")) {
+      const document = structuredClone(run);
+      document.run_id = `run:matrix-mismatch-${gateRun}`;
+      if (gateRun === 1) document.results[0].summary = "different non-coverage summary";
+      gateRun += 1;
+      return { status: "completed", exit_code: 0, stdout: JSON.stringify(document), stderr: "" };
+    }
+    if (args[0] === "--version") return { status: "completed", exit_code: 0, stdout: executable.includes("node24") ? "v24.19.0\n" : "v22.14.0\n", stderr: "" };
+    return { status: "completed", exit_code: 0, stdout: args.includes("pack") ? '[{"filename":"package.tgz"}]' : "", stderr: "" };
+  };
+  const runtimeRoot = await temporaryDirectory(t);
+  const matrixNodes = [];
+  for (const name of ["node22", "node24"]) {
+    const bin = path.join(runtimeRoot, name, "bin");
+    await fs.mkdir(bin, { recursive: true });
+    await fs.writeFile(path.join(bin, "node"), "");
+    await fs.writeFile(path.join(bin, "npm"), "");
+    matrixNodes.push(path.join(bin, "node"));
+  }
+  await assert.rejects(finalCaptures(work, matrixNodes, mismatchRunner), /PROOF_EQUIVALENCE/);
+  assert.equal((await fs.readdir(path.join(work, "dossier"))).includes("final.json"), false);
+  const mismatchSetup = (await fs.readdir(work)).find((name) => name.startsWith("launchers-") && !launchersBeforeMismatch.has(name));
+  assert.equal((await fs.readdir(path.join(work, mismatchSetup))).filter((name) => name.startsWith("capture-")).length, 8);
+});
+
+test("quality proof preparation mirrors staged additions and intents only new nonignored paths", async (t) => {
+  const source = await writableProofSource(t);
+  await fs.writeFile(path.join(source, ".gitignore"), "vendor/**/node_modules/\n");
+  await fs.mkdir(path.join(source, "vendor/runtime/node_modules/tool"), { recursive: true });
+  const ignored = "vendor/runtime/node_modules/tool/index.js";
+  await fs.writeFile(path.join(source, ignored), "export const vendored = true;\n");
+  for (const args of [["add", ".gitignore"], ["add", "-f", "--", ignored], ["commit", "-m", "ignore fixture"]]) {
+    const execution = spawnSync("git", ["-C", source, ...args], { encoding: "utf8" });
+    assert.equal(execution.status, 0, execution.stderr);
+  }
+  const stagedIgnored = "vendor/runtime/node_modules/tool/staged.js";
+  await fs.writeFile(path.join(source, stagedIgnored), "export const staged = true;\n");
+  assert.equal(spawnSync("git", ["-C", source, "add", "-f", "--", stagedIgnored], { encoding: "utf8" }).status, 0);
+  const untracked = "docs/candidate-note.md";
+  await fs.mkdir(path.join(source, "docs"));
+  await fs.writeFile(path.join(source, untracked), "candidate\n");
+  const before = await captureSnapshot(source, comparisonBases.get(source));
+  const commands = [];
+  const runner = async (executable, args, options) => {
+    commands.push(args);
+    if (args.includes("ci")) return { status: "completed", exit_code: 0, stdout: "", stderr: "" };
+    return runBoundedCommand(executable, args, options);
+  };
+  const work = path.join(await temporaryDirectory(t), "proof");
+  await prepareFixture(source, work, comparisonBases.get(source), runner);
+  assert.deepEqual(await captureSnapshot(source, comparisonBases.get(source)), before);
+  assert.equal(await fs.readFile(path.join(work, "target", ignored), "utf8"), "export const vendored = true;\n");
+  assert.equal(await fs.readFile(path.join(work, "target", stagedIgnored), "utf8"), "export const staged = true;\n");
+  const added = commands.find((args) => args.includes("-N"));
+  assert.equal(added.includes(ignored), false);
+  assert.equal(added.includes(stagedIgnored), false);
+  assert.equal(added.includes(untracked), true);
+  const stagedUpdate = commands.find((args) => args.includes("update-index"));
+  assert.equal(stagedUpdate.includes(stagedIgnored), true);
+  assert.equal(stagedUpdate.includes(ignored), false);
+  assert.equal(stagedUpdate.includes(untracked), false);
+  const visible = execFileSync("git", ["-C", path.join(work, "target"), "diff", "--name-only", "--ita-visible-in-index", "HEAD"], { encoding: "utf8" }).split("\n");
+  assert.equal(visible.includes(untracked), true);
+  const staged = execFileSync("git", ["-C", path.join(work, "target"), "diff", "--cached", "--name-only", "HEAD"], { encoding: "utf8" }).split("\n");
+  assert.equal(staged.includes(stagedIgnored), true);
+});
+
+test("quality proof npm configuration reuse fails closed after private config replacement or mutation", async (t) => {
+  const source = await writableProofSource(t);
+  const sentinel = path.join(await temporaryDirectory(t), "sentinel.npmrc");
+  await fs.writeFile(sentinel, "unchanged\n");
+  for (const mutation of ["symlink", "content"]) {
+    const directory = path.join(await temporaryDirectory(t), "launchers");
+    let npmCalls = 0;
+    const runner = async (executable, args, options) => {
+      npmCalls += 1;
+      const userConfig = options.env.NPM_CONFIG_USERCONFIG;
+      const globalConfig = options.env.NPM_CONFIG_GLOBALCONFIG;
+      assert.notEqual(userConfig, globalConfig);
+      assert.equal(path.relative(path.join(directory, "cache"), userConfig).startsWith(".."), false);
+      assert.equal(path.relative(path.join(directory, "cache"), globalConfig).startsWith(".."), false);
+      if (mutation === "symlink") {
+        await fs.rm(userConfig);
+        await fs.symlink(sentinel, userConfig);
+      } else await fs.writeFile(userConfig, "unsafe\n");
+      return { status: "completed", exit_code: 0, stdout: "", stderr: "" };
+    };
+    await assert.rejects(materializeLaunchers(source, directory, process.execPath, runner), /PROOF_NPM_CONFIG/);
+    assert.equal(npmCalls, 1);
+    assert.equal(await fs.readFile(sentinel, "utf8"), "unchanged\n");
   }
 });

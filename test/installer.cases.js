@@ -155,6 +155,11 @@ test("CI and publish workflows sanitize Node and ESLint control variables", asyn
     assert.ok(runCommands.includes(expectedGateCommand), `${workflow} does not invoke gates with the sanitized direct launcher`);
     assert.doesNotMatch(source, /^\s+- run: npm run .*gates/m);
   }
+  const ci = await fs.readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const compatibility = ci.slice(ci.indexOf("  compatibility:"), ci.indexOf("  policy-and-package:"));
+  assert.match(compatibility, /fetch-depth: 0/);
+  assert.match(compatibility, /if: matrix.node-version == '22\.14\.0'/);
+  assert.ok(compatibility.includes(expectedGateCommands.get("ci.yml")));
 });
 
 test("npm package contains only the supported Codex distribution", async (context) => {
@@ -189,6 +194,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "codex/pipeline.json",
     "docs/agent-governance-responsibility-map.md",
     "docs/functional-spec.md",
+    "docs/issue-13-quality-proof.md",
     "docs/technical-spec.md",
     "governance/README.md",
     "governance/adapters/v1/node-architecture-notice-header.md",
@@ -219,6 +225,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "package.json",
     "scripts/generate-node-architecture-runtime.js",
     "scripts/verify-node-architecture-runtime.js",
+    "scripts/quality-proof.js",
     "setup.sh",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
@@ -230,6 +237,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "src/governance-validator.js",
     "src/installer.js",
     "src/node-coverage-adapter.js",
+    "src/quality-proof.js",
     "src/node-architecture-adapter.js",
     "src/node-architecture-contract.js",
     "src/node-architecture-runtime-topology.js",
