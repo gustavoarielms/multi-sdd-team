@@ -487,6 +487,36 @@ test("project update adopts a supported legacy config and rejects unknown profil
   assert.match(await fs.readFile(configPath, "utf8"), /^default_permissions = ":workspace"$/m);
 });
 
+test("project update preserves permission profiles declared with quoted TOML keys", async (context) => {
+  const root = await temporaryProject();
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  for (const [name, quotedKey] of [
+    ["basic", '"default_permissions"'],
+    ["literal", "'default_permissions'"],
+  ]) {
+    const project = path.join(root, name);
+    await installProject(project, { permissions: "read-only" });
+
+    const configPath = path.join(project, ".codex", "config.toml");
+    const config = await fs.readFile(configPath, "utf8");
+    await fs.writeFile(configPath, config.replace("default_permissions", quotedKey));
+
+    const manifestPath = path.join(project, ".sdd-codegraph.json");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    delete manifest.permissionsProfile;
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    await installProject(project);
+
+    const updatedConfig = await fs.readFile(configPath, "utf8");
+    const updatedManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    assert.match(updatedConfig, /^default_permissions = ":read-only"$/m);
+    assert.equal(updatedConfig.match(/default_permissions/g)?.length, 1);
+    assert.equal(updatedManifest.permissionsProfile, "read-only");
+  }
+});
+
 test("CLI selects a permission profile and preserves it on update", async (context) => {
   const root = await temporaryProject();
   const project = path.join(root, "project");

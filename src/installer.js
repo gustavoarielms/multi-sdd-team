@@ -119,8 +119,16 @@ function isTable(line) {
   return value.startsWith("[") && value.endsWith("]");
 }
 
+function tomlKeySource(key) {
+  const escapedKey = escapeRegExp(key);
+  if (/^[A-Za-z0-9_-]+$/.test(key)) {
+    return `(?:${escapedKey}|"${escapedKey}"|'${escapedKey}')`;
+  }
+  return escapedKey;
+}
+
 function keyPattern(key) {
-  return new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
+  return new RegExp(`^\\s*${tomlKeySource(key)}\\s*=`);
 }
 
 export function setTomlKey(existing, table, key, value) {
@@ -174,8 +182,12 @@ function configuredPermissionProfile(config) {
   const declarations = topLevelLines.filter((line) => keyPattern("default_permissions").test(line));
   if (declarations.length === 0) return undefined;
 
+  const declarationPattern = new RegExp(
+    `^\\s*${tomlKeySource("default_permissions")}\\s*=\\s*`
+      + `(?:"([^"]+)"|'([^']+)')\\s*(?:#.*)?$`,
+  );
   const match = declarations.length === 1
-    ? declarations[0].match(/^\s*default_permissions\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/)
+    ? declarations[0].match(declarationPattern)
     : null;
   const configuredValue = match?.[1] ?? match?.[2];
   for (const [profile, value] of PERMISSION_PROFILE_VALUES) {
