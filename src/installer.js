@@ -14,6 +14,13 @@ const GOVERNANCE_GATES_ROOT = path.join(PACKAGE_ROOT, "governance", "gates", "v1
 const GOVERNANCE_PROFILES_ROOT = path.join(PACKAGE_ROOT, "governance", "profiles", "v1");
 const MANAGED_MARKER = "multi-sdd-team";
 const MANIFEST_NAME = ".sdd-codegraph.json";
+const DEFAULT_PERMISSION_PROFILE = "workspace-only";
+const PERMISSION_PROFILE_VALUES = new Map([
+  ["workspace-only", "workspace-only"],
+  ["read-only", ":read-only"],
+  ["workspace", ":workspace"],
+  ["danger-full-access", ":danger-full-access"],
+]);
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -149,6 +156,34 @@ async function loadPackageMetadata() {
   return JSON.parse(await fs.readFile(path.join(PACKAGE_ROOT, "package.json"), "utf8"));
 }
 
+function validatePermissionProfile(permissionProfile) {
+  if (!PERMISSION_PROFILE_VALUES.has(permissionProfile)) {
+    throw new Error(
+      `Unsupported permissions profile: ${permissionProfile}. Expected one of: ${[
+        ...PERMISSION_PROFILE_VALUES.keys(),
+      ].join(", ")}`,
+    );
+  }
+  return permissionProfile;
+}
+
+async function resolvePermissionProfile(installRoot, requestedProfile) {
+  if (requestedProfile !== undefined) return validatePermissionProfile(requestedProfile);
+
+  const manifestText = await readManagedTextIfExists(installRoot, MANIFEST_NAME);
+  if (manifestText) {
+    try {
+      const persistedProfile = JSON.parse(manifestText).permissionsProfile;
+      if (persistedProfile !== undefined) return validatePermissionProfile(persistedProfile);
+    } catch (error) {
+      if (error instanceof SyntaxError) return DEFAULT_PERMISSION_PROFILE;
+      throw error;
+    }
+  }
+
+  return DEFAULT_PERMISSION_PROFILE;
+}
+
 async function loadTemplates() {
   const agentsRoot = path.join(TEMPLATE_ROOT, "agents");
   const pipelinePath = path.join(TEMPLATE_ROOT, "pipeline.json");
@@ -212,7 +247,7 @@ async function loadTemplates() {
   };
 }
 
-async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
+async function expectedInstallFiles(installRoot, codexPrefix, includeManifest, permissionProfile) {
   const [metadata, templates] = await Promise.all([loadPackageMetadata(), loadTemplates()]);
   const files = new Map();
 
@@ -246,6 +281,19 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   config = setTomlKey(config, "features", "fast_mode", "true");
   config = setTomlKey(config, "agents", "max_threads", "6");
   config = setTomlKey(config, "agents", "max_depth", "1");
+  if (includeManifest) {
+    config = setTomlKey(config, "", "default_permissions", JSON.stringify(
+      PERMISSION_PROFILE_VALUES.get(permissionProfile),
+    ));
+    if (permissionProfile === "workspace-only") {
+      config = setTomlKey(config, "permissions.workspace-only", "extends", '":workspace"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":root"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":minimal"', '"read"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":tmpdir"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":slash_tmp"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.network", "enabled", "false");
+    }
+  }
   files.set(configRelativePath, config);
 
   if (includeManifest) {
@@ -253,6 +301,7 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
       schemaVersion: 1,
       package: metadata.name,
       version: metadata.version,
+      permissionsProfile: permissionProfile,
     };
     files.set(MANIFEST_NAME, `${JSON.stringify(manifest, null, 2)}\n`);
   }
@@ -260,9 +309,17 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   return files;
 }
 
-async function installFiles(targetPath, codexPrefix, includeManifest) {
+async function installFiles(targetPath, codexPrefix, includeManifest, options = {}) {
   const installRoot = await canonicalInstallRoot(targetPath);
-  const expected = await expectedInstallFiles(installRoot, codexPrefix, includeManifest);
+  const permissionProfile = includeManifest
+    ? await resolvePermissionProfile(installRoot, options.permissions)
+    : undefined;
+  const expected = await expectedInstallFiles(
+    installRoot,
+    codexPrefix,
+    includeManifest,
+    permissionProfile,
+  );
   await Promise.all([...expected.keys()].map((relativePath) => (
     assertManagedPathSafe(installRoot, relativePath)
   )));
@@ -278,8 +335,8 @@ async function installFiles(targetPath, codexPrefix, includeManifest) {
   return { installRoot, changed };
 }
 
-export async function installProject(targetPath) {
-  const result = await installFiles(targetPath, ".codex", true);
+export async function installProject(targetPath, options = {}) {
+  const result = await installFiles(targetPath, ".codex", true, options);
   return { projectRoot: result.installRoot, changed: result.changed };
 }
 
@@ -290,7 +347,8 @@ export async function installGlobal(targetPath) {
 
 export async function checkProjectFiles(targetPath) {
   const projectRoot = await fs.realpath(path.resolve(targetPath));
-  const expected = await expectedInstallFiles(projectRoot, ".codex", true);
+  const permissionProfile = await resolvePermissionProfile(projectRoot);
+  const expected = await expectedInstallFiles(projectRoot, ".codex", true, permissionProfile);
   const drift = [];
 
   for (const [relativePath, content] of expected) {

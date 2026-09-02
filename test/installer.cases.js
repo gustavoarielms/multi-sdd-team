@@ -394,9 +394,74 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.equal(gateRegistry.executors[0].executor_id, "javascript_syntax");
   assert.equal(qualityProfile.metrics.cyclomatic_complexity.maximum, 15);
   assert.match(config, /custom = true/);
+  assert.match(config, /^default_permissions = "workspace-only"$/m);
+  assert.match(config, /^\[permissions\.workspace-only\]$/m);
+  assert.match(config, /^extends = ":workspace"$/m);
+  assert.match(config, /^\[permissions\.workspace-only\.filesystem\]$/m);
+  assert.match(config, /^":root" = "deny"$/m);
+  assert.match(config, /^":minimal" = "read"$/m);
+  assert.match(config, /^":tmpdir" = "deny"$/m);
+  assert.match(config, /^":slash_tmp" = "deny"$/m);
+  assert.match(config, /^\[permissions\.workspace-only\.network\]$/m);
+  assert.match(config, /^enabled = false$/m);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal(manifest.version, "0.3.0");
+  assert.equal(manifest.permissionsProfile, "workspace-only");
   assert.equal((await checkProjectFiles(project)).drift.length, 0);
+});
+
+test("project permission profile accepts built-ins and persists the selection", async (context) => {
+  const root = await temporaryProject();
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  for (const [profile, expected] of [
+    ["read-only", ":read-only"],
+    ["workspace", ":workspace"],
+    ["danger-full-access", ":danger-full-access"],
+  ]) {
+    const project = path.join(root, profile);
+    await installProject(project, { permissions: profile });
+    await installProject(project);
+    const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
+    const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
+    assert.match(config, new RegExp(`^default_permissions = "${expected}"$`, "m"));
+    assert.equal(manifest.permissionsProfile, profile);
+    assert.equal((await checkProjectFiles(project)).drift.length, 0);
+  }
+
+  await assert.rejects(
+    installProject(path.join(root, "invalid"), { permissions: "unknown" }),
+    /Unsupported permissions profile: unknown/,
+  );
+});
+
+test("CLI selects a permission profile and preserves it on update", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  const fakeBin = path.join(root, "bin");
+  const codeGraph = path.join(fakeBin, "codegraph");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(fakeBin);
+  await fs.writeFile(
+    codeGraph,
+    '#!/bin/sh\nif [ "$1" = "status" ]; then printf \'{"initialized":true,"pendingChanges":{}}\\n\'; fi\n',
+    { mode: 0o755 },
+  );
+
+  const cli = new URL("../bin/sdd-codegraph.js", import.meta.url).pathname;
+  const env = { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}` };
+  const init = spawnSync(process.execPath, [cli, "init", project, "--permissions", "read-only"], {
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(init.status, 0, init.stderr);
+
+  const update = spawnSync(process.execPath, [cli, "update", project], { encoding: "utf8", env });
+  assert.equal(update.status, 0, update.stderr);
+  const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
+  const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
+  assert.match(config, /^default_permissions = ":read-only"$/m);
+  assert.equal(manifest.permissionsProfile, "read-only");
 });
 
 test("installProject rejects managed directory, file, and broken symlinks", async (context) => {
@@ -445,6 +510,30 @@ test("shell project and global installers copy equivalent governance contracts",
     const projectContent = await fs.readFile(path.join(project, ".codex", "governance", relative), "utf8");
     assert.equal(projectContent, globalContent, relative);
   }
+
+  const globalConfig = await fs.readFile(path.join(codexHome, "config.toml"), "utf8");
+  const projectConfig = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
+  assert.doesNotMatch(globalConfig, /default_permissions|permissions\.workspace-only/);
+  assert.match(projectConfig, /^default_permissions = "workspace-only"$/m);
+});
+
+test("shell setup selects and persists a project permission profile", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+
+  execFileSync("bash", [
+    new URL("../setup.sh", import.meta.url).pathname,
+    "--project",
+    project,
+    "--permissions",
+    "read-only",
+  ]);
+  execFileSync("bash", [new URL("../setup.sh", import.meta.url).pathname, "--project", project]);
+
+  const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
+  const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
+  assert.match(config, /^default_permissions = ":read-only"$/m);
+  assert.equal(manifest.permissionsProfile, "read-only");
 });
 
 test("shell installers reject managed symlinks without writing outside their roots", async (context) => {
