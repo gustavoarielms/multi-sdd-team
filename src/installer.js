@@ -167,21 +167,32 @@ function validatePermissionProfile(permissionProfile) {
   return permissionProfile;
 }
 
+function configuredPermissionProfile(config) {
+  const lines = config.split(/\r?\n/);
+  const firstTable = lines.findIndex(isTable);
+  const topLevelLines = firstTable === -1 ? lines : lines.slice(0, firstTable);
+  const declarations = topLevelLines.filter((line) => keyPattern("default_permissions").test(line));
+  if (declarations.length === 0) return undefined;
+
+  const match = declarations.length === 1
+    ? declarations[0].match(/^\s*default_permissions\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/)
+    : null;
+  const configuredValue = match?.[1] ?? match?.[2];
+  for (const [profile, value] of PERMISSION_PROFILE_VALUES) {
+    if (value === configuredValue) return profile;
+  }
+
+  throw new Error(
+    "Unsupported or ambiguous default_permissions in .codex/config.toml. "
+      + `Explicitly select one with --permissions: ${[...PERMISSION_PROFILE_VALUES.keys()].join(", ")}`,
+  );
+}
+
 async function resolvePermissionProfile(installRoot, requestedProfile) {
   if (requestedProfile !== undefined) return validatePermissionProfile(requestedProfile);
 
-  const manifestText = await readManagedTextIfExists(installRoot, MANIFEST_NAME);
-  if (manifestText) {
-    try {
-      const persistedProfile = JSON.parse(manifestText).permissionsProfile;
-      if (persistedProfile !== undefined) return validatePermissionProfile(persistedProfile);
-    } catch (error) {
-      if (error instanceof SyntaxError) return DEFAULT_PERMISSION_PROFILE;
-      throw error;
-    }
-  }
-
-  return DEFAULT_PERMISSION_PROFILE;
+  const config = await readManagedTextIfExists(installRoot, path.join(".codex", "config.toml"));
+  return configuredPermissionProfile(config) ?? DEFAULT_PERMISSION_PROFILE;
 }
 
 async function loadTemplates() {

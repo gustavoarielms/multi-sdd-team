@@ -435,6 +435,58 @@ test("project permission profile accepts built-ins and persists the selection", 
   );
 });
 
+test("project update ignores a manifest-only permission escalation", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+
+  const manifestPath = path.join(project, ".sdd-codegraph.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  manifest.permissionsProfile = "danger-full-access";
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  await installProject(project);
+
+  const config = await fs.readFile(path.join(project, ".codex", "config.toml"), "utf8");
+  const repairedManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  assert.match(config, /^default_permissions = "workspace-only"$/m);
+  assert.equal(repairedManifest.permissionsProfile, "workspace-only");
+});
+
+test("project update adopts a supported legacy config and rejects unknown profiles", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project, { permissions: "read-only" });
+
+  const manifestPath = path.join(project, ".sdd-codegraph.json");
+  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  delete manifest.permissionsProfile;
+  await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  await installProject(project);
+
+  const configPath = path.join(project, ".codex", "config.toml");
+  const config = await fs.readFile(configPath, "utf8");
+  const migratedManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  assert.match(config, /^default_permissions = ":read-only"$/m);
+  assert.equal(migratedManifest.permissionsProfile, "read-only");
+
+  await fs.writeFile(configPath, config.replace('default_permissions = ":read-only"', 'default_permissions = "custom"'));
+  await assert.rejects(installProject(project), /Explicitly select one with --permissions/);
+
+  await fs.writeFile(
+    configPath,
+    config.replace(
+      'default_permissions = ":read-only"',
+      'default_permissions = ":read-only"\ndefault_permissions = ":workspace"',
+    ),
+  );
+  await assert.rejects(installProject(project), /Unsupported or ambiguous default_permissions/);
+
+  await installProject(project, { permissions: "workspace" });
+  assert.match(await fs.readFile(configPath, "utf8"), /^default_permissions = ":workspace"$/m);
+});
+
 test("CLI selects a permission profile and preserves it on update", async (context) => {
   const root = await temporaryProject();
   const project = path.join(root, "project");
