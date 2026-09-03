@@ -2,37 +2,25 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 
 const SAFE_CONFIGURED_PROFILES = new Set(["workspace-only", "workspace", "read-only"]);
-const SAFE_RUNTIME_PROFILES = new Set(["workspace-only", ":workspace", ":read-only"]);
-const SAFE_RUNTIME_SANDBOXES = new Set(["seatbelt"]);
-const LEGACY_RUNTIME_SANDBOXES = new Set(["read-only", "workspace-write"]);
+const SUPPORTED_PLATFORMS = new Set(["darwin", "linux", "win32"]);
 const DENIED_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 function result(state, reasonCode, trusted = false) {
   return { state, trusted, reason_code: reasonCode };
 }
 
-function isLegacyRuntime(legacySettings, runtimeProfile, runtimeSandbox) {
-  return legacySettings.length > 0
-    || runtimeProfile === "workspace-write"
-    || LEGACY_RUNTIME_SANDBOXES.has(runtimeSandbox);
+function probeStates(probe) {
+  return [...(probe.fileWrites ?? []), ...(probe.directoryMutations ?? [])];
 }
 
-function isElevatedRuntime(configuredProfile, runtimeProfile, runtimeSandbox) {
-  return configuredProfile === "danger-full-access"
-    || runtimeProfile === ":danger-full-access"
-    || runtimeSandbox === "danger-full-access";
-}
-
-function isSupportedRuntime(configuredProfile, runtimeProfile, runtimeSandbox) {
+function isSupportedRuntime(configuredProfile, platform) {
   return SAFE_CONFIGURED_PROFILES.has(configuredProfile)
-    && SAFE_RUNTIME_PROFILES.has(runtimeProfile)
-    && SAFE_RUNTIME_SANDBOXES.has(runtimeSandbox);
+    && SUPPORTED_PLATFORMS.has(platform);
 }
 
 export function classifyPromptProtection({
   configuredProfile,
-  runtimeProfile,
-  runtimeSandbox,
+  platform,
   promptDrift = [],
   unsafePaths = [],
   legacySettings = [],
@@ -40,19 +28,20 @@ export function classifyPromptProtection({
 }) {
   if (unsafePaths.length > 0) return result("unsafe", "MANAGED_PROMPT_UNSAFE_PATH");
   if (promptDrift.length > 0) return result("drifted", "MANAGED_PROMPT_DRIFT");
-  if (isLegacyRuntime(legacySettings, runtimeProfile, runtimeSandbox)) {
+  if (legacySettings.length > 0) {
     return result("legacy", "MANAGED_PROMPT_LEGACY_RUNTIME");
   }
-  if (isElevatedRuntime(configuredProfile, runtimeProfile, runtimeSandbox)) {
+  if (configuredProfile === "danger-full-access") {
     return result("elevated", "MANAGED_PROMPT_ELEVATED_PROFILE");
   }
-  if (!isSupportedRuntime(configuredProfile, runtimeProfile, runtimeSandbox)) {
+  if (!isSupportedRuntime(configuredProfile, platform) || probe.complete !== true) {
     return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   }
-  if (probe.fileWrite === "writable" || probe.directoryMutation === "writable") {
+  const states = probeStates(probe);
+  if (states.includes("writable")) {
     return result("elevated", "MANAGED_PROMPT_BOUNDARY_WRITABLE");
   }
-  if (probe.fileWrite !== "denied" || probe.directoryMutation !== "denied") {
+  if (states.length === 0 || states.some((state) => state !== "denied")) {
     return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   }
   return result("protected", "MANAGED_PROMPTS_PROTECTED", true);
@@ -63,25 +52,33 @@ function classifyProbeError(error) {
   return "unknown";
 }
 
-export async function probeManagedPromptBoundary(agentsRoot, promptPath, options = {}) {
-  const fileSystem = options.fs ?? fs;
-  let fileWrite;
+async function probeFileWrite(fileSystem, promptPath) {
   try {
     const flags = fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0);
     const handle = await fileSystem.open(promptPath, flags);
     await handle.close();
-    fileWrite = "writable";
+    return "writable";
   } catch (error) {
-    fileWrite = classifyProbeError(error);
+    return classifyProbeError(error);
   }
+}
 
-  let directoryMutation;
+async function probeDirectoryMutation(fileSystem, directoryPath) {
   try {
-    await fileSystem.access(agentsRoot, fsConstants.W_OK);
-    directoryMutation = "writable";
+    await fileSystem.access(directoryPath, fsConstants.W_OK);
+    return "writable";
   } catch (error) {
-    directoryMutation = classifyProbeError(error);
+    return classifyProbeError(error);
   }
+}
 
-  return { fileWrite, directoryMutation };
+export async function probeManagedPromptBoundary(directoryPaths, promptPaths, options = {}) {
+  const fileSystem = options.fs ?? fs;
+  const [fileWrites, directoryMutations] = await Promise.all([
+    Promise.all(promptPaths.map((promptPath) => probeFileWrite(fileSystem, promptPath))),
+    Promise.all(directoryPaths.map((directoryPath) => (
+      probeDirectoryMutation(fileSystem, directoryPath)
+    ))),
+  ]);
+  return { fileWrites, directoryMutations };
 }

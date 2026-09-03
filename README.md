@@ -138,19 +138,18 @@ Installation writes `.codex/managed-prompts.json`, containing the package
 identity, selected project profile, and SHA-256 of every managed prompt.
 `check` requires the actual agent directory to contain exactly the package-owned
 prompt set, verifies exact bytes, rejects symlink or hardlink identities, classifies
-legacy and elevated profiles, and performs two non-mutating capability probes:
-opening an existing prompt for write without truncation and requesting `W_OK`
-access to the prompt directory. A protected result requires both
-operations to be denied by the effective OS sandbox and requires bounded Codex
-runtime identity from `CODEX_PERMISSION_PROFILE` and `CODEX_SANDBOX`. Only
-explicitly recognized runtime sandbox identifiers are positive evidence;
-legacy or unknown identifiers fail closed.
+legacy and elevated profiles, and performs non-mutating capability probes against
+every managed prompt, the protected digest inventory, `.codex/`, and
+`.codex/agents/`. Each file is opened for write without truncation and each
+directory is checked for `W_OK` access. A protected result requires every
+operation to be denied by the effective OS sandbox on Darwin, Linux, or Windows.
+Child-controlled environment variables such as `CODEX_PERMISSION_PROFILE` and
+`CODEX_SANDBOX` are never accepted as security evidence.
 
 `protected` is the only trustworthy state. Drift, unsafe paths, legacy config,
-`danger-full-access`, a writable probe, missing runtime identity, or ambiguous
-probe results exit `2` and block governance and later engineering gates. The
-environment values are supporting identity, not a standalone security proof;
-the OS denial is authoritative. Run the package itself from a trusted immutable
+`danger-full-access`, a writable probe, an unsupported platform, incomplete
+coverage, or ambiguous probe results exit `2` and block governance and later
+engineering gates. The complete OS capability denial is authoritative. Run the package itself from a trusted immutable
 launcher because a package copy already controlled by an attacker cannot
 trustworthily verify itself.
 

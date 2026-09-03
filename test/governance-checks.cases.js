@@ -19,6 +19,13 @@ async function copyRepositoryFixture() {
   return target;
 }
 
+async function deniedPromptBoundary(directoryPaths, promptPaths) {
+  return {
+    fileWrites: promptPaths.map(() => "denied"),
+    directoryMutations: directoryPaths.map(() => "denied"),
+  };
+}
+
 test("governance checks pass on the repository and emit valid evidence", async () => {
   const result = await runGovernanceChecks(repositoryRoot);
   assert.equal(result.blocking, false);
@@ -317,8 +324,7 @@ test("installed governance requires verified project prompt protection and rejec
   for (const project of [nodeProject, shellProject]) {
     const protectedResult = await runGovernanceChecks(project, {
       promptProtection: {
-        environment: { CODEX_PERMISSION_PROFILE: ":workspace", CODEX_SANDBOX: "seatbelt" },
-        probe: async () => ({ fileWrite: "denied", directoryMutation: "denied" }),
+        probe: deniedPromptBoundary,
       },
     });
     assert.equal(protectedResult.trusted, true);
@@ -359,8 +365,7 @@ test("managed prompt governance rejects prompt drift even when role regexes stil
 
   const result = await runGovernanceChecks(project, {
     promptProtection: {
-      environment: { CODEX_PERMISSION_PROFILE: ":workspace", CODEX_SANDBOX: "seatbelt" },
-      probe: async () => ({ fileWrite: "denied", directoryMutation: "denied" }),
+      probe: deniedPromptBoundary,
     },
   });
   assert.equal(result.trusted, false);

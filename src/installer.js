@@ -496,12 +496,6 @@ function legacyPermissionSettings(config) {
   return settings;
 }
 
-function exposedRuntimeProfile(environment) {
-  const value = environment?.CODEX_PERMISSION_PROFILE;
-  return ["workspace-only", ":workspace", ":read-only", ":danger-full-access", "workspace-write"]
-    .includes(value) ? value : undefined;
-}
-
 async function resolveCheckedPermissionProfile(projectRoot, legacySettings) {
   try {
     return await resolvePermissionProfile(projectRoot);
@@ -576,13 +570,24 @@ async function inspectManagedPromptInventory(projectRoot, expectedPromptPaths) {
   return { actualPromptPaths, drift, unsafePaths };
 }
 
-async function inspectPromptBoundary(projectRoot, promptPaths, unsafePaths, probeBoundary) {
-  const firstPrompt = promptPaths.find((relativePath) => !unsafePaths.includes(relativePath));
-  if (!firstPrompt) return { fileWrite: "unknown", directoryMutation: "unknown" };
-  return probeBoundary(
+async function inspectPromptBoundary(projectRoot, protectedPaths, unsafePaths, probeBoundary) {
+  const relativePaths = protectedPaths.filter((relativePath) => !unsafePaths.includes(relativePath));
+  const directoryPaths = [
+    path.join(projectRoot, ".codex"),
     path.join(projectRoot, ".codex", "agents"),
-    path.join(projectRoot, firstPrompt),
-  );
+  ];
+  const promptPaths = relativePaths.map((relativePath) => path.join(projectRoot, relativePath));
+  const probe = await probeBoundary(directoryPaths, promptPaths);
+  const fileWrites = Array.isArray(probe?.fileWrites) ? probe.fileWrites : [];
+  const directoryMutations = Array.isArray(probe?.directoryMutations)
+    ? probe.directoryMutations
+    : [];
+  return {
+    fileWrites,
+    directoryMutations,
+    complete: fileWrites.length === promptPaths.length
+      && directoryMutations.length === directoryPaths.length,
+  };
 }
 
 export async function checkProjectFiles(targetPath, options = {}) {
@@ -600,18 +605,16 @@ export async function checkProjectFiles(targetPath, options = {}) {
   appendUnique(unsafePaths, inventory.unsafePaths);
   drift.sort();
   unsafePaths.sort();
+  const expectedProtectedPaths = [...expected.keys()].filter(isManagedPrompt);
   const probe = await inspectPromptBoundary(
     projectRoot,
-    expectedPromptPaths,
+    expectedProtectedPaths,
     unsafePaths,
     options.probe ?? probeManagedPromptBoundary,
   );
-  const environment = options.environment ?? process.env;
-  const runtimeProfile = exposedRuntimeProfile(environment);
   const classification = classifyPromptProtection({
     configuredProfile: permissionProfile,
-    runtimeProfile,
-    runtimeSandbox: environment?.CODEX_SANDBOX,
+    platform: process.platform,
     promptDrift: drift.filter(isManagedPrompt),
     unsafePaths,
     legacySettings,
@@ -623,7 +626,7 @@ export async function checkProjectFiles(targetPath, options = {}) {
     protection: {
       ...classification,
       configured_profile: permissionProfile,
-      runtime_profile: runtimeProfile ?? null,
+      runtime_platform: process.platform,
       managed_prompt_count: inventory.actualPromptPaths.length,
     },
   };
