@@ -11,6 +11,24 @@ function result(state, reasonCode, trusted = false) {
   return { state, trusted, reason_code: reasonCode };
 }
 
+function isLegacyRuntime(legacySettings, runtimeProfile, runtimeSandbox) {
+  return legacySettings.length > 0
+    || runtimeProfile === "workspace-write"
+    || LEGACY_RUNTIME_SANDBOXES.has(runtimeSandbox);
+}
+
+function isElevatedRuntime(configuredProfile, runtimeProfile, runtimeSandbox) {
+  return configuredProfile === "danger-full-access"
+    || runtimeProfile === ":danger-full-access"
+    || runtimeSandbox === "danger-full-access";
+}
+
+function isSupportedRuntime(configuredProfile, runtimeProfile, runtimeSandbox) {
+  return SAFE_CONFIGURED_PROFILES.has(configuredProfile)
+    && SAFE_RUNTIME_PROFILES.has(runtimeProfile)
+    && SAFE_RUNTIME_SANDBOXES.has(runtimeSandbox);
+}
+
 export function classifyPromptProtection({
   configuredProfile,
   runtimeProfile,
@@ -22,19 +40,13 @@ export function classifyPromptProtection({
 }) {
   if (unsafePaths.length > 0) return result("unsafe", "MANAGED_PROMPT_UNSAFE_PATH");
   if (promptDrift.length > 0) return result("drifted", "MANAGED_PROMPT_DRIFT");
-  if (legacySettings.length > 0
-    || runtimeProfile === "workspace-write"
-    || LEGACY_RUNTIME_SANDBOXES.has(runtimeSandbox)) {
+  if (isLegacyRuntime(legacySettings, runtimeProfile, runtimeSandbox)) {
     return result("legacy", "MANAGED_PROMPT_LEGACY_RUNTIME");
   }
-  if (configuredProfile === "danger-full-access"
-    || runtimeProfile === ":danger-full-access"
-    || runtimeSandbox === "danger-full-access") {
+  if (isElevatedRuntime(configuredProfile, runtimeProfile, runtimeSandbox)) {
     return result("elevated", "MANAGED_PROMPT_ELEVATED_PROFILE");
   }
-  if (!SAFE_CONFIGURED_PROFILES.has(configuredProfile)
-    || !SAFE_RUNTIME_PROFILES.has(runtimeProfile)
-    || !SAFE_RUNTIME_SANDBOXES.has(runtimeSandbox)) {
+  if (!isSupportedRuntime(configuredProfile, runtimeProfile, runtimeSandbox)) {
     return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   }
   if (probe.fileWrite === "writable" || probe.directoryMutation === "writable") {

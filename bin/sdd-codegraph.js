@@ -166,17 +166,20 @@ async function managedProjectCommand(command, args) {
     process.exitCode = 2;
     return;
   }
+  if (!files.protection.trusted) {
+    if (files.drift.length > 0) process.stderr.write(`Managed file drift: ${files.drift.join(", ")}\n`);
+    process.stderr.write(`Managed prompt protection: ${files.protection.reason_code}.\n`);
+    process.exitCode = 2;
+    return;
+  }
   const graph = checkCodeGraph(files.projectRoot);
   if (files.protection.trusted && files.drift.length === 0 && graph.ok) {
     process.stdout.write("SDD and CodeGraph check passed.\n");
     return;
   }
   if (files.drift.length > 0) process.stderr.write(`Managed file drift: ${files.drift.join(", ")}\n`);
-  if (!files.protection.trusted) {
-    process.stderr.write(`Managed prompt protection: ${files.protection.reason_code}.\n`);
-  }
   if (!graph.ok) process.stderr.write(`${graph.reason}\n`);
-  process.exitCode = files.protection.trusted ? 1 : 2;
+  process.exitCode = 1;
 }
 
 async function run() {
