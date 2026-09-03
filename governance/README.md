@@ -117,11 +117,12 @@ prose fail closed. Validation errors describe only the failed constraint and do
 not echo rejected values.
 
 `sdd-codegraph check-governance [path]` writes exactly one canonical JSON
-`governance-check-result` document to stdout. It exits nonzero only when a
-failed result has approved `block` effect; failed `warn` or `none` results stay
-machine-readable without failing the process. The initial checks cover catalog
-integrity, the Codex role catalog, reviewer report-only constraints, structured
-review handoffs, and pipeline dependency ordering with fail-closed policy.
+`governance-check-result` document to stdout. It exits `1` when a trustworthy
+failed result has approved `block` effect and `2` when the layout or protection
+state is untrustworthy; failed `warn` or `none` results stay machine-readable
+without failing the process. The checks cover catalog integrity, the Codex role
+catalog, reviewer report-only constraints, structured review handoffs, pipeline
+dependency ordering, and managed prompt protection.
 If the catalog or registry loads as JSON but fails its schema or referential
 integrity, execution stops before registry dispatch and emits one bounded,
 blocking `GOV-CATALOG-INTEGRITY-001` result. Result validation also requires
@@ -134,6 +135,18 @@ and `pipeline.json`. Installed layouts use their installed Codex definitions and
 pipeline while validation code comes from the executing package. Unknown or
 incomplete layouts fail closed with a bounded machine-readable result.
 
+For a source checkout, `managed_prompt_protection` verifies that canonical
+agents use permission profiles rather than legacy sandbox keys and contain the
+non-delegable prompt boundary. For a project installation it additionally
+requires the exact package-owned prompt file set and bytes, the protected digest inventory, regular
+single-link files, a supported configured/runtime permission profile, and
+denied non-mutating filesystem capability probes. Added, removed, or renamed
+agent prompts and legacy or unknown runtime sandbox identifiers fail closed.
+Global layouts do not have a
+package-proven project boundary and therefore return untrustworthy exit `2`.
+This protects the supported AI-mediated workflow; it does not prevent a human
+or administrator with direct filesystem access from updating files.
+
 ## Deterministic engineering gates
 
 `sdd-codegraph run-gates [target]` reads the target's
@@ -142,7 +155,7 @@ package-owned executors in registry order, validates the complete result, and
 writes one `engineering-gate-run` JSON document to stdout. The ten executors
 cover tracked JavaScript and shell syntax, package-owned Node.js lint and
 per-function complexity, explicit unit and integration suites, combined global
-and changed/new coverage, five Node.js architecture-boundary checks, the five individual governance checks, production
+and changed/new coverage, five Node.js architecture-boundary checks, the six individual governance checks, production
 dependency audit, npm package surface, and approved forbidden references.
 
 Engineering gate runs emit version `1.1.0`, including blocked runs. Completed

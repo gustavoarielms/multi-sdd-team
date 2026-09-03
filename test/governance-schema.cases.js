@@ -255,6 +255,7 @@ test("versioned governance catalog and check registry are valid and linked", asy
       "GOV-REVIEW-REPORTONLY-001",
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
+      "GOV-MANAGED-PROMPT-PROTECTION-001",
       "ENG-SOURCE-SYNTAX-001",
       "SEC-PRODUCTION-DEPS-001",
       "ENG-PACKAGE-SURFACE-001",

@@ -116,7 +116,8 @@ async function governanceCommand(args) {
   if (rest.length > 0) throw new Error(`Unexpected argument: ${rest[0]}`);
   const result = await runGovernanceChecks(target);
   process.stdout.write(`${JSON.stringify(result.document)}\n`);
-  if (result.blocking) process.exitCode = 1;
+  if (!result.trusted) process.exitCode = 2;
+  else if (result.blocking) process.exitCode = 1;
 }
 
 async function engineeringGatesCommand(args) {
@@ -157,15 +158,25 @@ async function managedProjectCommand(command, args) {
   }
   const [target = process.cwd(), ...rest] = args;
   if (rest.length > 0) throw new Error(`Unexpected argument: ${rest[0]}`);
-  const files = await checkProjectFiles(target);
+  let files;
+  try {
+    files = await checkProjectFiles(target);
+  } catch {
+    process.stderr.write("Managed prompt protection: MANAGED_PROMPT_RUNTIME_UNPROVEN.\n");
+    process.exitCode = 2;
+    return;
+  }
   const graph = checkCodeGraph(files.projectRoot);
-  if (files.drift.length === 0 && graph.ok) {
+  if (files.protection.trusted && files.drift.length === 0 && graph.ok) {
     process.stdout.write("SDD and CodeGraph check passed.\n");
     return;
   }
   if (files.drift.length > 0) process.stderr.write(`Managed file drift: ${files.drift.join(", ")}\n`);
+  if (!files.protection.trusted) {
+    process.stderr.write(`Managed prompt protection: ${files.protection.reason_code}.\n`);
+  }
   if (!graph.ok) process.stderr.write(`${graph.reason}\n`);
-  process.exitCode = 1;
+  process.exitCode = files.protection.trusted ? 1 : 2;
 }
 
 async function run() {

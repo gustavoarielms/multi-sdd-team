@@ -22,7 +22,7 @@ async function copyRepositoryFixture() {
 test("governance checks pass on the repository and emit valid evidence", async () => {
   const result = await runGovernanceChecks(repositoryRoot);
   assert.equal(result.blocking, false);
-  assert.equal(result.document.results.length, 5);
+  assert.equal(result.document.results.length, 6);
   assert.ok(result.document.results.every((check) => check.status === "pass"));
   assert.ok(result.document.results.every((check) => check.evidence_ids.length > 0));
 });
@@ -54,7 +54,7 @@ test("governance check errors never echo rejected sensitive content", async (con
   await fs.writeFile(catalogPath, '{"secret":"SECRET_VALUE_MUST_NOT_BE_ECHOED"}\n', "utf8");
 
   const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", fixture], { encoding: "utf8" });
-  assert.equal(execution.status, 1);
+  assert.equal(execution.status, 2);
   assert.equal(`${execution.stdout}${execution.stderr}`.includes("SECRET_VALUE_MUST_NOT_BE_ECHOED"), false);
 });
 
@@ -140,7 +140,7 @@ test("reviewer report-only governance rejects Codex write capability and conditi
 
   const sandboxPath = path.join(writableSandbox, "codex", "agents", "hacker.toml");
   const sandbox = await fs.readFile(sandboxPath, "utf8");
-  await fs.writeFile(sandboxPath, sandbox.replace('sandbox_mode = "read-only"', 'sandbox_mode = "workspace-write"'), "utf8");
+  await fs.writeFile(sandboxPath, sandbox.replace('default_permissions = ":read-only"', 'default_permissions = ":workspace"'), "utf8");
 
   const codexPath = path.join(codexException, "codex", "agents", "hacker.toml");
   const codex = await fs.readFile(codexPath, "utf8");
@@ -296,7 +296,7 @@ test("pipeline governance rejects every missing governed stage and edge", async 
   }
 });
 
-test("check-governance passes for Node and shell project installations", async (context) => {
+test("installed governance requires verified project prompt protection and rejects global ambiguity", async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "governance-installed-layout-"));
   const nodeProject = path.join(root, "node-project");
   const shellProject = path.join(root, "shell-project");
@@ -314,14 +314,61 @@ test("check-governance passes for Node and shell project installations", async (
   });
   assert.equal(globalSetup.status, 0, globalSetup.stderr);
 
-  for (const project of [nodeProject, shellProject, globalCodex]) {
+  for (const project of [nodeProject, shellProject]) {
+    const protectedResult = await runGovernanceChecks(project, {
+      promptProtection: {
+        environment: { CODEX_PERMISSION_PROFILE: ":workspace", CODEX_SANDBOX: "seatbelt" },
+        probe: async () => ({ fileWrite: "denied", directoryMutation: "denied" }),
+      },
+    });
+    assert.equal(protectedResult.trusted, true);
+    assert.equal(protectedResult.blocking, false);
+    assert.equal(protectedResult.document.results.length, 6);
+    assert.equal(
+      protectedResult.document.results.find((result) => result.check_id === "managed_prompt_protection").status,
+      "pass",
+    );
+
     const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", project], { encoding: "utf8" });
-    assert.equal(execution.status, 0, execution.stderr);
+    assert.equal(execution.status, 2, execution.stderr);
     const document = JSON.parse(execution.stdout);
-    assert.equal(document.outcome, "passed");
-    assert.equal(document.results.length, 5);
-    assert.ok(document.results.every((result) => result.status === "pass"));
+    assert.equal(document.outcome, "failed");
+    assert.equal(document.results.length, 6);
+    assert.equal(
+      document.results.find((result) => result.check_id === "managed_prompt_protection").status,
+      "fail",
+    );
   }
+
+  const globalExecution = spawnSync(process.execPath, [cli.pathname, "check-governance", globalCodex], { encoding: "utf8" });
+  assert.equal(globalExecution.status, 2, globalExecution.stderr);
+  const globalDocument = JSON.parse(globalExecution.stdout);
+  assert.equal(globalDocument.outcome, "failed");
+  assert.equal(
+    globalDocument.results.find((result) => result.check_id === "managed_prompt_protection").status,
+    "fail",
+  );
+});
+
+test("managed prompt governance rejects prompt drift even when role regexes still match", async (context) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), "governance-prompt-drift-"));
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const promptPath = path.join(project, ".codex", "agents", "implementer.toml");
+  await fs.appendFile(promptPath, "\n# model-authored drift that preserves all role declarations\n");
+
+  const result = await runGovernanceChecks(project, {
+    promptProtection: {
+      environment: { CODEX_PERMISSION_PROFILE: ":workspace", CODEX_SANDBOX: "seatbelt" },
+      probe: async () => ({ fileWrite: "denied", directoryMutation: "denied" }),
+    },
+  });
+  assert.equal(result.trusted, false);
+  assert.equal(result.blocking, true);
+  assert.equal(
+    result.document.results.find((check) => check.check_id === "managed_prompt_protection").status,
+    "fail",
+  );
 });
 
 test("unknown governance layout fails closed without leaking target content", async (context) => {
@@ -330,7 +377,7 @@ test("unknown governance layout fails closed without leaking target content", as
   await fs.writeFile(path.join(target, "SECRET_VALUE_MUST_NOT_BE_ECHOED"), "private", "utf8");
 
   const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", target], { encoding: "utf8" });
-  assert.equal(execution.status, 1);
+  assert.equal(execution.status, 2);
   assert.equal(`${execution.stdout}${execution.stderr}`.includes("SECRET_VALUE_MUST_NOT_BE_ECHOED"), false);
   assert.equal((await validateGovernanceCheckResult(JSON.parse(execution.stdout))).ok, true);
 });
@@ -364,7 +411,7 @@ test("source, project, and global layouts reject governance symlink escapes", as
     await fs.symlink(externalCatalog, catalogPath);
     const target = [source, project, globalCodex][index];
     const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", target], { encoding: "utf8" });
-    assert.equal(execution.status, 1, `layout ${index} followed an external symlink`);
+    assert.equal(execution.status, 2, `layout ${index} followed an external symlink`);
     const document = JSON.parse(execution.stdout);
     assert.equal(document.results[0].rule_id, "GOV-CATALOG-INTEGRITY-001");
     assert.equal((await validateGovernanceCheckResult(document)).ok, true);
@@ -382,6 +429,6 @@ test("project layout permits a governance symlink that stays inside the project 
   await fs.symlink(internalCopy, catalogPath);
 
   const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", project], { encoding: "utf8" });
-  assert.equal(execution.status, 0, execution.stderr);
-  assert.equal(JSON.parse(execution.stdout).outcome, "passed");
+  assert.equal(execution.status, 2, execution.stderr);
+  assert.equal(JSON.parse(execution.stdout).outcome, "failed");
 });

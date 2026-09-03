@@ -6,6 +6,21 @@ When the user asks for a feature, fix, refactor, migration, audit, or implementa
 
 Use the pipeline contract at `~/.codex/pipeline.json` for delegation order. If the project has `pipeline.json`, prefer the project copy. The pipeline is mandatory for multi-agent work. Current mode is `demo_fast`.
 
+## Managed Prompt Boundary
+
+Project-installed `.codex/agents/**` files are managed security policy, not an
+agent-editable project surface. No main session or subagent may modify, remove,
+replace, rename over, symlink-redirect, regenerate, or patch those files. Agents
+must not invoke `sdd-codegraph init` or `sdd-codegraph update`, request elevated
+permissions for that purpose, or delegate the attempt to another agent.
+
+Prompt changes require a separately approved package change followed by an
+explicit update initiated directly by a person outside the AI-mediated workflow.
+A conversational request to an agent is not update authority. Before delegated
+or automatic work begins, `sdd-codegraph check` and governance must establish a
+protected runtime; drift, legacy sandbox configuration, an elevated profile, or
+an unproven effective state blocks the workflow.
+
 ## Global Demo Fast Mode
 
 For demo-speed multi-agent work, optimize for quick iteration:

@@ -13,8 +13,10 @@ import {
   createExecutorBoundary,
   runBoundedCommand,
   runEngineeringGates,
+  runGovernanceExecutor,
   runExecutorBoundaryWithTimeout,
 } from "../src/engineering-gates.js";
+import { installProject } from "../src/installer.js";
 import {
   captureProcessIdentity,
   linuxProcessGroupExited,
@@ -267,6 +269,7 @@ function executorSet(statuses = {}) {
         ["reviewer_report_only", "GOV-REVIEW-REPORTONLY-001"],
         ["review_handoff_contract", "GOV-REVIEW-HANDOFF-001"],
         ["pipeline_dependency_order", "GOV-PIPELINE-ORDER-001"],
+        ["managed_prompt_protection", "GOV-MANAGED-PROMPT-PROTECTION-001"],
       ];
       const collectedAt = new Date().toISOString();
       const evidence = definitions.map(([checkId], index) => ({
@@ -350,10 +353,10 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 18);
-  assert.equal(inventory.length, 118);
-  assert.equal(new Set(inventory).size, 118);
+  assert.equal(inventory.length, 125);
+  assert.equal(new Set(inventory).size, 125);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 18);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 100);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 107);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 6);
@@ -2488,6 +2491,19 @@ test("unsafe tracked source paths and unknown governance layouts block execution
   assert.equal(unknown.exitCode, 2);
   assert.equal(unknown.document.results[6].reason_code, "GOVERNANCE_ERROR");
   assert.equal(unknown.document.results.slice(7).every((item) => item.status === "not_run"), true);
+});
+
+test("untrustworthy installed prompt protection blocks run-gates before later executors", async (t) => {
+  const target = await configuredTarget(t);
+  await installProject(target);
+  const executors = executorSet();
+  executors.governance = async () => runGovernanceExecutor({ target });
+
+  const result = await runConfiguredGates(target, { executors });
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.document.results[6].status, "error");
+  assert.equal(result.document.results[6].reason_code, "GOVERNANCE_UNTRUSTWORTHY");
+  assert.equal(result.document.results.slice(7).every((item) => item.status === "not_run"), true);
 });
 
 test("invalid generated evidence fails the complete result contract without leaking values", async (t) => {

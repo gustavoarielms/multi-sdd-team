@@ -12,7 +12,8 @@
     "Demo-fast mode: run agents in fast mode and skip hacker by default.",
     "Review findings return to the implementer, then deterministic checks and the originating gate run again.",
     "Architecture rules and exceptions require approval by the user or a designated human authority.",
-    "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues."
+    "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues.",
+    "Managed prompts under .codex/agents are immutable to every AI-mediated stage; only a human-controlled package update outside the agent workflow may replace them."
   ],
   "strategies": {
     "INLINE": {
@@ -183,6 +184,8 @@
     "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",
     "Reject any architecture_reviewer, tester_reviewer, or hacker handoff that is not valid agent-result JSON for the expected role and runtime.",
     "Never treat invalid structured review output as a passing gate or continue to a dependent stage.",
+    "Never start or delegate work when managed prompt protection is drifted, elevated, legacy, or unproven.",
+    "Never ask for escalation, invoke init or update, or delegate a bypass to modify .codex/agents.",
     "If a dependency is optional and skipped, note why it was skipped before continuing."
   ]
 }
