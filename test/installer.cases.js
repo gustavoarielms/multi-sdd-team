@@ -517,6 +517,24 @@ test("project update preserves permission profiles declared with quoted TOML key
   }
 });
 
+test("project update requires explicit permissions when the managed config is missing", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project, { permissions: "read-only" });
+
+  const configPath = path.join(project, ".codex", "config.toml");
+  const manifestPath = path.join(project, ".sdd-codegraph.json");
+  const originalManifest = await fs.readFile(manifestPath, "utf8");
+  await fs.rm(configPath);
+
+  await assert.rejects(installProject(project), /Explicitly select one with --permissions/);
+  await assert.rejects(fs.access(configPath));
+  assert.equal(await fs.readFile(manifestPath, "utf8"), originalManifest);
+
+  await installProject(project, { permissions: "read-only" });
+  assert.match(await fs.readFile(configPath, "utf8"), /^default_permissions = ":read-only"$/m);
+});
+
 test("CLI selects a permission profile and preserves it on update", async (context) => {
   const root = await temporaryProject();
   const project = path.join(root, "project");

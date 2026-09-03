@@ -94,11 +94,14 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
 
 The target path defaults to the current working directory.
 
-Project installs select `workspace-only` by default and persist the selection in
-`.sdd-codegraph.json`, so later `update` commands keep the same profile. Override
-it with `--permissions read-only`, `--permissions workspace`, or the explicit
-escape hatch `--permissions danger-full-access`. The repository `setup.sh`
-accepts the same option when used with `--project`.
+Project installs select `workspace-only` by default. Later `update` commands use
+the protected `default_permissions` value in `.codex/config.toml` as their
+authority; `.sdd-codegraph.json` only records the selected profile. If that
+config value is missing from an existing installation, restore it by explicitly
+passing `--permissions workspace-only`, `--permissions read-only`,
+`--permissions workspace`, or the escape hatch
+`--permissions danger-full-access`. The repository `setup.sh` accepts the same
+option when used with `--project`.
 
 `workspace-only` is a custom beta Codex permission profile. It extends the
 built-in workspace profile, then denies filesystem access outside the active

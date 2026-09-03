@@ -68,6 +68,17 @@ async function readManagedTextIfExists(installRoot, relativePath) {
   return readTextIfExists(path.join(installRoot, relativePath));
 }
 
+async function managedPathExists(installRoot, relativePath) {
+  await assertManagedPathSafe(installRoot, relativePath);
+  try {
+    await fs.lstat(path.join(installRoot, relativePath));
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function writeManagedFile(installRoot, relativePath, content) {
   await assertManagedPathSafe(installRoot, relativePath);
   const target = path.join(installRoot, relativePath);
@@ -203,8 +214,19 @@ function configuredPermissionProfile(config) {
 async function resolvePermissionProfile(installRoot, requestedProfile) {
   if (requestedProfile !== undefined) return validatePermissionProfile(requestedProfile);
 
-  const config = await readManagedTextIfExists(installRoot, path.join(".codex", "config.toml"));
-  return configuredPermissionProfile(config) ?? DEFAULT_PERMISSION_PROFILE;
+  const [config, manifestExists] = await Promise.all([
+    readManagedTextIfExists(installRoot, path.join(".codex", "config.toml")),
+    managedPathExists(installRoot, MANIFEST_NAME),
+  ]);
+  const configuredProfile = configuredPermissionProfile(config);
+  if (configuredProfile !== undefined) return configuredProfile;
+  if (manifestExists) {
+    throw new Error(
+      "Missing default_permissions in .codex/config.toml for an existing project installation. "
+        + `Explicitly select one with --permissions: ${[...PERMISSION_PROFILE_VALUES.keys()].join(", ")}`,
+    );
+  }
+  return DEFAULT_PERMISSION_PROFILE;
 }
 
 async function loadTemplates() {
