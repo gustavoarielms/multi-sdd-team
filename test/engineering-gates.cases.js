@@ -549,7 +549,7 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   const coverageContext = {
     target: await fs.realpath(coverageTarget),
     comparisonBase: { effective_merge_base_sha: coverageBase },
-    limits: { timeoutMs: 30000, maxOutputBytes: 262144 },
+    limits: { timeoutMs: 180000, maxOutputBytes: 262144 },
   };
   const coverageRunner = (uncoveredLast, mapMode = "valid") => async (executable, args, options) => {
     if (executable === "git") return runBoundedCommand(executable, args, options);
@@ -597,8 +597,15 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
     ["coverage_global", "pass"],
     ["coverage_changed", "fail"],
   ]);
-  const coveragePassing = await runNodeCoverage(coverageContext, coverageRunner(false));
+  const coveragePhases = [];
+  const coveragePassing = await runNodeCoverage({
+    ...coverageContext,
+    reportProgress: (phase) => coveragePhases.push(phase),
+  }, coverageRunner(false));
   assert.equal(coveragePassing.status, "pass");
+  assert.deepEqual(coveragePhases, [
+    "precondition", "controls", "unit", "integration", "map", "evaluation", "denominator", "evaluation", "cleanup",
+  ]);
   assert.deepEqual(changedFailure.evidence.map((item) => [item.check_id, item.outcome]), [
     ["coverage_global", "pass"], ["coverage_changed", "fail"],
     ["coverage_unit", "observed"], ["coverage_integration", "observed"],
@@ -1180,6 +1187,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   const nonCooperative = await runExecutorBoundaryWithTimeout({
     execution: nonCooperativeExecution,
     abort: () => {},
+    progress: () => "integration",
     terminate: async () => {
       forcedTerminationCompleted = true;
       boundarySettled({ type: "error", error: new Error("terminated") });
@@ -1189,6 +1197,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   assert.ok(Date.now() - nonCooperativeStarted < 250);
   assert.equal(forcedTerminationCompleted, true);
   assert.equal(nonCooperative.reason_code, "EXECUTOR_TIMEOUT");
+  assert.match(nonCooperative.summary, /Last reported phase: integration\./);
 
   let legacyOverrideInvoked = false;
   const rejectedOverride = await runEngineeringGates(target, {
@@ -2041,6 +2050,8 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   const completedBoundary = createExecutorBoundary(completedWorker, { fixture: true }, async () => {});
   completedWorker.emit("spawn");
+  completedWorker.emit("message", { type: "progress", phase: "integration" });
+  assert.equal(completedBoundary.progress(), "integration");
   completedWorker.emit("message", { type: "result", value: { status: "pass" } });
   completedWorker.disconnect();
   completedWorker.emit("exit");

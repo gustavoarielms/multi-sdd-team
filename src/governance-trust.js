@@ -60,7 +60,7 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
   coverage: Object.freeze({
     implementation: "coverage",
     rule_ids: Object.freeze(["TEST-COVERAGE-GLOBAL-001", "TEST-COVERAGE-CHANGED-001"]),
-    timeout_ms: 120000,
+    timeout_ms: 180000,
     max_output_bytes: 262144,
   }),
   node_architecture: Object.freeze({

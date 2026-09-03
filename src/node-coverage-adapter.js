@@ -255,7 +255,10 @@ async function readStableMapBytes(mapPath, ownedRoot, limits, io) {
 export async function readOwnedCoverageMap(mapPath, ownedRoot, target, allowedPaths, limits = {}, injectedIo = {}) {
   const bytes = await readStableMapBytes(mapPath, ownedRoot, limits, { open: injectedIo.open ?? fs.open });
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const value = await parseCoverageMapSource(source, limits);
+  const value = await parseCoverageMapSource(source, {
+    ...limits,
+    timeoutMs: Math.min(limits.timeoutMs ?? 30000, 120000),
+  });
   const realTarget = await fs.realpath(target);
   for (const [file, coverage] of Object.entries(value)) {
     const absolute = path.resolve(file);
@@ -343,6 +346,11 @@ async function runCoverageSuite(target, suite, productionPaths, root, configPath
     : { status: "error", reason_code: "COVERAGE_EXECUTION_FAILED" };
 }
 
+function setCoveragePhase(context, state, phase) {
+  state.phase = phase;
+  try { context.reportProgress?.(phase); } catch { /* Progress reporting must not affect the gate result. */ }
+}
+
 function emptyCounts() {
   return Object.fromEntries(METRICS.map((metric) => [metric, { covered: 0, total: 0 }]));
 }
@@ -412,7 +420,7 @@ async function prepareCoverage(context, runner, state) {
   if (production.tracked.length === 0) {
     return { result: { status: "error", reason_code: "COVERAGE_EMPTY_PRODUCTION" } };
   }
-  state.phase = "controls";
+  setCoveragePhase(context, state, "controls");
   await rejectTargetCoverageControls(context.target, allPaths);
   state.temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-node-coverage-"));
   const configPath = path.join(state.temporaryRoot, "c8-config.json");
@@ -421,7 +429,7 @@ async function prepareCoverage(context, runner, state) {
 }
 
 async function collectCoverageMaps(context, runner, state, prepared) {
-  state.phase = "unit";
+  setCoveragePhase(context, state, "unit");
   const unit = await runCoverageSuite(
     context.target,
     "unit",
@@ -432,7 +440,7 @@ async function collectCoverageMaps(context, runner, state, prepared) {
     runner,
   );
   if (unit.status === "error") return { result: unit };
-  state.phase = "integration";
+  setCoveragePhase(context, state, "integration");
   const integration = await runCoverageSuite(
     context.target,
     "integration",
@@ -443,7 +451,7 @@ async function collectCoverageMaps(context, runner, state, prepared) {
     runner,
   );
   if (integration.status === "error") return { result: integration };
-  state.phase = "map";
+  setCoveragePhase(context, state, "map");
   const allowed = new Set(prepared.allPaths);
   const [unitValue, integrationValue] = await Promise.all([
     readOwnedCoverageMap(unit.mapPath, state.temporaryRoot, context.target, allowed, context.limits),
@@ -460,14 +468,14 @@ async function collectCoverageMaps(context, runner, state, prepared) {
 
 function evaluateCoverage(context, production, maps, state) {
   const { combined, suiteCounts } = maps;
-  state.phase = "evaluation";
+  setCoveragePhase(context, state, "evaluation");
   const globalMap = createCoverageMap();
   for (const relative of production.tracked) {
     globalMap.addFileCoverage(combined.fileCoverageFor(path.resolve(context.target, relative)));
   }
-  state.phase = "denominator";
+  setCoveragePhase(context, state, "denominator");
   const globalCounts = summaryCounts(globalMap, true);
-  state.phase = "evaluation";
+  setCoveragePhase(context, state, "evaluation");
   const changedCounts = emptyCounts();
   const locationBudget = { used: 0 };
   for (const [relative, changed] of production.changed) {
@@ -496,6 +504,7 @@ function coverageError(error, context, phase) {
 export async function runNodeCoverage(context, runner = runBoundedCommand) {
   const state = { phase: "precondition", temporaryRoot: undefined };
   try {
+    setCoveragePhase(context, state, "precondition");
     const prepared = await prepareCoverage(context, runner, state);
     if (prepared.result) return prepared.result;
     const maps = await collectCoverageMaps(context, runner, state, prepared);
@@ -504,6 +513,9 @@ export async function runNodeCoverage(context, runner = runBoundedCommand) {
   } catch (error) {
     return coverageError(error, context, state.phase);
   } finally {
-    if (state.temporaryRoot) await fs.rm(state.temporaryRoot, { recursive: true, force: true });
+    if (state.temporaryRoot) {
+      setCoveragePhase(context, state, "cleanup");
+      await fs.rm(state.temporaryRoot, { recursive: true, force: true });
+    }
   }
 }

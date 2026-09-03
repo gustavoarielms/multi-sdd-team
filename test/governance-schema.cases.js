@@ -313,6 +313,7 @@ test("engineering gate registry safety limits are exact trusted bindings", async
   const catalog = await readJson(catalogUrl);
   const registry = await readJson(registryUrl);
   const gateRegistry = await readJson(new URL("governance/gates/v1/registry.json", root));
+  assert.equal(gateRegistry.executors.find((executor) => executor.executor_id === "coverage").timeout_ms, 180000);
   gateRegistry.executors[0].timeout_ms += 1;
   const validation = await validateGovernanceCatalog(catalog, registry, gateRegistry);
   assert.equal(validation.ok, false);
