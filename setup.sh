@@ -15,12 +15,14 @@ multi-sdd-team setup
 
 Usage:
   ./setup.sh --global
-  ./setup.sh --project /path/to/project
-  ./setup.sh --global --project /path/to/project
+  ./setup.sh --project /path/to/project [--permissions <profile>]
+  ./setup.sh --global --project /path/to/project [--permissions <profile>]
 
 Options:
   --global              Install globally under ~/.codex.
   --project <path>      Install project-scoped config into <path>.
+  --permissions <name>  Project profile: workspace-only (default), read-only,
+                        workspace, or danger-full-access.
   -h, --help            Show this help.
 
 Examples:
@@ -63,15 +65,16 @@ require_codex_templates() {
 run_node_installer() {
   local scope="$1"
   local target="$2"
+  local permissions="${3:-}"
 
-  node --input-type=module - "$scope" "$target" "$ROOT_DIR" <<'JS'
+  node --input-type=module - "$scope" "$target" "$ROOT_DIR" "$permissions" <<'JS'
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [scope, target, packageRoot] = process.argv.slice(2);
+const [scope, target, packageRoot, permissions] = process.argv.slice(2);
 const installer = await import(pathToFileURL(path.join(packageRoot, "src", "installer.js")));
 if (scope === "global") await installer.installGlobal(target);
-else await installer.installProject(target);
+else await installer.installProject(target, permissions ? { permissions } : undefined);
 JS
 }
 
@@ -88,7 +91,8 @@ install_codex_project() {
   require_codex_templates
 
   local project_dir="$1"
-  run_node_installer "project" "$project_dir"
+  local permissions="${2:-}"
+  run_node_installer "project" "$project_dir" "$permissions"
 
   echo "Installed Codex project config in $project_dir"
 }
@@ -96,6 +100,7 @@ install_codex_project() {
 setup() {
   local do_global=0
   local project_dir=""
+  local permissions=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -107,6 +112,14 @@ setup() {
         project_dir="${2:-}"
         if [[ -z "$project_dir" ]]; then
           echo "--project requires a path" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
+      --permissions)
+        permissions="${2:-}"
+        if [[ -z "$permissions" ]]; then
+          echo "--permissions requires a value" >&2
           exit 1
         fi
         shift 2
@@ -128,12 +141,17 @@ setup() {
     exit 1
   fi
 
+  if [[ -n "$permissions" && -z "$project_dir" ]]; then
+    echo "--permissions requires --project" >&2
+    exit 1
+  fi
+
   if [[ "$do_global" -eq 1 ]]; then
     install_codex_global
   fi
 
   if [[ -n "$project_dir" ]]; then
-    install_codex_project "$project_dir"
+    install_codex_project "$project_dir" "$permissions"
   fi
 }
 

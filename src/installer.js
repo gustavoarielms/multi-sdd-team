@@ -14,6 +14,13 @@ const GOVERNANCE_GATES_ROOT = path.join(PACKAGE_ROOT, "governance", "gates", "v1
 const GOVERNANCE_PROFILES_ROOT = path.join(PACKAGE_ROOT, "governance", "profiles", "v1");
 const MANAGED_MARKER = "multi-sdd-team";
 const MANIFEST_NAME = ".sdd-codegraph.json";
+const DEFAULT_PERMISSION_PROFILE = "workspace-only";
+const PERMISSION_PROFILE_VALUES = new Map([
+  ["workspace-only", "workspace-only"],
+  ["read-only", ":read-only"],
+  ["workspace", ":workspace"],
+  ["danger-full-access", ":danger-full-access"],
+]);
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -59,6 +66,17 @@ async function assertManagedPathSafe(installRoot, relativePath) {
 async function readManagedTextIfExists(installRoot, relativePath) {
   await assertManagedPathSafe(installRoot, relativePath);
   return readTextIfExists(path.join(installRoot, relativePath));
+}
+
+async function managedPathExists(installRoot, relativePath) {
+  await assertManagedPathSafe(installRoot, relativePath);
+  try {
+    await fs.lstat(path.join(installRoot, relativePath));
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function writeManagedFile(installRoot, relativePath, content) {
@@ -107,36 +125,107 @@ export function mergeManagedBlock(existing, managedContent, marker = MANAGED_MAR
   return result + block;
 }
 
+function basicQuoteIsEscaped(line, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && line[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+function closesTomlMultiline(line, index, delimiter) {
+  if (!line.startsWith(delimiter, index)) return false;
+  return delimiter === "'''" || !basicQuoteIsEscaped(line, index);
+}
+
+function tomlMultilineDelimiter(line, index) {
+  if (line.startsWith('"""', index)) return '"""';
+  if (line.startsWith("'''", index)) return "'''";
+  return "";
+}
+
+function isTomlQuote(character) {
+  return character === '"' || character === "'";
+}
+
+function tomlStructuralLines(lines) {
+  let multiline = "";
+  return lines.map((line) => {
+    let code = "";
+    let quote = "";
+    let escaped = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      const multilineDelimiter = tomlMultilineDelimiter(line, index);
+      if (multiline) {
+        if (closesTomlMultiline(line, index, multiline)) {
+          multiline = "";
+          index += 2;
+        }
+      } else if (quote === '"') {
+        code += character;
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === quote) quote = "";
+      } else if (quote === "'") {
+        code += character;
+        if (character === quote) quote = "";
+      } else if (multilineDelimiter) {
+        multiline = multilineDelimiter;
+        code += multiline;
+        index += 2;
+      } else if (isTomlQuote(character)) {
+        quote = character;
+        code += character;
+      } else if (character === "#") {
+        break;
+      } else {
+        code += character;
+      }
+    }
+    return code;
+  });
+}
+
 function isTable(line) {
   const value = line.trim();
   return value.startsWith("[") && value.endsWith("]");
 }
 
+function tomlKeySource(key) {
+  const escapedKey = escapeRegExp(key);
+  if (/^[A-Za-z0-9_-]+$/.test(key)) {
+    return `(?:${escapedKey}|"${escapedKey}"|'${escapedKey}')`;
+  }
+  return escapedKey;
+}
+
 function keyPattern(key) {
-  return new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
+  return new RegExp(`^\\s*${tomlKeySource(key)}\\s*=`);
 }
 
 export function setTomlKey(existing, table, key, value) {
   const lines = existing.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
+  const structuralLines = tomlStructuralLines(lines);
   const pattern = keyPattern(key);
 
   if (table === "") {
-    const firstTable = lines.findIndex(isTable);
+    const firstTable = structuralLines.findIndex(isTable);
     const end = firstTable === -1 ? lines.length : firstTable;
-    const index = lines.slice(0, end).findIndex((line) => pattern.test(line));
+    const index = structuralLines.slice(0, end).findIndex((line) => pattern.test(line));
     if (index === -1) lines.splice(end, 0, `${key} = ${value}`);
     else lines[index] = `${key} = ${value}`;
   } else {
     const header = `[${table}]`;
-    const start = lines.findIndex((line) => line.trim() === header);
+    const start = structuralLines.findIndex((line) => line.trim() === header);
     if (start === -1) {
       if (lines.length > 0 && lines.at(-1).trim()) lines.push("");
       lines.push(header, `${key} = ${value}`);
     } else {
-      const relativeEnd = lines.slice(start + 1).findIndex(isTable);
+      const relativeEnd = structuralLines.slice(start + 1).findIndex(isTable);
       const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd;
-      const relativeIndex = lines.slice(start + 1, end).findIndex((line) => pattern.test(line));
+      const relativeIndex = structuralLines.slice(start + 1, end).findIndex((line) => pattern.test(line));
       if (relativeIndex === -1) lines.splice(start + 1, 0, `${key} = ${value}`);
       else lines[start + 1 + relativeIndex] = `${key} = ${value}`;
     }
@@ -147,6 +236,60 @@ export function setTomlKey(existing, table, key, value) {
 
 async function loadPackageMetadata() {
   return JSON.parse(await fs.readFile(path.join(PACKAGE_ROOT, "package.json"), "utf8"));
+}
+
+function validatePermissionProfile(permissionProfile) {
+  if (!PERMISSION_PROFILE_VALUES.has(permissionProfile)) {
+    throw new Error(
+      `Unsupported permissions profile: ${permissionProfile}. Expected one of: ${[
+        ...PERMISSION_PROFILE_VALUES.keys(),
+      ].join(", ")}`,
+    );
+  }
+  return permissionProfile;
+}
+
+function configuredPermissionProfile(config) {
+  const lines = tomlStructuralLines(config.split(/\r?\n/));
+  const firstTable = lines.findIndex(isTable);
+  const topLevelLines = firstTable === -1 ? lines : lines.slice(0, firstTable);
+  const declarations = topLevelLines.filter((line) => keyPattern("default_permissions").test(line));
+  if (declarations.length === 0) return undefined;
+
+  const declarationPattern = new RegExp(
+    `^\\s*${tomlKeySource("default_permissions")}\\s*=\\s*`
+      + `(?:"([^"]+)"|'([^']+)')\\s*(?:#.*)?$`,
+  );
+  const match = declarations.length === 1
+    ? declarations[0].match(declarationPattern)
+    : null;
+  const configuredValue = match?.[1] ?? match?.[2];
+  for (const [profile, value] of PERMISSION_PROFILE_VALUES) {
+    if (value === configuredValue) return profile;
+  }
+
+  throw new Error(
+    "Unsupported or ambiguous default_permissions in .codex/config.toml. "
+      + `Explicitly select one with --permissions: ${[...PERMISSION_PROFILE_VALUES.keys()].join(", ")}`,
+  );
+}
+
+async function resolvePermissionProfile(installRoot, requestedProfile) {
+  if (requestedProfile !== undefined) return validatePermissionProfile(requestedProfile);
+
+  const [config, manifestExists] = await Promise.all([
+    readManagedTextIfExists(installRoot, path.join(".codex", "config.toml")),
+    managedPathExists(installRoot, MANIFEST_NAME),
+  ]);
+  const configuredProfile = configuredPermissionProfile(config);
+  if (configuredProfile !== undefined) return configuredProfile;
+  if (manifestExists) {
+    throw new Error(
+      "Missing default_permissions in .codex/config.toml for an existing project installation. "
+        + `Explicitly select one with --permissions: ${[...PERMISSION_PROFILE_VALUES.keys()].join(", ")}`,
+    );
+  }
+  return DEFAULT_PERMISSION_PROFILE;
 }
 
 async function loadTemplates() {
@@ -212,7 +355,7 @@ async function loadTemplates() {
   };
 }
 
-async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
+async function expectedInstallFiles(installRoot, codexPrefix, includeManifest, permissionProfile) {
   const [metadata, templates] = await Promise.all([loadPackageMetadata(), loadTemplates()]);
   const files = new Map();
 
@@ -246,6 +389,19 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   config = setTomlKey(config, "features", "fast_mode", "true");
   config = setTomlKey(config, "agents", "max_threads", "6");
   config = setTomlKey(config, "agents", "max_depth", "1");
+  if (includeManifest) {
+    config = setTomlKey(config, "", "default_permissions", JSON.stringify(
+      PERMISSION_PROFILE_VALUES.get(permissionProfile),
+    ));
+    if (permissionProfile === "workspace-only") {
+      config = setTomlKey(config, "permissions.workspace-only", "extends", '":workspace"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":root"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":minimal"', '"read"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":tmpdir"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.filesystem", '":slash_tmp"', '"deny"');
+      config = setTomlKey(config, "permissions.workspace-only.network", "enabled", "false");
+    }
+  }
   files.set(configRelativePath, config);
 
   if (includeManifest) {
@@ -253,6 +409,7 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
       schemaVersion: 1,
       package: metadata.name,
       version: metadata.version,
+      permissionsProfile: permissionProfile,
     };
     files.set(MANIFEST_NAME, `${JSON.stringify(manifest, null, 2)}\n`);
   }
@@ -260,9 +417,17 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest) {
   return files;
 }
 
-async function installFiles(targetPath, codexPrefix, includeManifest) {
+async function installFiles(targetPath, codexPrefix, includeManifest, options = {}) {
   const installRoot = await canonicalInstallRoot(targetPath);
-  const expected = await expectedInstallFiles(installRoot, codexPrefix, includeManifest);
+  const permissionProfile = includeManifest
+    ? await resolvePermissionProfile(installRoot, options.permissions)
+    : undefined;
+  const expected = await expectedInstallFiles(
+    installRoot,
+    codexPrefix,
+    includeManifest,
+    permissionProfile,
+  );
   await Promise.all([...expected.keys()].map((relativePath) => (
     assertManagedPathSafe(installRoot, relativePath)
   )));
@@ -278,8 +443,8 @@ async function installFiles(targetPath, codexPrefix, includeManifest) {
   return { installRoot, changed };
 }
 
-export async function installProject(targetPath) {
-  const result = await installFiles(targetPath, ".codex", true);
+export async function installProject(targetPath, options = {}) {
+  const result = await installFiles(targetPath, ".codex", true, options);
   return { projectRoot: result.installRoot, changed: result.changed };
 }
 
@@ -290,7 +455,8 @@ export async function installGlobal(targetPath) {
 
 export async function checkProjectFiles(targetPath) {
   const projectRoot = await fs.realpath(path.resolve(targetPath));
-  const expected = await expectedInstallFiles(projectRoot, ".codex", true);
+  const permissionProfile = await resolvePermissionProfile(projectRoot);
+  const expected = await expectedInstallFiles(projectRoot, ".codex", true, permissionProfile);
   const drift = [];
 
   for (const [relativePath, content] of expected) {

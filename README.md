@@ -61,6 +61,7 @@ From npm:
 
 ```bash
 npx @gustavoarielms/sdd-codegraph-cli init /absolute/path/to/project
+npx @gustavoarielms/sdd-codegraph-cli init /absolute/path/to/project --permissions read-only
 npx @gustavoarielms/sdd-codegraph-cli update /absolute/path/to/project
 npx @gustavoarielms/sdd-codegraph-cli check /absolute/path/to/project
 npx @gustavoarielms/sdd-codegraph-cli check-governance /absolute/path/to/repository
@@ -71,6 +72,7 @@ From a local checkout, the equivalent commands are:
 
 ```bash
 node ./bin/sdd-codegraph.js init /absolute/path/to/project
+node ./bin/sdd-codegraph.js init /absolute/path/to/project --permissions read-only
 node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
@@ -91,6 +93,28 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
   or untrustworthy run.
 
 The target path defaults to the current working directory.
+
+Project installs select `workspace-only` by default. Later `update` commands use
+the protected `default_permissions` value in `.codex/config.toml` as their
+authority; `.sdd-codegraph.json` only records the selected profile. If that
+config value is missing from an existing installation, restore it by explicitly
+passing `--permissions workspace-only`, `--permissions read-only`,
+`--permissions workspace`, or the escape hatch
+`--permissions danger-full-access`. The repository `setup.sh` accepts the same
+option when used with `--project`.
+
+`workspace-only` is a custom beta Codex permission profile. It extends the
+built-in workspace profile, then denies filesystem access outside the active
+workspace except for minimal runtime reads, disables command network access,
+and denies system temporary directories. `read-only` prevents local command
+writes; `workspace` permits writes in workspace roots and system temporary
+directories; `danger-full-access` removes local sandbox restrictions.
+
+Permission profiles are ignored when any loaded Codex configuration still uses
+the legacy `sandbox_mode` or `[sandbox_workspace_write]` settings. Remove those
+legacy settings before relying on this boundary. Codex also loads project-local
+configuration only after the project is trusted. Global installs do not select
+or define a permission profile.
 
 `run-gates` requires this target-owned configuration:
 
@@ -199,6 +223,7 @@ Install into a specific project:
 
 ```bash
 ./setup.sh --project /absolute/path/to/project
+./setup.sh --project /absolute/path/to/project --permissions workspace
 ```
 
 Install both global and project config:

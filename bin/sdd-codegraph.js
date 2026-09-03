@@ -19,8 +19,8 @@ function usage() {
   return `sdd-codegraph
 
 Usage:
-  sdd-codegraph init [path]
-  sdd-codegraph update [path]
+  sdd-codegraph init [path] [--permissions <profile>]
+  sdd-codegraph update [path] [--permissions <profile>]
   sdd-codegraph check [path]
   sdd-codegraph check-governance [path]
   sdd-codegraph run-gates [path] [--comparison-base <full-commit-sha>]
@@ -39,6 +39,7 @@ Commands:
             Validate one governance agent-result JSON document. Reads stdin by default.
 
 The target path defaults to the current working directory.
+Permission profiles: workspace-only (default), read-only, workspace, danger-full-access.
 `;
 }
 
@@ -125,16 +126,37 @@ async function engineeringGatesCommand(args) {
   process.exitCode = result.exitCode;
 }
 
+function parseManagedInstallArguments(args) {
+  let target = process.cwd();
+  let permissions;
+  let hasTarget = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--permissions") {
+      permissions = args[index + 1];
+      if (!permissions) throw new Error("--permissions requires a value");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--")) throw new Error(`Unexpected argument: ${argument}`);
+    if (hasTarget) throw new Error(`Unexpected argument: ${argument}`);
+    target = argument;
+    hasTarget = true;
+  }
+  return { target, permissions };
+}
+
 async function managedProjectCommand(command, args) {
-  const [target = process.cwd(), ...rest] = args;
-  if (rest.length > 0) throw new Error(`Unexpected argument: ${rest[0]}`);
   if (command === "init" || command === "update") {
-    const result = await installProject(target);
+    const { target, permissions } = parseManagedInstallArguments(args);
+    const result = await installProject(target, { permissions });
     const graphAction = syncCodeGraph(result.projectRoot);
     const changed = result.changed.length === 0 ? "no managed files changed" : result.changed.join(", ");
     process.stdout.write(`SDD ${command} complete: ${changed}; CodeGraph ${graphAction}.\n`);
     return;
   }
+  const [target = process.cwd(), ...rest] = args;
+  if (rest.length > 0) throw new Error(`Unexpected argument: ${rest[0]}`);
   const files = await checkProjectFiles(target);
   const graph = checkCodeGraph(files.projectRoot);
   if (files.drift.length === 0 && graph.ok) {
