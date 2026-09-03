@@ -535,6 +535,33 @@ test("project update requires explicit permissions when the managed config is mi
   assert.match(await fs.readFile(configPath, "utf8"), /^default_permissions = ":read-only"$/m);
 });
 
+test("project update never treats a key under a commented TOML table as global", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project, { permissions: "read-only" });
+
+  const configPath = path.join(project, ".codex", "config.toml");
+  const nestedConfig = [
+    'service_tier = "fast"',
+    "",
+    "[unrelated] # valid TOML comment",
+    'default_permissions = ":danger-full-access"',
+    "",
+  ].join("\n");
+  await fs.writeFile(configPath, nestedConfig);
+  const manifestPath = path.join(project, ".sdd-codegraph.json");
+  const originalManifest = await fs.readFile(manifestPath, "utf8");
+
+  await assert.rejects(installProject(project), /Explicitly select one with --permissions/);
+  assert.equal(await fs.readFile(configPath, "utf8"), nestedConfig);
+  assert.equal(await fs.readFile(manifestPath, "utf8"), originalManifest);
+
+  await installProject(project, { permissions: "read-only" });
+  const restoredConfig = await fs.readFile(configPath, "utf8");
+  assert.match(restoredConfig, /^default_permissions = ":read-only"$/m);
+  assert.match(restoredConfig, /^\[unrelated\] # valid TOML comment$/m);
+});
+
 test("CLI selects a permission profile and preserves it on update", async (context) => {
   const root = await temporaryProject();
   const project = path.join(root, "project");

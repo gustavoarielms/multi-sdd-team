@@ -125,8 +125,28 @@ export function mergeManagedBlock(existing, managedContent, marker = MANAGED_MAR
   return result + block;
 }
 
+function tomlCodeBeforeComment(line) {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+    } else if (quote === "'") {
+      if (character === quote) quote = "";
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "#") {
+      return line.slice(0, index);
+    }
+  }
+  return line;
+}
+
 function isTable(line) {
-  const value = line.trim();
+  const value = tomlCodeBeforeComment(line).trim();
   return value.startsWith("[") && value.endsWith("]");
 }
 
