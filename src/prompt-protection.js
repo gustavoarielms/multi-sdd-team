@@ -2,7 +2,6 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 
 const SAFE_CONFIGURED_PROFILES = new Set(["workspace-only", "workspace", "read-only"]);
-const SUPPORTED_PLATFORMS = new Set(["darwin", "linux", "win32"]);
 const DENIED_ERROR_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 function result(state, reasonCode, trusted = false) {
@@ -13,14 +12,8 @@ function probeStates(probe) {
   return [...(probe.fileWrites ?? []), ...(probe.directoryMutations ?? [])];
 }
 
-function isSupportedRuntime(configuredProfile, platform) {
-  return SAFE_CONFIGURED_PROFILES.has(configuredProfile)
-    && SUPPORTED_PLATFORMS.has(platform);
-}
-
 export function classifyPromptProtection({
   configuredProfile,
-  platform,
   promptDrift = [],
   unsafePaths = [],
   legacySettings = [],
@@ -34,7 +27,7 @@ export function classifyPromptProtection({
   if (configuredProfile === "danger-full-access") {
     return result("elevated", "MANAGED_PROMPT_ELEVATED_PROFILE");
   }
-  if (!isSupportedRuntime(configuredProfile, platform) || probe.complete !== true) {
+  if (!SAFE_CONFIGURED_PROFILES.has(configuredProfile) || probe.complete !== true) {
     return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   }
   const states = probeStates(probe);
@@ -44,7 +37,7 @@ export function classifyPromptProtection({
   if (states.length === 0 || states.some((state) => state !== "denied")) {
     return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   }
-  return result("protected", "MANAGED_PROMPTS_PROTECTED", true);
+  return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
 }
 
 function classifyProbeError(error) {

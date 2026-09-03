@@ -139,12 +139,15 @@ For a source checkout, `managed_prompt_protection` verifies that canonical
 agents use permission profiles rather than legacy sandbox keys and contain the
 non-delegable prompt boundary. For a project installation it additionally
 requires the exact package-owned prompt file set and bytes, the protected digest inventory, regular
-single-link files, a supported configured permission profile and host platform,
-and denied non-mutating filesystem capability probes for every prompt, the
-digest inventory, and both protected directories. Added, removed, or renamed
-agent prompts, legacy configuration, incomplete probe coverage, writable paths,
-and unsupported platforms fail closed. Child-controlled Codex environment
-variables are not security evidence.
+single-link files, a supported configured permission profile, and non-mutating
+filesystem capability probes for every prompt, the digest inventory, and both
+protected directories. Added, removed, or renamed agent prompts, legacy
+configuration, incomplete probe coverage, and writable paths fail closed.
+Denied probes remain unproven because the checked process can manufacture and
+later revoke discretionary file modes. Child-controlled Codex environment
+variables are not security evidence, and the current runtime exposes no trusted
+attestation channel. Project checks therefore exit `2` until an external runtime
+or broker authority can be verified without trusting the checked process.
 Global layouts do not have a
 package-proven project boundary and therefore return untrustworthy exit `2`.
 This protects the supported AI-mediated workflow; it does not prevent a human

@@ -614,7 +614,6 @@ export async function checkProjectFiles(targetPath, options = {}) {
   );
   const classification = classifyPromptProtection({
     configuredProfile: permissionProfile,
-    platform: process.platform,
     promptDrift: drift.filter(isManagedPrompt),
     unsafePaths,
     legacySettings,
@@ -626,7 +625,6 @@ export async function checkProjectFiles(targetPath, options = {}) {
     protection: {
       ...classification,
       configured_profile: permissionProfile,
-      runtime_platform: process.platform,
       managed_prompt_count: inventory.actualPromptPaths.length,
     },
   };

@@ -303,7 +303,7 @@ test("pipeline governance rejects every missing governed stage and edge", async 
   }
 });
 
-test("installed governance requires verified project prompt protection and rejects global ambiguity", async (context) => {
+test("installed governance fails closed without sandbox authority attestation and rejects global ambiguity", async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "governance-installed-layout-"));
   const nodeProject = path.join(root, "node-project");
   const shellProject = path.join(root, "shell-project");
@@ -327,12 +327,12 @@ test("installed governance requires verified project prompt protection and rejec
         probe: deniedPromptBoundary,
       },
     });
-    assert.equal(protectedResult.trusted, true);
-    assert.equal(protectedResult.blocking, false);
+    assert.equal(protectedResult.trusted, false);
+    assert.equal(protectedResult.blocking, true);
     assert.equal(protectedResult.document.results.length, 6);
     assert.equal(
       protectedResult.document.results.find((result) => result.check_id === "managed_prompt_protection").status,
-      "pass",
+      "fail",
     );
 
     const execution = spawnSync(process.execPath, [cli.pathname, "check-governance", project], { encoding: "utf8" });

@@ -138,20 +138,23 @@ Installation writes `.codex/managed-prompts.json`, containing the package
 identity, selected project profile, and SHA-256 of every managed prompt.
 `check` requires the actual agent directory to contain exactly the package-owned
 prompt set, verifies exact bytes, rejects symlink or hardlink identities, classifies
-legacy and elevated profiles, and performs non-mutating capability probes against
+legacy and elevated profiles, and performs non-mutating diagnostic probes against
 every managed prompt, the protected digest inventory, `.codex/`, and
 `.codex/agents/`. Each file is opened for write without truncation and each
-directory is checked for `W_OK` access. A protected result requires every
-operation to be denied by the effective OS sandbox on Darwin, Linux, or Windows.
+directory is checked for `W_OK` access. Writable, incomplete, or ambiguous
+results fail closed. A denial alone is not proof of the active sandbox authority:
+the same process may control discretionary file modes and later restore them.
 Child-controlled environment variables such as `CODEX_PERMISSION_PROFILE` and
 `CODEX_SANDBOX` are never accepted as security evidence.
 
-`protected` is the only trustworthy state. Drift, unsafe paths, legacy config,
-`danger-full-access`, a writable probe, an unsupported platform, incomplete
-coverage, or ambiguous probe results exit `2` and block governance and later
-engineering gates. The complete OS capability denial is authoritative. Run the package itself from a trusted immutable
-launcher because a package copy already controlled by an attacker cannot
-trustworthily verify itself.
+The current Codex child-process contract exposes no non-spoofable sandbox
+attestation. Therefore an otherwise clean project installation remains
+`unproven` with `MANAGED_PROMPT_RUNTIME_UNPROVEN`; `check`, governance, and
+`run-gates` exit `2` before automatic or delegated work. A future positive
+`protected` result requires a trusted runtime or broker attestation that the
+checked process cannot manufacture or revoke. Run the package itself from a
+trusted immutable launcher because a package copy already controlled by an
+attacker cannot trustworthily verify itself.
 
 `init` and `update` intentionally remain able to replace prompts when a person
 runs them outside the AI-mediated session. Agents must never invoke those
@@ -160,11 +163,12 @@ update authority, and a new Codex session is required after an update so the
 new configuration and prompts are loaded together.
 
 The guarantee is project-scoped. Global `$CODEX_HOME/agents` installations are
-reported as unproven unless an external administrator-controlled boundary
-protects them. Direct human, administrator, root, compromised-runtime, MCP,
-connector, browser, Computer Use, and cloud writes remain outside this package's
-filesystem guarantee and require their own controls. This package does not
-claim absolute immutability against direct machine access.
+always reported as unproven by this package. An external
+administrator-controlled boundary may protect them, but this package cannot
+attest that boundary. Direct human, administrator, root, compromised-runtime,
+MCP, connector, browser, Computer Use, and cloud writes remain outside this
+package's filesystem guarantee and require their own controls. This package
+does not claim absolute immutability against direct machine access.
 
 `run-gates` requires this target-owned configuration:
 
