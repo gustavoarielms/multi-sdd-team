@@ -188,11 +188,14 @@ const EXECUTOR_BOUNDARY_TERMINATION_MS = 2000;
 const EXECUTOR_WORKER_FLAG = "--engineering-executor-worker";
 const EXECUTOR_BOUNDARY_ENV = "SDD_ENGINEERING_EXECUTOR_BOUNDARY";
 
-function executorTimeoutResult() {
+function executorTimeoutResult(phase) {
+  const phaseDetail = typeof phase === "string" && /^[a-z][a-z_]{0,31}$/.test(phase)
+    ? ` Last reported phase: ${phase}.`
+    : "";
   return {
     status: "error",
     reason_code: "EXECUTOR_TIMEOUT",
-    summary: "The executor exceeded its package-owned time limit; cancellation and cleanup were bounded.",
+    summary: `The executor exceeded its package-owned time limit; cancellation and cleanup were bounded.${phaseDetail}`,
   };
 }
 
@@ -284,6 +287,14 @@ function acknowledgeOwnedProcessMessage(child, message, accepted, onFailure) {
   }
 }
 
+function executorProgressPhase(message) {
+  return message?.type === "progress"
+    && typeof message.phase === "string"
+    && /^[a-z][a-z_]{0,31}$/.test(message.phase)
+    ? message.phase
+    : undefined;
+}
+
 export function createExecutorBoundary(child, context, terminate = terminateProcessTree) {
   if (process.platform !== "win32" && !child.identityPromise && typeof child.spawnfile === "string") {
     child.identityPromise = captureProcessIdentity(child.pid);
@@ -295,6 +306,7 @@ export function createExecutorBoundary(child, context, terminate = terminateProc
   let groupDrain;
   let finalization;
   let settled = false;
+  let lastProgress;
   const ownedGroups = new Map();
   let settleExecution;
   const execution = new Promise((resolve) => {
@@ -369,6 +381,7 @@ export function createExecutorBoundary(child, context, terminate = terminateProc
     }
     if (message?.type === "result") workerResult = message.value;
     if (message?.type === "error") workerError = new Error("executor worker failed");
+    lastProgress = executorProgressPhase(message) ?? lastProgress;
   });
   child.on("error", () => {
     workerError = new Error("executor worker failed");
@@ -387,6 +400,7 @@ export function createExecutorBoundary(child, context, terminate = terminateProc
   }
   return {
     execution,
+    progress: () => lastProgress,
     abort: () => {
       if (child.connected) child.send({ type: "abort" }, () => {});
     },
@@ -421,10 +435,12 @@ export async function runExecutorBoundaryWithTimeout(
   let timer;
   let terminationTimer;
   let timedOut = false;
+  let timedOutPhase;
   try {
     const watchdog = new Promise((resolve) => {
       timer = setTimeout(() => {
         timedOut = true;
+        timedOutPhase = boundary.progress?.();
         boundary.abort();
         terminationTimer = setTimeout(() => resolve({ type: "terminate" }), boundaryTerminationMs);
       }, timeoutMs);
@@ -432,7 +448,7 @@ export async function runExecutorBoundaryWithTimeout(
     const first = await Promise.race([boundary.execution, watchdog]);
     if (first.type === "terminate" || timedOut) {
       await boundary.terminate();
-      return executorTimeoutResult();
+      return executorTimeoutResult(timedOutPhase);
     }
     if (first.type === "error") throw first.error;
     return first.value;
@@ -454,8 +470,13 @@ async function runExecutorWorker(implementation) {
     if (message?.type !== "start" || !executor) return;
     try {
       const context = message.context;
+      const reportProgress = (phase) => {
+        if (typeof phase !== "string" || !/^[a-z][a-z_]{0,31}$/.test(phase) || !process.connected) return;
+        try { process.send?.({ type: "progress", phase }, () => {}); } catch { /* The parent already disconnected. */ }
+      };
       const value = await executor({
         ...context,
+        reportProgress,
         signal: controller.signal,
         limits: { ...context.limits, signal: controller.signal },
       });

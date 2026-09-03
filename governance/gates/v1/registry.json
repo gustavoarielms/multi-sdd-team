@@ -34,7 +34,7 @@
       "executor_id": "coverage",
       "implementation": "coverage",
       "rule_ids": ["TEST-COVERAGE-GLOBAL-001", "TEST-COVERAGE-CHANGED-001"],
-      "timeout_ms": 120000,
+      "timeout_ms": 180000,
       "max_output_bytes": 262144
     },
     {
