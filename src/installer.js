@@ -125,28 +125,70 @@ export function mergeManagedBlock(existing, managedContent, marker = MANAGED_MAR
   return result + block;
 }
 
-function tomlCodeBeforeComment(line) {
-  let quote = "";
-  let escaped = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index];
-    if (quote === '"') {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) quote = "";
-    } else if (quote === "'") {
-      if (character === quote) quote = "";
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === "#") {
-      return line.slice(0, index);
-    }
+function basicQuoteIsEscaped(line, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && line[cursor] === "\\"; cursor -= 1) {
+    backslashes += 1;
   }
-  return line;
+  return backslashes % 2 === 1;
+}
+
+function closesTomlMultiline(line, index, delimiter) {
+  if (!line.startsWith(delimiter, index)) return false;
+  return delimiter === "'''" || !basicQuoteIsEscaped(line, index);
+}
+
+function tomlMultilineDelimiter(line, index) {
+  if (line.startsWith('"""', index)) return '"""';
+  if (line.startsWith("'''", index)) return "'''";
+  return "";
+}
+
+function isTomlQuote(character) {
+  return character === '"' || character === "'";
+}
+
+function tomlStructuralLines(lines) {
+  let multiline = "";
+  return lines.map((line) => {
+    let code = "";
+    let quote = "";
+    let escaped = false;
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      const multilineDelimiter = tomlMultilineDelimiter(line, index);
+      if (multiline) {
+        if (closesTomlMultiline(line, index, multiline)) {
+          multiline = "";
+          index += 2;
+        }
+      } else if (quote === '"') {
+        code += character;
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === quote) quote = "";
+      } else if (quote === "'") {
+        code += character;
+        if (character === quote) quote = "";
+      } else if (multilineDelimiter) {
+        multiline = multilineDelimiter;
+        code += multiline;
+        index += 2;
+      } else if (isTomlQuote(character)) {
+        quote = character;
+        code += character;
+      } else if (character === "#") {
+        break;
+      } else {
+        code += character;
+      }
+    }
+    return code;
+  });
 }
 
 function isTable(line) {
-  const value = tomlCodeBeforeComment(line).trim();
+  const value = line.trim();
   return value.startsWith("[") && value.endsWith("]");
 }
 
@@ -165,24 +207,25 @@ function keyPattern(key) {
 export function setTomlKey(existing, table, key, value) {
   const lines = existing.split(/\r?\n/);
   if (lines.at(-1) === "") lines.pop();
+  const structuralLines = tomlStructuralLines(lines);
   const pattern = keyPattern(key);
 
   if (table === "") {
-    const firstTable = lines.findIndex(isTable);
+    const firstTable = structuralLines.findIndex(isTable);
     const end = firstTable === -1 ? lines.length : firstTable;
-    const index = lines.slice(0, end).findIndex((line) => pattern.test(line));
+    const index = structuralLines.slice(0, end).findIndex((line) => pattern.test(line));
     if (index === -1) lines.splice(end, 0, `${key} = ${value}`);
     else lines[index] = `${key} = ${value}`;
   } else {
     const header = `[${table}]`;
-    const start = lines.findIndex((line) => line.trim() === header);
+    const start = structuralLines.findIndex((line) => line.trim() === header);
     if (start === -1) {
       if (lines.length > 0 && lines.at(-1).trim()) lines.push("");
       lines.push(header, `${key} = ${value}`);
     } else {
-      const relativeEnd = lines.slice(start + 1).findIndex(isTable);
+      const relativeEnd = structuralLines.slice(start + 1).findIndex(isTable);
       const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd;
-      const relativeIndex = lines.slice(start + 1, end).findIndex((line) => pattern.test(line));
+      const relativeIndex = structuralLines.slice(start + 1, end).findIndex((line) => pattern.test(line));
       if (relativeIndex === -1) lines.splice(start + 1, 0, `${key} = ${value}`);
       else lines[start + 1 + relativeIndex] = `${key} = ${value}`;
     }
@@ -207,7 +250,7 @@ function validatePermissionProfile(permissionProfile) {
 }
 
 function configuredPermissionProfile(config) {
-  const lines = config.split(/\r?\n/);
+  const lines = tomlStructuralLines(config.split(/\r?\n/));
   const firstTable = lines.findIndex(isTable);
   const topLevelLines = firstTable === -1 ? lines : lines.slice(0, firstTable);
   const declarations = topLevelLines.filter((line) => keyPattern("default_permissions").test(line));

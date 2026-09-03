@@ -562,6 +562,39 @@ test("project update never treats a key under a commented TOML table as global",
   assert.match(restoredConfig, /^\[unrelated\] # valid TOML comment$/m);
 });
 
+test("explicit permissions ignore table-like text inside multiline TOML strings", async (context) => {
+  const root = await temporaryProject();
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  for (const [name, delimiter] of [["basic", '"""'], ["literal", "'''"]]) {
+    const project = path.join(root, name);
+    await installProject(project, { permissions: "danger-full-access" });
+
+    const configPath = path.join(project, ".codex", "config.toml");
+    const config = [
+      `notes = ${delimiter}`,
+      "[unrelated] # documentation text",
+      delimiter,
+      'default_permissions = ":danger-full-access"',
+      "",
+      "[features]",
+      "fast_mode = true",
+      "",
+    ].join("\n");
+    await fs.writeFile(configPath, config);
+
+    await installProject(project, { permissions: "read-only" });
+
+    const updatedConfig = await fs.readFile(configPath, "utf8");
+    assert.match(updatedConfig, /^default_permissions = ":read-only"$/m);
+    assert.doesNotMatch(updatedConfig, /^default_permissions = ":danger-full-access"$/m);
+    assert.match(
+      updatedConfig,
+      new RegExp(`^notes = ${delimiter}\\n\\[unrelated\\] # documentation text\\n${delimiter}$`, "m"),
+    );
+  }
+});
+
 test("CLI selects a permission profile and preserves it on update", async (context) => {
   const root = await temporaryProject();
   const project = path.join(root, "project");
