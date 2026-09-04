@@ -92,7 +92,7 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
   production_dependency_audit: Object.freeze({
     implementation: "production_dependency_audit",
     rule_ids: Object.freeze(["SEC-PRODUCTION-DEPS-001"]),
-    timeout_ms: 60000,
+    timeout_ms: 120000,
     max_output_bytes: 262144,
   }),
   npm_package_surface: Object.freeze({

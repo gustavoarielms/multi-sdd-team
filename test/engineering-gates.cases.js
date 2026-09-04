@@ -354,10 +354,10 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 21);
-  assert.equal(inventory.length, 140);
-  assert.equal(new Set(inventory).size, 140);
+  assert.equal(inventory.length, 141);
+  assert.equal(new Set(inventory).size, 141);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 21);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 119);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 120);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 7);
@@ -1168,7 +1168,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   const nativeSetTimeout = globalThis.setTimeout;
   // Leave process identity and cleanup deadlines intact during Git preflight.
   const timeoutMock = t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
-    nativeSetTimeout(callback, delay === 60000 ? 20 : delay, ...args)
+    nativeSetTimeout(callback, delay === 120000 ? 20 : delay, ...args)
   ));
 
   const result = await runConfiguredGates(target, { executors });

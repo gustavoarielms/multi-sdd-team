@@ -179,6 +179,32 @@ async function requireDescriptorPath(projectRoot, filePath, descriptorMetadata) 
   );
 }
 
+async function readPromptDescriptor(projectRoot, filePath, maxBytes, testHooks, handle, directories) {
+  await testHooks?.afterPromptFileOpen?.({ filePath, handle });
+  const before = await handle.stat({ bigint: true });
+  requireValue(before.isFile() && !before.isSymbolicLink(), "BROKER_PROMPT_SNAPSHOT_UNSAFE");
+  requireValue(before.size <= BigInt(maxBytes), "BROKER_PROMPT_SNAPSHOT_TOO_LARGE");
+  await testHooks?.afterPromptFileStat?.({ filePath, handle, metadata: before });
+  await requireUnchangedDirectories(projectRoot, filePath, directories);
+  await requireDescriptorPath(projectRoot, filePath, before);
+
+  const buffer = Buffer.alloc(maxBytes + 1);
+  let totalBytesRead = 0;
+  while (totalBytesRead < buffer.length) {
+    const length = Math.min(PROMPT_READ_CHUNK_BYTES, buffer.length - totalBytesRead);
+    const { bytesRead } = await handle.read(buffer, totalBytesRead, length, totalBytesRead);
+    await testHooks?.onPromptFileRead?.({ bytesRead, filePath, totalBytesRead: totalBytesRead + bytesRead });
+    if (bytesRead === 0) break;
+    totalBytesRead += bytesRead;
+  }
+  requireValue(totalBytesRead <= maxBytes, "BROKER_PROMPT_SNAPSHOT_TOO_LARGE");
+  const after = await handle.stat({ bigint: true });
+  requireValue(sameStableFile(before, after), "BROKER_PROMPT_SNAPSHOT_UNSAFE");
+  await requireUnchangedDirectories(projectRoot, filePath, directories);
+  await requireDescriptorPath(projectRoot, filePath, after);
+  return buffer.subarray(0, totalBytesRead);
+}
+
 async function readBoundedPromptFile(projectRoot, filePath, maxBytes, testHooks) {
   requireValue(Number.isSafeInteger(maxBytes) && maxBytes >= 0, "BROKER_PROMPT_SNAPSHOT_TOO_LARGE");
   const directories = await managedDirectoryIdentities(projectRoot, filePath);
@@ -189,40 +215,20 @@ async function readBoundedPromptFile(projectRoot, filePath, maxBytes, testHooks)
   } catch {
     throw brokerError("BROKER_PROMPT_SNAPSHOT_UNSAFE");
   }
+  let bytes;
+  let failure;
   try {
-    await testHooks?.afterPromptFileOpen?.({ filePath, handle });
-    const before = await handle.stat({ bigint: true });
-    requireValue(before.isFile() && !before.isSymbolicLink(), "BROKER_PROMPT_SNAPSHOT_UNSAFE");
-    requireValue(before.size <= BigInt(maxBytes), "BROKER_PROMPT_SNAPSHOT_TOO_LARGE");
-    await testHooks?.afterPromptFileStat?.({ filePath, handle, metadata: before });
-    await requireUnchangedDirectories(projectRoot, filePath, directories);
-    await requireDescriptorPath(projectRoot, filePath, before);
-
-    const buffer = Buffer.alloc(maxBytes + 1);
-    let totalBytesRead = 0;
-    while (totalBytesRead < buffer.length) {
-      const length = Math.min(PROMPT_READ_CHUNK_BYTES, buffer.length - totalBytesRead);
-      const { bytesRead } = await handle.read(buffer, totalBytesRead, length, totalBytesRead);
-      await testHooks?.onPromptFileRead?.({ bytesRead, filePath, totalBytesRead: totalBytesRead + bytesRead });
-      if (bytesRead === 0) break;
-      totalBytesRead += bytesRead;
-    }
-    requireValue(totalBytesRead <= maxBytes, "BROKER_PROMPT_SNAPSHOT_TOO_LARGE");
-    const after = await handle.stat({ bigint: true });
-    requireValue(sameStableFile(before, after), "BROKER_PROMPT_SNAPSHOT_UNSAFE");
-    await requireUnchangedDirectories(projectRoot, filePath, directories);
-    await requireDescriptorPath(projectRoot, filePath, after);
-    return buffer.subarray(0, totalBytesRead);
+    bytes = await readPromptDescriptor(projectRoot, filePath, maxBytes, testHooks, handle, directories);
   } catch (error) {
-    if (brokerReason(error)) throw error;
-    throw brokerError("BROKER_PROMPT_SNAPSHOT_UNSAFE");
-  } finally {
-    try {
-      await handle.close();
-    } catch {
-      throw brokerError("BROKER_PROMPT_SNAPSHOT_UNSAFE");
-    }
+    failure = brokerReason(error) ? error : brokerError("BROKER_PROMPT_SNAPSHOT_UNSAFE");
   }
+  try {
+    await handle.close();
+  } catch {
+    failure ??= brokerError("BROKER_PROMPT_SNAPSHOT_UNSAFE");
+  }
+  if (failure) throw failure;
+  return bytes;
 }
 
 function updateDigestRecord(digest, type, value) {
@@ -287,22 +293,36 @@ function validateRuntime(initialize) {
   requireValue(typeof initialize?.userAgent === "string" && initialize.userAgent.length > 0, "BROKER_RUNTIME_UNSUPPORTED");
 }
 
+function validateSandboxPolicy(sandbox, projectRoot, permissionProfile) {
+  requireValue(sandbox?.type === sandboxType(permissionProfile), "BROKER_SANDBOX_POLICY_MISMATCH");
+  requireValue(sandbox?.networkAccess === false, "BROKER_SANDBOX_POLICY_MISMATCH");
+  const writableRoots = sandbox?.writableRoots;
+  if (permissionProfile === "read-only") {
+    requireValue(
+      writableRoots === undefined || (Array.isArray(writableRoots) && writableRoots.length === 0),
+      "BROKER_WORKSPACE_ROOT_MISMATCH",
+    );
+    return;
+  }
+  requireValue(sameRoots(writableRoots, projectRoot), "BROKER_WORKSPACE_ROOT_MISMATCH");
+}
+
 function validateThread(response, projectRoot, permissionProfile) {
   requireValue(response?.approvalPolicy === "never", "BROKER_APPROVAL_POLICY_MISMATCH");
-  requireValue(
-    response?.activePermissionProfile?.id === permissionProfileId(permissionProfile),
-    "BROKER_PERMISSION_PROFILE_MISMATCH",
-  );
-  requireValue(response?.sandbox?.type === sandboxType(permissionProfile), "BROKER_SANDBOX_POLICY_MISMATCH");
-  requireValue(response?.sandbox?.networkAccess === false, "BROKER_SANDBOX_POLICY_MISMATCH");
-  const rootsMatch = permissionProfile === "read-only"
-    ? response?.sandbox?.writableRoots === undefined
-      || (Array.isArray(response.sandbox.writableRoots) && response.sandbox.writableRoots.length === 0)
-    : sameRoots(response?.sandbox?.writableRoots, projectRoot);
-  requireValue(rootsMatch, "BROKER_WORKSPACE_ROOT_MISMATCH");
+  validateSandboxPolicy(response?.sandbox, projectRoot, permissionProfile);
   requireValue(response?.cwd === projectRoot && response?.thread?.cwd === projectRoot, "BROKER_PROJECT_MISMATCH");
   requireValue(typeof response?.thread?.id === "string", "BROKER_THREAD_ID_MISSING");
   requireValue(typeof response?.thread?.sessionId === "string", "BROKER_SESSION_ID_MISSING");
+}
+
+function validateThreadSettings(settings, projectRoot, permissionProfile) {
+  requireValue(settings?.approvalPolicy === "never", "BROKER_APPROVAL_POLICY_MISMATCH");
+  requireValue(
+    settings?.activePermissionProfile?.id === permissionProfileId(permissionProfile),
+    "BROKER_PERMISSION_PROFILE_MISMATCH",
+  );
+  validateSandboxPolicy(settings?.sandboxPolicy, projectRoot, permissionProfile);
+  requireValue(settings?.cwd === projectRoot, "BROKER_PROJECT_MISMATCH");
 }
 
 function resolveServerOperation(request, expected) {
@@ -379,6 +399,7 @@ export async function createAppServerBroker(options) {
   let revocationReason;
   let threadId;
   let turnId;
+  let pendingThreadSettings;
 
   function assertLive(expectedThreadId = threadId, expectedTurnId = turnId) {
     requireValue(revocationReason === undefined, revocationReason ?? "BROKER_SESSION_REVOKED");
@@ -417,6 +438,12 @@ export async function createAppServerBroker(options) {
     });
     validateThread(threadResponse, projectRoot, permissionProfile);
     threadId = threadResponse.thread.id;
+    if (pendingThreadSettings) {
+      const notification = pendingThreadSettings;
+      pendingThreadSettings = undefined;
+      handleThreadSettings(notification);
+      requireValue(revocationReason === undefined, revocationReason ?? "BROKER_SESSION_REVOKED");
+    }
     const turnRequest = {
       threadId,
       input: [{ type: "text", text: prompt }],
@@ -469,12 +496,30 @@ export async function createAppServerBroker(options) {
   }
 
   function handleNotification(notification) {
+    if (notification?.method === "thread/settings/updated") {
+      if (threadId === undefined) {
+        if (pendingThreadSettings) revocationReason ??= "BROKER_THREAD_SETTINGS_AMBIGUOUS";
+        else pendingThreadSettings = notification;
+      } else {
+        handleThreadSettings(notification);
+      }
+      return;
+    }
     if (
       notification?.method === "turn/completed"
       || notification?.method === "thread/archived"
       || notification?.method === "error"
     ) {
       revocationReason ??= "BROKER_SESSION_ENDED";
+    }
+  }
+
+  function handleThreadSettings(notification) {
+    try {
+      requireValue(notification?.params?.threadId === threadId, "BROKER_THREAD_MISMATCH");
+      validateThreadSettings(notification.params.threadSettings, projectRoot, permissionProfile);
+    } catch (error) {
+      revocationReason ??= brokerReason(error) ? error.message : "BROKER_THREAD_SETTINGS_INVALID";
     }
   }
 

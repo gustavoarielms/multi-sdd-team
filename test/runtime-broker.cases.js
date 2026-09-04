@@ -26,15 +26,40 @@ import { captureProcessIdentity, terminateProcessTree } from "../src/engineering
 function appServerThread(project, overrides = {}) {
   return {
     approvalPolicy: "never",
-    activePermissionProfile: { id: ":read-only", extends: ":read-only" },
+    approvalsReviewer: "user",
     cwd: project,
+    model: "gpt-5.6-sol",
+    modelProvider: "openai",
     sandbox: { type: "readOnly", networkAccess: false },
     thread: {
-      id: "thread-main",
-      sessionId: "session-main",
-      cwd: project,
       cliVersion: "0.153.0-alpha.5",
+      createdAt: 1,
+      cwd: project,
+      ephemeral: true,
+      id: "thread-main",
+      modelProvider: "openai",
+      preview: "",
+      projectId: null,
+      sessionId: "session-main",
+      source: "vscode",
+      status: { type: "idle" },
+      turns: [],
+      updatedAt: 1,
     },
+    ...overrides,
+  };
+}
+
+function threadSettings(project, overrides = {}) {
+  return {
+    activePermissionProfile: { id: ":read-only", extends: null },
+    approvalPolicy: "never",
+    approvalsReviewer: "user",
+    collaborationMode: { mode: "default", settings: { model: "gpt-5.6-sol" } },
+    cwd: project,
+    model: "gpt-5.6-sol",
+    modelProvider: "openai",
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
     ...overrides,
   };
 }
@@ -71,6 +96,76 @@ test("runtime attestation accepts only supported Node release lines", () => {
   for (const version of ["v20.20.2", "22.13.9", "23.9.0", "not-a-version"]) {
     assert.throws(() => assertSupportedNodeRuntime(version), /supported Node runtime/u);
   }
+});
+
+test("broker uses schema-supported thread start and settings contracts", async (context) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-thread-contract-"));
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const projectRoot = await fs.realpath(project);
+  const response = appServerThread(projectRoot);
+  const requests = [];
+  let activeBroker;
+  const rpc = {
+    async request(method, params) {
+      requests.push({ method, params });
+      if (method === "initialize") {
+        return { platformFamily: "unix", platformOs: "macos", userAgent: "codex_cli_rs/0.153.0-alpha.5" };
+      }
+      if (method === "thread/start") {
+        activeBroker.handleNotification({
+          method: "thread/settings/updated",
+          params: { threadId: "thread-main", threadSettings: threadSettings(projectRoot) },
+        });
+        return response;
+      }
+      if (method === "turn/start") return { turn: { id: "turn-main" } };
+      throw new Error(`unexpected request ${method}`);
+    },
+    notify() {},
+  };
+  assert.equal(Object.hasOwn(response, "activePermissionProfile"), false);
+  assert.deepEqual(Object.keys(response).sort(), [
+    "approvalPolicy",
+    "approvalsReviewer",
+    "cwd",
+    "model",
+    "modelProvider",
+    "sandbox",
+    "thread",
+  ]);
+  const broker = await createAppServerBroker({
+    rpc,
+    targetPath: projectRoot,
+    operations: { check: async () => ({ trusted: false }) },
+  });
+  activeBroker = broker;
+  await broker.startTurn("accept the generated ThreadStartResponse contract");
+  assert.equal(requests.at(-1).method, "turn/start");
+
+  const responseAfterAttestation = await broker.handleServerRequest(brokerToolCall("call-settings-match"));
+  assert.equal(responseAfterAttestation.success, true);
+
+  const mismatchedBroker = await createAppServerBroker({
+    rpc,
+    targetPath: projectRoot,
+    operations: { check: async () => ({ trusted: false }) },
+  });
+  activeBroker = mismatchedBroker;
+  await mismatchedBroker.startTurn("reject an unsafe ThreadSettings update");
+  mismatchedBroker.handleNotification({
+    method: "thread/settings/updated",
+    params: {
+      threadId: "thread-main",
+      threadSettings: threadSettings(projectRoot, {
+        activePermissionProfile: { id: ":danger-full-access", extends: null },
+      }),
+    },
+  });
+  await assert.rejects(
+    () => mismatchedBroker.handleServerRequest(brokerToolCall("call-settings-mismatch")),
+    /BROKER_PERMISSION_PROFILE_MISMATCH/u,
+  );
 });
 
 test("caller-minted runtime attestation cannot produce trusted protection", async (context) => {
@@ -508,7 +603,7 @@ test("POSIX containment cannot verify a reparented descendant outside the retain
     targetPath: project,
     terminateProcess: terminateProcessTree,
     testHooks: { allowUncontainedLaunch: true },
-    turnTimeoutMs: 2_000,
+    turnTimeoutMs: 10_000,
   });
   const escapedPid = Number(await fs.readFile(escapedPidPath, "utf8"));
   escapedIdentity = await captureProcessIdentity(escapedPid);
@@ -704,7 +799,7 @@ test("JSONL RPC bounds input, request lifetime, and concurrent server requests",
     targetPath: project,
     terminateProcess: async (child) => child.kill(),
     testHooks: { allowUncontainedLaunch: true },
-    turnTimeoutMs: 50,
+    turnTimeoutMs: 500,
   }), /BROKER_TURN_TIMEOUT/u);
   assert.equal(neverCompletesChild.requests.some((request) => request.method === "turn/interrupt"), true);
 

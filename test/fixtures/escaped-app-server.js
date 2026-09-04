@@ -36,10 +36,26 @@ if (mode === "--inert-survivor") {
     } else if (request.method === "thread/start") {
       result = {
         approvalPolicy: "never",
-        activePermissionProfile: { id: ":read-only" },
+        approvalsReviewer: "user",
         cwd: request.params.cwd,
+        model: "gpt-5.6-sol",
+        modelProvider: "openai",
         sandbox: { type: "readOnly", networkAccess: false },
-        thread: { id: "thread-main", sessionId: "session-main", cwd: request.params.cwd },
+        thread: {
+          cliVersion: "0.153.0-alpha.5",
+          createdAt: 1,
+          cwd: request.params.cwd,
+          ephemeral: true,
+          id: "thread-main",
+          modelProvider: "openai",
+          preview: "",
+          projectId: null,
+          sessionId: "session-main",
+          source: "vscode",
+          status: { type: "idle" },
+          turns: [],
+          updatedAt: 1,
+        },
       };
     } else if (request.method === "turn/start") {
       result = { turn: { id: "turn-main" } };
