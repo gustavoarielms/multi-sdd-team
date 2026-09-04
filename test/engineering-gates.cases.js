@@ -1168,7 +1168,7 @@ test("the orchestrator times out an executor that never resolves", async (t) => 
   const nativeSetTimeout = globalThis.setTimeout;
   // Leave process identity and cleanup deadlines intact during Git preflight.
   const timeoutMock = t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => (
-    nativeSetTimeout(callback, delay === 120000 ? 20 : delay, ...args)
+    nativeSetTimeout(callback, delay === 360000 ? 20 : delay, ...args)
   ));
 
   const result = await runConfiguredGates(target, { executors });

@@ -8,6 +8,7 @@ const fixturePath = fileURLToPath(import.meta.url);
 const mode = process.argv[2];
 
 if (mode === "--inert-survivor") {
+  fs.writeFileSync(process.env.SDD_BROKER_FIXTURE_ESCAPED_PID, String(process.pid));
   setInterval(() => {}, 1_000);
 } else if (mode === "--session-helper") {
   const survivor = spawn(process.execPath, [fixturePath, "--inert-survivor"], {
@@ -15,7 +16,6 @@ if (mode === "--inert-survivor") {
     stdio: "ignore",
   });
   survivor.unref();
-  fs.writeFileSync(process.env.SDD_BROKER_FIXTURE_ESCAPED_PID, String(survivor.pid));
 } else {
   const state = JSON.parse(process.env.SDD_BROKER_FIXTURE_STATE);
   fs.writeFileSync(state.invokedPath, "invoked");
