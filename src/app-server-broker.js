@@ -19,6 +19,7 @@ const APPROVAL_REQUESTS = new Set([
   "item/permissions/requestApproval",
 ]);
 const MAX_TOOL_OUTPUT_BYTES = 1024 * 1024;
+const MAX_PUBLIC_REASON_BYTES = 128;
 const DEFAULT_MAX_RPC_INPUT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_IN_FLIGHT_SERVER_REQUESTS = 8;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -38,7 +39,10 @@ function brokerError(reasonCode) {
 }
 
 function brokerReason(error) {
-  return /^BROKER_[A-Z0-9_]+$/u.test(error?.message ?? "");
+  const message = error?.message;
+  return typeof message === "string"
+    && Buffer.byteLength(message) <= MAX_PUBLIC_REASON_BYTES
+    && /^BROKER_[A-Z0-9_]+$/u.test(message);
 }
 
 function exactOperation(arguments_) {
@@ -105,6 +109,16 @@ function toolText(value) {
     throw brokerError("BROKER_RESULT_TOO_LARGE");
   }
   return text;
+}
+
+function rpcErrorResponse(id, error) {
+  const message = brokerReason(error) ? error.message : "BROKER_SERVER_REQUEST_REJECTED";
+  const response = { id, error: { code: -32000, message } };
+  if (Buffer.byteLength(JSON.stringify(response)) <= MAX_TOOL_OUTPUT_BYTES) return response;
+  return {
+    id: null,
+    error: { code: -32000, message: "BROKER_ERROR_RESPONSE_TOO_LARGE" },
+  };
 }
 
 function withinRoot(root, target) {
@@ -490,7 +504,12 @@ export async function createAppServerBroker(options) {
             await managedPromptSnapshotDigest(projectRoot, options.testHooks) === promptSnapshotSha256,
             "BROKER_PROMPT_SNAPSHOT_CHANGED",
           );
-          const result = await resolved.implementation();
+          let result;
+          try {
+            result = await resolved.implementation();
+          } catch {
+            throw brokerError("BROKER_OPERATION_FAILED");
+          }
           if (result?.trusted === true) return revoke("BROKER_POSITIVE_TRUST_FORBIDDEN");
           assertLive(resolved.params.threadId, resolved.params.turnId);
           return {
@@ -505,7 +524,7 @@ export async function createAppServerBroker(options) {
         "BROKER_OPERATION_TIMEOUT",
       );
     } catch (error) {
-      return revoke(error?.message ?? "BROKER_SERVER_REQUEST_REJECTED");
+      return revoke(brokerReason(error) ? error.message : "BROKER_SERVER_REQUEST_REJECTED");
     }
   }
 
@@ -602,10 +621,7 @@ export function createJsonLineRpc(child, options = {}) {
           inFlightServerRequests -= 1;
         }
       } catch (error) {
-        send({
-          id: message.id,
-          error: { code: -32000, message: error?.message ?? "BROKER_SERVER_REQUEST_REJECTED" },
-        });
+        send(rpcErrorResponse(message.id, error));
       }
       return;
     }

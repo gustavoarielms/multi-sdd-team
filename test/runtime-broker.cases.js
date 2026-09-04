@@ -759,6 +759,40 @@ class FakeChild extends EventEmitter {
   }
 }
 
+test("JSONL RPC bounds and sanitizes operation failures", async (context) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-operation-error-"));
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const sensitiveMessage = `SENSITIVE:${"X".repeat(1_100_000)}`;
+  const broker = await createAppServerBroker({
+    rpc: appServerRpc(),
+    targetPath: project,
+    operations: { check: async () => { throw new Error(sensitiveMessage); } },
+  });
+  await broker.startTurn("bound an operation failure");
+
+  const child = new FakeChild();
+  const rpc = createJsonLineRpc(child);
+  rpc.onServerRequest((request) => broker.handleServerRequest(request));
+  let output = "";
+  let resolveOutput;
+  const outputReceived = new Promise((resolve) => { resolveOutput = resolve; });
+  child.stdin.on("data", (chunk) => {
+    output += String(chunk);
+    if (output.includes("\n")) resolveOutput();
+  });
+  child.stdout.write(`${JSON.stringify({ id: 99, ...brokerToolCall("call-operation-error") })}\n`);
+  await outputReceived;
+
+  assert.ok(Buffer.byteLength(output) <= 1024 * 1024);
+  assert.doesNotMatch(output, /SENSITIVE:/u);
+  const response = JSON.parse(output);
+  assert.equal(response.id, 99);
+  assert.equal(response.error.code, -32000);
+  assert.equal(response.error.message, "BROKER_OPERATION_FAILED");
+  rpc.close();
+});
+
 function appServerChild(completion) {
   const child = new FakeChild();
   child.requests = [];
