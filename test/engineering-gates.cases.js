@@ -346,21 +346,22 @@ test("engineering gate configuration is strict and requires the exact executor a
     "installer.cases.js",
     "node-lint-complexity-adapter.cases.js",
     "node-architecture-adapter.cases.js",
+    "runtime-broker.cases.js",
     "integration/node-lint-complexity-distribution.test.js",
   ];
   const inventory = (await Promise.all(inventoryFiles.map(async (relative) => {
     const source = await fs.readFile(path.join(repositoryRoot, "test", relative), "utf8");
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
-  assert.equal(UNIT_TEST_NAMES.size, 18);
-  assert.equal(inventory.length, 127);
-  assert.equal(new Set(inventory).size, 127);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 18);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 109);
+  assert.equal(UNIT_TEST_NAMES.size, 21);
+  assert.equal(inventory.length, 140);
+  assert.equal(new Set(inventory).size, 140);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 21);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 119);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
-  assert.equal(unitFiles.length, 6);
-  assert.equal(integrationFiles.length, 7);
+  assert.equal(unitFiles.length, 7);
+  assert.equal(integrationFiles.length, 8);
   assert.equal(meetsCoverageThreshold({ covered: 89, total: 100 }, 90), false);
   assert.equal(meetsCoverageThreshold({ covered: 9, total: 10 }, 90), true);
   assert.equal(meetsCoverageThreshold({ covered: 0, total: 0 }, 90), true);

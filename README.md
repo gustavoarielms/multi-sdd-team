@@ -77,6 +77,7 @@ node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
 node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
+node ./bin/sdd-codegraph.js launch /absolute/path/to/repository
 ```
 
 - `init` installs the managed Codex SDD configuration and initializes or syncs
@@ -92,6 +93,10 @@ node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
   emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
   for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
   or untrustworthy run.
+- `launch` is a disabled Codex App Server broker surface. It accepts only the
+  built-in `read-only` profile, reports `BROKER_PROCESS_CONTAINMENT_UNAVAILABLE`,
+  starts no App Server process, and exits `2`. The protocol scaffold remains
+  covered with injected inert processes, but it is not an executable user path.
 
 The target path defaults to the current working directory.
 
@@ -147,14 +152,34 @@ the same process may control discretionary file modes and later restore them.
 Child-controlled environment variables such as `CODEX_PERMISSION_PROFILE` and
 `CODEX_SANDBOX` are never accepted as security evidence.
 
-The current Codex child-process contract exposes no non-spoofable sandbox
-attestation. Therefore an otherwise clean project installation remains
-`unproven` with `MANAGED_PROMPT_RUNTIME_UNPROVEN`; `check`, governance, and
-`run-gates` exit `2` before automatic or delegated work. A future positive
-`protected` result requires a trusted runtime or broker attestation that the
-checked process cannot manufacture or revoke. Run the package itself from a
-trusted immutable launcher because a package copy already controlled by an
-attacker cannot trustworthily verify itself.
+Direct CLI execution exposes no non-spoofable sandbox attestation. Therefore an
+otherwise clean project installation remains `unproven` with
+`MANAGED_PROMPT_RUNTIME_UNPROVEN`; direct `check`, governance, and `run-gates`
+exit `2` before automatic or delegated work. The disabled `launch` command does
+not create a positive path: current App Server metadata does not prove the
+effective recursive filesystem rules, the exact prompt bytes loaded for the
+turn, or complete descendant-process containment. It reports
+`BROKER_PROCESS_CONTAINMENT_UNAVAILABLE` without spawning App Server.
+Caller-supplied proofs and public keys are ignored by `check`, governance, and
+the gate runner.
+
+The tested protocol scaffold intentionally supports one main ephemeral thread
+and one active turn. Subagent or resumed-thread calls have a different identity
+and fail closed. It snapshots the manifest and actual managed prompt bytes with
+typed length framing, reads each regular file through one bounded descriptor,
+and rejects changed identities and symlinked managed components. It also bounds
+RPC input, concurrency, request lifetime, operation lifetime, and total turn
+lifetime. This detects drift but is not evidence of what a runtime originally
+loaded. `run-gates` remains unavailable through the broker because repository
+tests require an external OS sandbox.
+
+The current POSIX tree terminator can verify a captured root, its observable
+descendants, and members of its retained group/session. It cannot prove cleanup
+for a descendant that changes session and is reparented before discovery.
+Therefore the user-facing launch path stays disabled. Until a supported
+containment authority can identify and verify every attributable descendant,
+and runtime-loaded prompt and effective-policy evidence exist, treat the broker
+as a fail-closed protocol spike.
 
 `init` and `update` intentionally remain able to replace prompts when a person
 runs them outside the AI-mediated session. Agents must never invoke those

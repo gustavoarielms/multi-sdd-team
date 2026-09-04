@@ -238,6 +238,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "scripts/verify-node-architecture-runtime.js",
     "scripts/quality-proof.js",
     "setup.sh",
+    "src/app-server-broker.js",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
     "src/git-change-selector.js",
@@ -259,6 +260,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "src/node-test-reporter.js",
     "src/node-test-suite-adapter.js",
     "src/prompt-protection.js",
+    "src/runtime-attestation.js",
     ...runtimeManifest.files.map((file) => `vendor/node-architecture-runtime/${file.path}`),
   ].sort();
 

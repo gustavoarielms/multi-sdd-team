@@ -12,6 +12,7 @@ import {
 import { validateAgentResultText } from "../src/governance-validator.js";
 import { runGovernanceChecks } from "../src/governance-checks.js";
 import { runEngineeringGates } from "../src/engineering-gates.js";
+import { brokerLaunchExitCode, launchBrokerTurn } from "../src/app-server-broker.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -24,6 +25,7 @@ Usage:
   sdd-codegraph check [path]
   sdd-codegraph check-governance [path]
   sdd-codegraph run-gates [path] [--comparison-base <full-commit-sha>]
+  sdd-codegraph launch [path] [--permissions <profile>]
   sdd-codegraph validate-result [file|-] [--agent <name>]
   sdd-codegraph --version
 
@@ -35,11 +37,13 @@ Commands:
             Run deterministic governance checks and emit one canonical JSON result.
   run-gates
             Run the fail-closed deterministic engineering gates and emit one canonical JSON result.
+  launch    Report the fail-closed broker status. Process containment is not yet proven.
   validate-result
             Validate one governance agent-result JSON document. Reads stdin by default.
 
 The target path defaults to the current working directory.
 Permission profiles: workspace-only (default), read-only, workspace, danger-full-access.
+The experimental launch command accepts only read-only.
 `;
 }
 
@@ -127,6 +131,39 @@ async function engineeringGatesCommand(args) {
   process.exitCode = result.exitCode;
 }
 
+function parseLaunchArguments(args) {
+  let targetPath = process.cwd();
+  let permissionProfile = "read-only";
+  let hasTarget = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--permissions") {
+      permissionProfile = args[index + 1];
+      if (!permissionProfile) throw new Error("--permissions requires a value");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--")) throw new Error(`Unexpected argument: ${argument}`);
+    if (hasTarget) throw new Error(`Unexpected argument: ${argument}`);
+    targetPath = argument;
+    hasTarget = true;
+  }
+  if (permissionProfile !== "read-only") {
+    throw new Error("launch requires read-only permissions");
+  }
+  return { permissionProfile, targetPath };
+}
+
+async function launchCommand(args) {
+  const options = parseLaunchArguments(args);
+  const result = await launchBrokerTurn({
+    ...options,
+    prompt: "",
+    onDiagnostic: (message) => process.stderr.write(message),
+  });
+  process.exitCode = brokerLaunchExitCode(result);
+}
+
 function parseManagedInstallArguments(args) {
   let target = process.cwd();
   let permissions;
@@ -201,6 +238,8 @@ async function run() {
       return governanceCommand(args);
     case "run-gates":
       return engineeringGatesCommand(args);
+    case "launch":
+      return launchCommand(args);
     case "init":
     case "update":
     case "check":

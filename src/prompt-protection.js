@@ -12,6 +12,15 @@ function probeStates(probe) {
   return [...(probe.fileWrites ?? []), ...(probe.directoryMutations ?? [])];
 }
 
+function configuredProfileResult(configuredProfile) {
+  if (configuredProfile === "danger-full-access") {
+    return result("elevated", "MANAGED_PROMPT_ELEVATED_PROFILE");
+  }
+  return SAFE_CONFIGURED_PROFILES.has(configuredProfile)
+    ? undefined
+    : result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
+}
+
 export function classifyPromptProtection({
   configuredProfile,
   promptDrift = [],
@@ -24,12 +33,9 @@ export function classifyPromptProtection({
   if (legacySettings.length > 0) {
     return result("legacy", "MANAGED_PROMPT_LEGACY_RUNTIME");
   }
-  if (configuredProfile === "danger-full-access") {
-    return result("elevated", "MANAGED_PROMPT_ELEVATED_PROFILE");
-  }
-  if (!SAFE_CONFIGURED_PROFILES.has(configuredProfile) || probe.complete !== true) {
-    return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
-  }
+  const configured = configuredProfileResult(configuredProfile);
+  if (configured) return configured;
+  if (probe.complete !== true) return result("unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN");
   const states = probeStates(probe);
   if (states.includes("writable")) {
     return result("elevated", "MANAGED_PROMPT_BOUNDARY_WRITABLE");
