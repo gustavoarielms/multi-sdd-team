@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateGovernanceCatalog, validateGovernanceCheckResult } from "./governance-validator.js";
+import { checkProjectFiles } from "./installer.js";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -11,6 +12,7 @@ const checks = Object.freeze({
   reviewer_report_only: checkReviewerReportOnly,
   review_handoff_contract: checkReviewHandoffContract,
   pipeline_dependency_order: checkPipelineDependencyOrder,
+  managed_prompt_protection: checkManagedPromptProtection,
 });
 
 async function exists(target) {
@@ -74,6 +76,7 @@ async function resolveGovernanceLayout(root) {
   if (await exists(path.join(sourceGovernance, "rules", "v1", "catalog.json"))
     && await exists(path.join(sourceCodex, "agents"))) {
     return buildLayout(rootReal, {
+      kind: "source",
       canonicalRoot: root,
       governanceRoot: sourceGovernance,
       codexAgentsRoot: path.join(sourceCodex, "agents"),
@@ -87,6 +90,7 @@ async function resolveGovernanceLayout(root) {
   if (await exists(path.join(projectCodex, "governance", "rules", "v1", "catalog.json"))
     && await exists(path.join(projectCodex, "agents"))) {
     return buildLayout(rootReal, {
+      kind: "project",
       canonicalRoot: packageRoot,
       governanceRoot: path.join(projectCodex, "governance"),
       codexAgentsRoot: path.join(projectCodex, "agents"),
@@ -99,6 +103,7 @@ async function resolveGovernanceLayout(root) {
   if (await exists(path.join(root, "governance", "rules", "v1", "catalog.json"))
     && await exists(path.join(root, "agents"))) {
     return buildLayout(rootReal, {
+      kind: "global",
       canonicalRoot: packageRoot,
       governanceRoot: path.join(root, "governance"),
       codexAgentsRoot: path.join(root, "agents"),
@@ -164,12 +169,65 @@ async function checkReviewerReportOnly({ layout }) {
   for (const reviewer of reviewers) {
     const codex = await readText(path.join(layout.codexAgentsRoot, `${reviewer}.toml`), layout.targetBoundary);
     if (!/solo reporte|No modifi/i.test(codex)
-      || !/^sandbox_mode\s*=\s*"read-only"$/m.test(codex)
+      || !/^default_permissions\s*=\s*":read-only"$/m.test(codex)
+      || /^sandbox_mode\s*=/m.test(codex)
       || conditionalWrite.test(codex)) {
       return { pass: false, summary: "At least one independent reviewer has an invalid report-only declaration." };
     }
   }
   return { pass: true, summary: "Codex architecture, quality, and security reviewers are report-only." };
+}
+
+async function sourcePromptContract(layout) {
+  const directory = await containedRealPath(layout.targetBoundary, layout.codexAgentsRoot);
+  const files = (await fs.readdir(directory)).filter((name) => name.endsWith(".toml")).sort();
+  if (files.length === 0) return false;
+  for (const file of files) {
+    const prompt = await readText(path.join(layout.codexAgentsRoot, file), layout.targetBoundary);
+    const expectedProfile = ["documentator.toml", "implementer.toml"].includes(file)
+      ? ":workspace"
+      : ":read-only";
+    if (new RegExp(`^default_permissions\\s*=\\s*"${expectedProfile}"$`, "m").test(prompt) === false
+      || /^sandbox_mode\s*=/m.test(prompt)
+      || !/\.codex\/agents\/\*\*/.test(prompt)
+      || !/No solicites escalacion/.test(prompt)
+      || !/sdd-codegraph init/.test(prompt)
+      || !/actualizacion de paquete iniciada directamente por una persona/.test(prompt)) {
+      return false;
+    }
+  }
+  const [policy, pipeline] = await Promise.all([
+    readText(layout.agentsPolicyPath, layout.targetBoundary),
+    readText(layout.pipelinePath, layout.targetBoundary),
+  ]);
+  const pipelinePolicy = JSON.stringify(JSON.parse(pipeline));
+  return /A conversational request to an agent is not update authority/.test(policy)
+    && /Never start or delegate work when managed prompt protection is drifted/.test(pipelinePolicy)
+    && /Never ask for escalation, invoke init or update, or delegate a bypass/.test(pipelinePolicy);
+}
+
+async function checkManagedPromptProtection({ layout, promptProtection }) {
+  if (layout.kind === "source") {
+    const pass = await sourcePromptContract(layout);
+    return pass
+      ? { pass: true, summary: "Canonical prompts declare safe permission profiles and the managed prompt boundary." }
+      : { pass: false, summary: "Canonical managed prompt protection is incomplete or uses legacy sandbox settings." };
+  }
+  if (layout.kind === "global") {
+    return {
+      pass: false,
+      trusted: false,
+      summary: "Global prompt protection cannot be established by the project-scoped contract.",
+    };
+  }
+  const result = await checkProjectFiles(layout.targetBoundary, promptProtection);
+  return result.protection.trusted
+    ? { pass: true, summary: "Managed project prompts match the protected baseline and the runtime boundary is enforced." }
+    : {
+      pass: false,
+      trusted: false,
+      summary: `Managed project prompt protection is not trustworthy: ${result.protection.reason_code}.`,
+    };
 }
 
 async function reviewPromptsMatchContract(layout) {
@@ -349,6 +407,7 @@ function loadGovernanceInputs(layout) {
 async function executeGovernanceChecks(registrations, context, rulesById) {
   const results = [];
   const evidence = [];
+  let trusted = true;
   for (const registration of registrations) {
     const implementation = checks[registration.check_id];
     let execution;
@@ -357,8 +416,9 @@ async function executeGovernanceChecks(registrations, context, rulesById) {
         ? await implementation(context)
         : { pass: false, summary: "Registered check has no implementation." };
     } catch {
-      execution = { pass: false, summary: "Governance check could not complete." };
+      execution = { pass: false, trusted: false, summary: "Governance check could not complete." };
     }
+    if (execution.trusted === false) trusted = false;
     const rule = rulesById.get(registration.rule_id);
     const evidenceId = `evidence:${registration.check_id}`;
     const collectedAt = timestamp();
@@ -383,10 +443,10 @@ async function executeGovernanceChecks(registrations, context, rulesById) {
       evidence_ids: [evidenceId],
     });
   }
-  return { results, evidence };
+  return { results, evidence, trusted };
 }
 
-export async function runGovernanceChecks(targetPath) {
+export async function runGovernanceChecks(targetPath, options = {}) {
   const root = path.resolve(targetPath);
   const startedAt = timestamp();
   const layout = await resolveGovernanceLayout(root);
@@ -408,12 +468,13 @@ export async function runGovernanceChecks(targetPath) {
 
   const rulesById = new Map(catalog.rules?.map((rule) => [rule.rule_id, rule]) ?? []);
   const registered = Array.isArray(registry.checks) ? registry.checks : [];
-  const { results, evidence } = await executeGovernanceChecks(registered, {
+  const { results, evidence, trusted } = await executeGovernanceChecks(registered, {
     layout,
     catalog,
     registry,
     gateRegistry,
     qualityProfile,
+    promptProtection: options.promptProtection,
   }, rulesById);
 
   const completedAt = timestamp();
@@ -432,6 +493,6 @@ export async function runGovernanceChecks(targetPath) {
   return {
     document,
     blocking: hasBlockingGovernanceFailures(results),
-    trusted: true,
+    trusted,
   };
 }

@@ -13,9 +13,20 @@ import {
   setTomlKey,
   syncCodeGraph,
 } from "../src/installer.js";
+import {
+  classifyPromptProtection,
+  probeManagedPromptBoundary,
+} from "../src/prompt-protection.js";
 
 async function temporaryProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), "sdd-codegraph-test-"));
+}
+
+async function deniedPromptBoundary(directoryPaths, promptPaths) {
+  return {
+    fileWrites: promptPaths.map(() => "denied"),
+    directoryMutations: directoryPaths.map(() => "denied"),
+  };
 }
 
 test("package is configured for public MIT publication", async () => {
@@ -227,6 +238,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "scripts/verify-node-architecture-runtime.js",
     "scripts/quality-proof.js",
     "setup.sh",
+    "src/app-server-broker.js",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
     "src/git-change-selector.js",
@@ -247,6 +259,8 @@ test("npm package contains only the supported Codex distribution", async (contex
     "src/node-lint-complexity-worker.js",
     "src/node-test-reporter.js",
     "src/node-test-suite-adapter.js",
+    "src/prompt-protection.js",
+    "src/runtime-attestation.js",
     ...runtimeManifest.files.map((file) => `vendor/node-architecture-runtime/${file.path}`),
   ].sort();
 
@@ -402,6 +416,8 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.match(config, /^":minimal" = "read"$/m);
   assert.match(config, /^":tmpdir" = "deny"$/m);
   assert.match(config, /^":slash_tmp" = "deny"$/m);
+  assert.match(config, /^\[permissions\.workspace-only\.filesystem\.":workspace_roots"\]$/m);
+  assert.match(config, /^"\.codex" = "read"$/m);
   assert.match(config, /^\[permissions\.workspace-only\.network\]$/m);
   assert.match(config, /^enabled = false$/m);
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
@@ -747,6 +763,248 @@ test("checkProjectFiles reports managed drift", async (context) => {
   await installProject(project);
   await fs.writeFile(path.join(project, "pipeline.json"), "{}\n", "utf8");
   assert.deepEqual((await checkProjectFiles(project)).drift, ["pipeline.json"]);
+});
+
+test("prompt protection classification fails closed for drift, legacy, elevation, and incomplete capability evidence", () => {
+  const protectedState = {
+    configuredProfile: "workspace-only",
+    promptDrift: [],
+    unsafePaths: [],
+    legacySettings: [],
+    probe: {
+      fileWrites: ["denied", "denied"],
+      directoryMutations: ["denied", "denied"],
+      complete: true,
+    },
+  };
+  assert.deepEqual(classifyPromptProtection(protectedState), {
+    state: "unproven",
+    trusted: false,
+    reason_code: "MANAGED_PROMPT_RUNTIME_UNPROVEN",
+  });
+  for (const [change, state, reasonCode] of [
+    [{ promptDrift: [".codex/agents/implementer.toml"] }, "drifted", "MANAGED_PROMPT_DRIFT"],
+    [{ unsafePaths: [".codex/agents/implementer.toml"] }, "unsafe", "MANAGED_PROMPT_UNSAFE_PATH"],
+    [{ legacySettings: ["sandbox_mode"] }, "legacy", "MANAGED_PROMPT_LEGACY_RUNTIME"],
+    [{ configuredProfile: "danger-full-access" }, "elevated", "MANAGED_PROMPT_ELEVATED_PROFILE"],
+    [{ probe: { fileWrites: ["denied", "writable"], directoryMutations: ["denied"], complete: true } }, "elevated", "MANAGED_PROMPT_BOUNDARY_WRITABLE"],
+    [{ probe: { fileWrites: ["denied", "unknown"], directoryMutations: ["denied"], complete: true } }, "unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN"],
+    [{ probe: { fileWrites: [], directoryMutations: ["denied"], complete: false } }, "unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN"],
+    [{ probe: { fileWrites: ["denied"], directoryMutations: [], complete: false } }, "unproven", "MANAGED_PROMPT_RUNTIME_UNPROVEN"],
+  ]) {
+    assert.deepEqual(classifyPromptProtection({ ...protectedState, ...change }), {
+      state,
+      trusted: false,
+      reason_code: reasonCode,
+    });
+  }
+});
+
+test("prompt boundary probe distinguishes denied access from writable and ambiguous paths", async () => {
+  const denied = Object.assign(new Error("denied"), { code: "EPERM" });
+  const unknown = Object.assign(new Error("unknown"), { code: "EIO" });
+  const dependencies = (openError, accessError) => ({
+    open: async () => {
+      if (openError) throw openError;
+      return { close: async () => {} };
+    },
+    access: async () => {
+      if (accessError) throw accessError;
+    },
+  });
+
+  const directories = ["/root/.codex", "/root/.codex/agents"];
+  const prompts = ["/root/.codex/agents/a.toml", "/root/.codex/agents/b.toml"];
+  assert.deepEqual(await probeManagedPromptBoundary(directories, prompts, {
+    fs: dependencies(denied, denied),
+  }), { fileWrites: ["denied", "denied"], directoryMutations: ["denied", "denied"] });
+  assert.deepEqual(await probeManagedPromptBoundary(directories, prompts, {
+    fs: dependencies(),
+  }), { fileWrites: ["writable", "writable"], directoryMutations: ["writable", "writable"] });
+  assert.deepEqual(await probeManagedPromptBoundary(directories, prompts, {
+    fs: dependencies(unknown, unknown),
+  }), { fileWrites: ["unknown", "unknown"], directoryMutations: ["unknown", "unknown"] });
+});
+
+test("project installation records prompt digests but local capability denial remains unproven", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await installProject(project);
+
+  const baseline = JSON.parse(await fs.readFile(
+    path.join(project, ".codex", "managed-prompts.json"),
+    "utf8",
+  ));
+  assert.equal(baseline.schemaVersion, 1);
+  assert.equal(baseline.prompts.length, 8);
+  assert.ok(baseline.prompts.every((prompt) => /^agents\/.+\.toml$/.test(prompt.path)));
+  assert.ok(baseline.prompts.every((prompt) => /^sha256:[a-f0-9]{64}$/.test(prompt.sha256)));
+
+  const protectedResult = await checkProjectFiles(project, {
+    environment: { CODEX_PERMISSION_PROFILE: ":danger-full-access", CODEX_SANDBOX: "forged" },
+    probe: deniedPromptBoundary,
+  });
+  assert.equal(protectedResult.protection.state, "unproven");
+  assert.equal(protectedResult.protection.trusted, false);
+  assert.equal("runtime_profile" in protectedResult.protection, false);
+
+  const unrestricted = await checkProjectFiles(project, {
+    probe: async (directoryPaths, promptPaths) => ({
+      fileWrites: promptPaths.map(() => "writable"),
+      directoryMutations: directoryPaths.map(() => "writable"),
+    }),
+  });
+  assert.equal(unrestricted.protection.state, "elevated");
+  assert.equal(unrestricted.protection.trusted, false);
+
+  const prompt = path.join(project, ".codex", "agents", "implementer.toml");
+  const alias = path.join(project, "implementer-alias.toml");
+  await fs.link(prompt, alias);
+  const unsafe = await checkProjectFiles(project, {
+    probe: deniedPromptBoundary,
+  });
+  assert.equal(unsafe.protection.state, "unsafe");
+  assert.equal(unsafe.protection.reason_code, "MANAGED_PROMPT_UNSAFE_PATH");
+});
+
+test("project protection probes every managed prompt and rejects one writable peer", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+
+  let probedPrompts = [];
+  const result = await checkProjectFiles(project, {
+    probe: async (directoryPaths, promptPaths) => {
+      probedPrompts = promptPaths;
+      return {
+        fileWrites: promptPaths.map((promptPath) => (
+          promptPath.endsWith(`${path.sep}implementer.toml`) ? "writable" : "denied"
+        )),
+        directoryMutations: directoryPaths.map(() => "denied"),
+      };
+    },
+  });
+
+  assert.equal(probedPrompts.length, 9);
+  assert.ok(probedPrompts.some((promptPath) => promptPath.endsWith(`${path.sep}implementer.toml`)));
+  assert.ok(probedPrompts.some((promptPath) => promptPath.endsWith(`${path.sep}managed-prompts.json`)));
+  assert.equal(result.protection.state, "elevated");
+  assert.equal(result.protection.reason_code, "MANAGED_PROMPT_BOUNDARY_WRITABLE");
+});
+
+test("DAC mode changes cannot manufacture trusted managed prompt protection", async (context) => {
+  const project = await temporaryProject();
+  const codexRoot = path.join(project, ".codex");
+  const agentsRoot = path.join(codexRoot, "agents");
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const promptPaths = (await fs.readdir(agentsRoot)).map((name) => path.join(agentsRoot, name));
+  const protectedFiles = [...promptPaths, path.join(codexRoot, "managed-prompts.json")];
+
+  for (const filePath of protectedFiles) await fs.chmod(filePath, 0o444);
+  await fs.chmod(agentsRoot, 0o555);
+  await fs.chmod(codexRoot, 0o555);
+  try {
+    const checked = await checkProjectFiles(project);
+    assert.equal(checked.protection.state, "unproven");
+    assert.equal(checked.protection.trusted, false);
+    assert.equal(checked.protection.reason_code, "MANAGED_PROMPT_RUNTIME_UNPROVEN");
+  } finally {
+    await fs.chmod(codexRoot, 0o755);
+    await fs.chmod(agentsRoot, 0o755);
+    for (const filePath of protectedFiles) await fs.chmod(filePath, 0o644);
+  }
+
+  const implementer = path.join(agentsRoot, "implementer.toml");
+  await fs.appendFile(implementer, "\n# writable after attacker-controlled DAC restoration\n");
+  assert.match(await fs.readFile(implementer, "utf8"), /attacker-controlled DAC restoration/);
+});
+
+test("project check fails closed when the managed prompt inventory is not exact", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  const agentsRoot = path.join(project, ".codex", "agents");
+  const runtime = {
+    probe: deniedPromptBoundary,
+  };
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await installProject(project);
+
+  const extraRelativePath = path.join(".codex", "agents", "extra.toml");
+  const extraPrompt = path.join(project, extraRelativePath);
+  await fs.writeFile(extraPrompt, 'name = "extra"\n', "utf8");
+  const added = await checkProjectFiles(project, runtime);
+  assert.ok(added.drift.includes(extraRelativePath));
+  assert.equal(added.protection.state, "drifted");
+  assert.equal(added.protection.reason_code, "MANAGED_PROMPT_DRIFT");
+  assert.equal(added.protection.managed_prompt_count, 9);
+
+  const execution = spawnSync(process.execPath, [
+    new URL("../bin/sdd-codegraph.js", import.meta.url).pathname,
+    "check",
+    project,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, ...runtime.environment },
+  });
+  assert.equal(execution.status, 2);
+  assert.match(execution.stderr, /MANAGED_PROMPT_DRIFT/);
+
+  await fs.rm(extraPrompt);
+  await fs.symlink(path.join(agentsRoot, "implementer.toml"), extraPrompt);
+  const linked = await checkProjectFiles(project, runtime);
+  assert.equal(linked.protection.state, "unsafe");
+  assert.equal(linked.protection.reason_code, "MANAGED_PROMPT_UNSAFE_PATH");
+
+  await fs.rm(extraPrompt);
+  const implementerRelativePath = path.join(".codex", "agents", "implementer.toml");
+  const renamedRelativePath = path.join(".codex", "agents", "renamed.toml");
+  await fs.rename(
+    path.join(project, implementerRelativePath),
+    path.join(project, renamedRelativePath),
+  );
+  const renamed = await checkProjectFiles(project, runtime);
+  assert.ok(renamed.drift.includes(implementerRelativePath));
+  assert.ok(renamed.drift.includes(renamedRelativePath));
+  assert.equal(renamed.protection.state, "drifted");
+});
+
+test("project check classifies legacy configuration and the CLI exits blocked", async (context) => {
+  const root = await temporaryProject();
+  const project = path.join(root, "project");
+  const fakeBin = path.join(root, "bin");
+  context.after(() => fs.rm(root, { recursive: true, force: true }));
+  await installProject(project);
+  const configPath = path.join(project, ".codex", "config.toml");
+  const config = await fs.readFile(configPath, "utf8");
+  await fs.writeFile(
+    configPath,
+    config.replace('default_permissions = "workspace-only"', 'sandbox_mode = "workspace-write"'),
+  );
+
+  const checked = await checkProjectFiles(project, {
+    probe: deniedPromptBoundary,
+  });
+  assert.equal(checked.protection.state, "legacy");
+  assert.equal(checked.protection.reason_code, "MANAGED_PROMPT_LEGACY_RUNTIME");
+
+  await fs.mkdir(fakeBin);
+  await fs.writeFile(
+    path.join(fakeBin, "codegraph"),
+    '#!/bin/sh\nprintf \'{"initialized":true,"pendingChanges":{}}\\n\'\n',
+    { mode: 0o755 },
+  );
+  const execution = spawnSync(process.execPath, [
+    new URL("../bin/sdd-codegraph.js", import.meta.url).pathname,
+    "check",
+    project,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}` },
+  });
+  assert.equal(execution.status, 2);
+  assert.match(execution.stderr, /MANAGED_PROMPT_LEGACY_RUNTIME/);
 });
 
 test("syncCodeGraph initializes a new project", () => {

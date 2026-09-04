@@ -6,6 +6,7 @@
     { "check_id": "codex_role_catalog", "rule_id": "GOV-CODEX-ROLE-CATALOG-001", "implementation": "codex_role_catalog", "description": "Verify the complete canonical Codex governed role set." },
     { "check_id": "reviewer_report_only", "rule_id": "GOV-REVIEW-REPORTONLY-001", "implementation": "reviewer_report_only", "description": "Verify Codex reviewer prompts and sandboxes remain report-only." },
     { "check_id": "review_handoff_contract", "rule_id": "GOV-REVIEW-HANDOFF-001", "implementation": "review_handoff_contract", "description": "Verify structured reviewer handoff contracts and runtime validation integration." },
-    { "check_id": "pipeline_dependency_order", "rule_id": "GOV-PIPELINE-ORDER-001", "implementation": "pipeline_dependency_order", "description": "Validate declared dependencies, ordering, cycles, and fail-closed policy." }
+    { "check_id": "pipeline_dependency_order", "rule_id": "GOV-PIPELINE-ORDER-001", "implementation": "pipeline_dependency_order", "description": "Validate declared dependencies, ordering, cycles, and fail-closed policy." },
+    { "check_id": "managed_prompt_protection", "rule_id": "GOV-MANAGED-PROMPT-PROTECTION-001", "implementation": "managed_prompt_protection", "description": "Verify managed prompts, permission configuration, and the effective filesystem boundary fail closed." }
   ]
 }

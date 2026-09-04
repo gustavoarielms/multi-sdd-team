@@ -30,6 +30,7 @@ export const CANONICAL_GOVERNANCE_CHECK_BINDINGS = Object.freeze({
   reviewer_report_only: Object.freeze({ rule_id: "GOV-REVIEW-REPORTONLY-001", implementation: "reviewer_report_only" }),
   review_handoff_contract: Object.freeze({ rule_id: "GOV-REVIEW-HANDOFF-001", implementation: "review_handoff_contract" }),
   pipeline_dependency_order: Object.freeze({ rule_id: "GOV-PIPELINE-ORDER-001", implementation: "pipeline_dependency_order" }),
+  managed_prompt_protection: Object.freeze({ rule_id: "GOV-MANAGED-PROMPT-PROTECTION-001", implementation: "managed_prompt_protection" }),
 });
 
 export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
@@ -83,6 +84,7 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
       "GOV-REVIEW-REPORTONLY-001",
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
+      "GOV-MANAGED-PROMPT-PROTECTION-001",
     ]),
     timeout_ms: 30000,
     max_output_bytes: 262144,
@@ -90,7 +92,7 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
   production_dependency_audit: Object.freeze({
     implementation: "production_dependency_audit",
     rule_ids: Object.freeze(["SEC-PRODUCTION-DEPS-001"]),
-    timeout_ms: 60000,
+    timeout_ms: 360000,
     max_output_bytes: 262144,
   }),
   npm_package_surface: Object.freeze({
@@ -113,6 +115,7 @@ export const APPROVED_GOVERNANCE_RULES = Object.freeze({
   "GOV-REVIEW-REPORTONLY-001": Object.freeze({ version: 2, digest: "sha256:7efb55a76a38e7f59d4d468f544d7ab3b88576b67604b74b21c1c013c79e1c5a" }),
   "GOV-REVIEW-HANDOFF-001": Object.freeze({ version: 2, digest: "sha256:6d09129b6fe33ee9e1d1da43f1fc16ce9a3dc1c68d8b699223c3f3f40ba674d5" }),
   "GOV-PIPELINE-ORDER-001": Object.freeze({ version: 1, digest: "sha256:72491722fedff21829e355a77ba271e63bbebdaa97ebfc85c5769f71ab85af8c" }),
+  "GOV-MANAGED-PROMPT-PROTECTION-001": Object.freeze({ version: 1, digest: "sha256:f66425e1e4ebcaf5a3205b0c9696bfcee8b227e21b5c354feaa4db6dab8036da" }),
   "GOV-REMEDIATION-LOOP-001": Object.freeze({ version: 1, digest: "sha256:aa0a1290b8464e656ff3c7df33c46397452074f00cc0e6f288790c2ea12cdac6" }),
   "GOV-ORCHESTRATOR-AUTHORITY-001": Object.freeze({ version: 1, digest: "sha256:04236ecb671e0cd140de6ec4def89881f8ffc3328536dfe0bce7365c7eca591c" }),
   "GOV-ROLE-CAPABILITY-001": Object.freeze({ version: 2, digest: "sha256:781a466e5b13b94802b53b9dfd95a0df85939a0d1287d0fe4dc28781356f911e" }),

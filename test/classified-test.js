@@ -19,6 +19,9 @@ export const UNIT_TEST_NAMES = Object.freeze(new Set([
   "checkCodeGraph rejects pending changes",
   "the package-owned policy fixes exact recommended errors and classic complexity",
   "the architecture policy and cycle normalization are exact and deterministic",
+  "runtime attestation accepts only supported Node release lines",
+  "broker does not expose run-gates while execution isolation is unavailable",
+  "JSONL RPC bounds input, request lifetime, and concurrent server requests",
 ]));
 
 export function classifyTestName(name) {

@@ -255,6 +255,7 @@ test("versioned governance catalog and check registry are valid and linked", asy
       "GOV-REVIEW-REPORTONLY-001",
       "GOV-REVIEW-HANDOFF-001",
       "GOV-PIPELINE-ORDER-001",
+      "GOV-MANAGED-PROMPT-PROTECTION-001",
       "ENG-SOURCE-SYNTAX-001",
       "SEC-PRODUCTION-DEPS-001",
       "ENG-PACKAGE-SURFACE-001",
@@ -314,6 +315,10 @@ test("engineering gate registry safety limits are exact trusted bindings", async
   const registry = await readJson(registryUrl);
   const gateRegistry = await readJson(new URL("governance/gates/v1/registry.json", root));
   assert.equal(gateRegistry.executors.find((executor) => executor.executor_id === "coverage").timeout_ms, 180000);
+  assert.equal(
+    gateRegistry.executors.find((executor) => executor.executor_id === "production_dependency_audit").timeout_ms,
+    360000,
+  );
   gateRegistry.executors[0].timeout_ms += 1;
   const validation = await validateGovernanceCatalog(catalog, registry, gateRegistry);
   assert.equal(validation.ok, false);

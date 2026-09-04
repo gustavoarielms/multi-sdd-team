@@ -77,26 +77,33 @@ node ./bin/sdd-codegraph.js update /absolute/path/to/project
 node ./bin/sdd-codegraph.js check /absolute/path/to/project
 node ./bin/sdd-codegraph.js check-governance /absolute/path/to/repository
 node ./bin/sdd-codegraph.js run-gates /absolute/path/to/repository
+node ./bin/sdd-codegraph.js launch /absolute/path/to/repository
 ```
 
 - `init` installs the managed Codex SDD configuration and initializes or syncs
   CodeGraph.
 - `update` refreshes the managed SDD files while preserving project-specific
   `AGENTS.md` content and unrelated `.codex/config.toml` keys.
-- `check` is read-only and fails when managed files drift or the CodeGraph index
-  is missing or stale.
-- `check-governance` emits canonical JSON and exits nonzero only for failed
-  deterministic checks whose approved catalog effect is `block`.
+- `check` is non-mutating and fails when managed files drift, the effective
+  prompt boundary is not provably read-only, or the CodeGraph index is missing
+  or stale.
+- `check-governance` emits canonical JSON. It exits `1` for a trustworthy
+  blocking policy failure and `2` when the governance state is untrustworthy.
 - `run-gates` runs the ten approved deterministic engineering executors and
   emits exactly one canonical JSON document. It exits `0` for `passed`, `1`
   for a completed blocking `failed` run, and `2` for a `blocked`, incomplete,
   or untrustworthy run.
+- `launch` is a disabled Codex App Server broker surface. It accepts only the
+  built-in `read-only` profile, reports `BROKER_PROCESS_CONTAINMENT_UNAVAILABLE`,
+  starts no App Server process, and exits `2`. The protocol scaffold remains
+  covered with injected inert processes, but it is not an executable user path.
 
 The target path defaults to the current working directory.
 
-Project installs select `workspace-only` by default. Later `update` commands use
-the protected `default_permissions` value in `.codex/config.toml` as their
-authority; `.sdd-codegraph.json` only records the selected profile. If that
+Project installs select `workspace-only` by default. Later human-controlled
+`update` commands use the protected `default_permissions` value in
+`.codex/config.toml` as their selected profile; `.sdd-codegraph.json` only
+records that selection. If that
 config value is missing from an existing installation, restore it by explicitly
 passing `--permissions workspace-only`, `--permissions read-only`,
 `--permissions workspace`, or the escape hatch
@@ -104,8 +111,9 @@ passing `--permissions workspace-only`, `--permissions read-only`,
 option when used with `--project`.
 
 `workspace-only` is a custom beta Codex permission profile. It extends the
-built-in workspace profile, then denies filesystem access outside the active
-workspace except for minimal runtime reads, disables command network access,
+built-in workspace profile, explicitly keeps `.codex/` read-only, then denies
+filesystem access outside the active workspace except for minimal runtime reads,
+disables command network access,
 and denies system temporary directories. `read-only` prevents local command
 writes; `workspace` permits writes in workspace roots and system temporary
 directories; `danger-full-access` removes local sandbox restrictions.
@@ -115,6 +123,77 @@ the legacy `sandbox_mode` or `[sandbox_workspace_write]` settings. Remove those
 legacy settings before relying on this boundary. Codex also loads project-local
 configuration only after the project is trusted. Global installs do not select
 or define a permission profile.
+
+These constraints follow the official Codex documentation for
+[permission profiles](https://developers.openai.com/codex/permissions),
+[agent approvals and sandbox security](https://learn.chatgpt.com/docs/agent-approvals-security),
+and [administrator-enforced requirements](https://learn.chatgpt.com/docs/enterprise/managed-configuration).
+
+### Managed prompt protection
+
+Project-installed `.codex/agents/*.toml` files are AI-immutable policy in the
+supported Codex workflow. The agent templates use permission profiles rather
+than legacy `sandbox_mode`: writing roles select `:workspace`, read-only roles
+select `:read-only`, and both inherit the built-in recursive read-only boundary
+for `.codex/**`. Every prompt also forbids self-modification, escalation,
+installer shortcuts, and delegation of a bypass as defense in depth; those
+instructions are not the enforcement mechanism.
+
+Installation writes `.codex/managed-prompts.json`, containing the package
+identity, selected project profile, and SHA-256 of every managed prompt.
+`check` requires the actual agent directory to contain exactly the package-owned
+prompt set, verifies exact bytes, rejects symlink or hardlink identities, classifies
+legacy and elevated profiles, and performs non-mutating diagnostic probes against
+every managed prompt, the protected digest inventory, `.codex/`, and
+`.codex/agents/`. Each file is opened for write without truncation and each
+directory is checked for `W_OK` access. Writable, incomplete, or ambiguous
+results fail closed. A denial alone is not proof of the active sandbox authority:
+the same process may control discretionary file modes and later restore them.
+Child-controlled environment variables such as `CODEX_PERMISSION_PROFILE` and
+`CODEX_SANDBOX` are never accepted as security evidence.
+
+Direct CLI execution exposes no non-spoofable sandbox attestation. Therefore an
+otherwise clean project installation remains `unproven` with
+`MANAGED_PROMPT_RUNTIME_UNPROVEN`; direct `check`, governance, and `run-gates`
+exit `2` before automatic or delegated work. The disabled `launch` command does
+not create a positive path: current App Server metadata does not prove the
+effective recursive filesystem rules, the exact prompt bytes loaded for the
+turn, or complete descendant-process containment. It reports
+`BROKER_PROCESS_CONTAINMENT_UNAVAILABLE` without spawning App Server.
+Caller-supplied proofs and public keys are ignored by `check`, governance, and
+the gate runner.
+
+The tested protocol scaffold intentionally supports one main ephemeral thread
+and one active turn. Subagent or resumed-thread calls have a different identity
+and fail closed. It snapshots the manifest and actual managed prompt bytes with
+typed length framing, reads each regular file through one bounded descriptor,
+and rejects changed identities and symlinked managed components. It also bounds
+RPC input, concurrency, request lifetime, operation lifetime, and total turn
+lifetime. This detects drift but is not evidence of what a runtime originally
+loaded. `run-gates` remains unavailable through the broker because repository
+tests require an external OS sandbox.
+
+The current POSIX tree terminator can verify a captured root, its observable
+descendants, and members of its retained group/session. It cannot prove cleanup
+for a descendant that changes session and is reparented before discovery.
+Therefore the user-facing launch path stays disabled. Until a supported
+containment authority can identify and verify every attributable descendant,
+and runtime-loaded prompt and effective-policy evidence exist, treat the broker
+as a fail-closed protocol spike.
+
+`init` and `update` intentionally remain able to replace prompts when a person
+runs them outside the AI-mediated session. Agents must never invoke those
+commands or request an escalation for them. A conversational request is not
+update authority, and a new Codex session is required after an update so the
+new configuration and prompts are loaded together.
+
+The guarantee is project-scoped. Global `$CODEX_HOME/agents` installations are
+always reported as unproven by this package. An external
+administrator-controlled boundary may protect them, but this package cannot
+attest that boundary. Direct human, administrator, root, compromised-runtime,
+MCP, connector, browser, Computer Use, and cloud writes remain outside this
+package's filesystem guarantee and require their own controls. This package
+does not claim absolute immutability against direct machine access.
 
 `run-gates` requires this target-owned configuration:
 
@@ -235,6 +314,7 @@ Install both global and project config:
 The Codex setup installs:
 
 - `~/.codex/agents/*.toml` or `<project>/.codex/agents/*.toml`
+- `<project>/.codex/managed-prompts.json` with the protected prompt baseline
 - governance v1 schemas, rule catalog, check registry, engineering gate
   registry, and quality profile under the matching `.codex/governance/`
   directory

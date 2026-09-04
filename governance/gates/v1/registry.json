@@ -58,7 +58,8 @@
         "GOV-CODEX-ROLE-CATALOG-001",
         "GOV-REVIEW-REPORTONLY-001",
         "GOV-REVIEW-HANDOFF-001",
-        "GOV-PIPELINE-ORDER-001"
+        "GOV-PIPELINE-ORDER-001",
+        "GOV-MANAGED-PROMPT-PROTECTION-001"
       ],
       "timeout_ms": 30000,
       "max_output_bytes": 262144
@@ -67,7 +68,7 @@
       "executor_id": "production_dependency_audit",
       "implementation": "production_dependency_audit",
       "rule_ids": ["SEC-PRODUCTION-DEPS-001"],
-      "timeout_ms": 60000,
+      "timeout_ms": 360000,
       "max_output_bytes": 262144
     },
     {

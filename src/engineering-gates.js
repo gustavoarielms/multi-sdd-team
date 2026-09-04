@@ -57,9 +57,12 @@ const REQUIRED_PACKAGE_ASSETS = Object.freeze([
   "governance/schemas/v1/engineering-quality-profile.schema.json",
   "src/engineering-gate-runtime.js",
   "src/engineering-gates.js",
+  "src/app-server-broker.js",
   "src/governance-checks.js",
   "src/governance-trust.js",
   "src/governance-validator.js",
+  "src/prompt-protection.js",
+  "src/runtime-attestation.js",
   "src/coverage-map-worker.js",
   "src/git-change-selector.js",
   "src/node-coverage-adapter.js",
@@ -514,7 +517,7 @@ async function javascriptSyntax(context) {
   };
 }
 
-async function governance(context) {
+export async function runGovernanceExecutor(context) {
   try {
     const result = await runGovernanceChecks(context.target);
     if (!result.trusted) return { status: "error", reason_code: "GOVERNANCE_UNTRUSTWORTHY" };
@@ -644,7 +647,7 @@ const DEFAULT_EXECUTORS = Object.freeze({
   integration_tests: runIntegrationTests,
   coverage: runNodeCoverage,
   node_architecture: runNodeArchitecture,
-  governance,
+  governance: runGovernanceExecutor,
   production_dependency_audit: productionDependencyAudit,
   npm_package_surface: npmPackageSurface,
   forbidden_references: forbiddenReferences,

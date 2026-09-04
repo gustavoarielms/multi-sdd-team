@@ -1,9 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  classifyPromptProtection,
+  probeManagedPromptBoundary,
+} from "./prompt-protection.js";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const TEMPLATE_ROOT = path.join(PACKAGE_ROOT, "codex");
@@ -21,6 +25,10 @@ const PERMISSION_PROFILE_VALUES = new Map([
   ["workspace", ":workspace"],
   ["danger-full-access", ":danger-full-access"],
 ]);
+
+function sha256(content) {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -399,12 +407,32 @@ async function expectedInstallFiles(installRoot, codexPrefix, includeManifest, p
       config = setTomlKey(config, "permissions.workspace-only.filesystem", '":minimal"', '"read"');
       config = setTomlKey(config, "permissions.workspace-only.filesystem", '":tmpdir"', '"deny"');
       config = setTomlKey(config, "permissions.workspace-only.filesystem", '":slash_tmp"', '"deny"');
+      config = setTomlKey(
+        config,
+        'permissions.workspace-only.filesystem.":workspace_roots"',
+        '".codex"',
+        '"read"',
+      );
       config = setTomlKey(config, "permissions.workspace-only.network", "enabled", "false");
     }
   }
   files.set(configRelativePath, config);
 
   if (includeManifest) {
+    const promptBaseline = {
+      schemaVersion: 1,
+      package: metadata.name,
+      version: metadata.version,
+      permissionsProfile: permissionProfile,
+      prompts: [...templates.agents].map(([name, content]) => ({
+        path: path.posix.join("agents", name),
+        sha256: sha256(content),
+      })),
+    };
+    files.set(
+      path.join(codexPrefix, "managed-prompts.json"),
+      `${JSON.stringify(promptBaseline, null, 2)}\n`,
+    );
     const manifest = {
       schemaVersion: 1,
       package: metadata.name,
@@ -453,18 +481,153 @@ export async function installGlobal(targetPath) {
   return { codexHome: result.installRoot, changed: result.changed };
 }
 
-export async function checkProjectFiles(targetPath) {
-  const projectRoot = await fs.realpath(path.resolve(targetPath));
-  const permissionProfile = await resolvePermissionProfile(projectRoot);
-  const expected = await expectedInstallFiles(projectRoot, ".codex", true, permissionProfile);
+function isManagedPrompt(relativePath) {
+  return relativePath.startsWith(path.join(".codex", "agents") + path.sep)
+    || relativePath === path.join(".codex", "managed-prompts.json");
+}
+
+function legacyPermissionSettings(config) {
+  const lines = tomlStructuralLines(config.split(/\r?\n/));
+  const settings = [];
+  if (lines.some((line) => keyPattern("sandbox_mode").test(line))) settings.push("sandbox_mode");
+  if (lines.some((line) => line.trim() === "[sandbox_workspace_write]")) {
+    settings.push("sandbox_workspace_write");
+  }
+  return settings;
+}
+
+async function resolveCheckedPermissionProfile(projectRoot, legacySettings) {
+  try {
+    return await resolvePermissionProfile(projectRoot);
+  } catch (error) {
+    if (legacySettings.length === 0) throw error;
+    return DEFAULT_PERMISSION_PROFILE;
+  }
+}
+
+async function inspectExpectedInstallFiles(projectRoot, expected) {
   const drift = [];
+  const unsafePaths = [];
 
   for (const [relativePath, content] of expected) {
-    const current = await readManagedTextIfExists(projectRoot, relativePath);
-    if (current !== content) drift.push(relativePath);
+    try {
+      const current = await readManagedTextIfExists(projectRoot, relativePath);
+      if (current !== content) drift.push(relativePath);
+      if (isManagedPrompt(relativePath) && current) {
+        const stat = await fs.lstat(path.join(projectRoot, relativePath));
+        if (!stat.isFile() || stat.nlink !== 1) unsafePaths.push(relativePath);
+      }
+    } catch (error) {
+      if (!drift.includes(relativePath)) drift.push(relativePath);
+      if (isManagedPrompt(relativePath) && error?.code !== "ENOENT") unsafePaths.push(relativePath);
+    }
   }
 
-  return { projectRoot, drift };
+  return { drift, unsafePaths };
+}
+
+function appendUnique(target, values) {
+  for (const value of values) {
+    if (!target.includes(value)) target.push(value);
+  }
+}
+
+async function inspectManagedPromptInventory(projectRoot, expectedPromptPaths) {
+  const agentsRelativeRoot = path.join(".codex", "agents");
+  const agentsRoot = path.join(projectRoot, agentsRelativeRoot);
+  const expected = new Set(expectedPromptPaths);
+  const actualPromptPaths = [];
+  const drift = [];
+  const unsafePaths = [];
+  let entries;
+
+  try {
+    await assertManagedPathSafe(projectRoot, agentsRelativeRoot);
+    entries = await fs.readdir(agentsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return { actualPromptPaths, drift, unsafePaths };
+    return {
+      actualPromptPaths,
+      drift: [agentsRelativeRoot],
+      unsafePaths: [agentsRelativeRoot],
+    };
+  }
+
+  for (const entry of entries) {
+    const relativePath = path.join(agentsRelativeRoot, entry.name);
+    actualPromptPaths.push(relativePath);
+    if (!expected.has(relativePath)) drift.push(relativePath);
+    try {
+      const stat = await fs.lstat(path.join(projectRoot, relativePath));
+      if (!stat.isFile() || stat.nlink !== 1) unsafePaths.push(relativePath);
+    } catch {
+      drift.push(relativePath);
+      unsafePaths.push(relativePath);
+    }
+  }
+
+  actualPromptPaths.sort();
+  return { actualPromptPaths, drift, unsafePaths };
+}
+
+async function inspectPromptBoundary(projectRoot, protectedPaths, unsafePaths, probeBoundary) {
+  const relativePaths = protectedPaths.filter((relativePath) => !unsafePaths.includes(relativePath));
+  const directoryPaths = [
+    path.join(projectRoot, ".codex"),
+    path.join(projectRoot, ".codex", "agents"),
+  ];
+  const promptPaths = relativePaths.map((relativePath) => path.join(projectRoot, relativePath));
+  const probe = await probeBoundary(directoryPaths, promptPaths);
+  const fileWrites = Array.isArray(probe?.fileWrites) ? probe.fileWrites : [];
+  const directoryMutations = Array.isArray(probe?.directoryMutations)
+    ? probe.directoryMutations
+    : [];
+  return {
+    fileWrites,
+    directoryMutations,
+    complete: fileWrites.length === promptPaths.length
+      && directoryMutations.length === directoryPaths.length,
+  };
+}
+
+export async function checkProjectFiles(targetPath, options = {}) {
+  const projectRoot = await fs.realpath(path.resolve(targetPath));
+  const config = await readManagedTextIfExists(projectRoot, path.join(".codex", "config.toml"));
+  const legacySettings = legacyPermissionSettings(config);
+  const permissionProfile = await resolveCheckedPermissionProfile(projectRoot, legacySettings);
+  const expected = await expectedInstallFiles(projectRoot, ".codex", true, permissionProfile);
+  const { drift, unsafePaths } = await inspectExpectedInstallFiles(projectRoot, expected);
+  const expectedPromptPaths = [...expected.keys()].filter((relativePath) => (
+    relativePath.startsWith(path.join(".codex", "agents") + path.sep)
+  ));
+  const inventory = await inspectManagedPromptInventory(projectRoot, expectedPromptPaths);
+  appendUnique(drift, inventory.drift);
+  appendUnique(unsafePaths, inventory.unsafePaths);
+  drift.sort();
+  unsafePaths.sort();
+  const expectedProtectedPaths = [...expected.keys()].filter(isManagedPrompt);
+  const probe = await inspectPromptBoundary(
+    projectRoot,
+    expectedProtectedPaths,
+    unsafePaths,
+    options.probe ?? probeManagedPromptBoundary,
+  );
+  const classification = classifyPromptProtection({
+    configuredProfile: permissionProfile,
+    promptDrift: drift.filter(isManagedPrompt),
+    unsafePaths,
+    legacySettings,
+    probe,
+  });
+  return {
+    projectRoot,
+    drift,
+    protection: {
+      ...classification,
+      configured_profile: permissionProfile,
+      managed_prompt_count: inventory.actualPromptPaths.length,
+    },
+  };
 }
 
 function runCodeGraph(args, projectRoot, runner) {
