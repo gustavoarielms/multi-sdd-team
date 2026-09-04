@@ -25,6 +25,7 @@ import { captureProcessIdentity, terminateProcessTree } from "../src/engineering
 
 function appServerThread(project, overrides = {}) {
   return {
+    activePermissionProfile: { id: ":read-only", extends: null },
     approvalPolicy: "never",
     approvalsReviewer: "user",
     cwd: project,
@@ -104,6 +105,7 @@ test("broker uses schema-supported thread start and settings contracts", async (
   await installProject(project);
   const projectRoot = await fs.realpath(project);
   const response = appServerThread(projectRoot);
+  delete response.activePermissionProfile;
   const requests = [];
   let activeBroker;
   const rpc = {
@@ -113,10 +115,12 @@ test("broker uses schema-supported thread start and settings contracts", async (
         return { platformFamily: "unix", platformOs: "macos", userAgent: "codex_cli_rs/0.153.0-alpha.5" };
       }
       if (method === "thread/start") {
-        activeBroker.handleNotification({
-          method: "thread/settings/updated",
-          params: { threadId: "thread-main", threadSettings: threadSettings(projectRoot) },
-        });
+        setTimeout(() => {
+          activeBroker.handleNotification({
+            method: "thread/settings/updated",
+            params: { threadId: "thread-main", threadSettings: threadSettings(projectRoot) },
+          });
+        }, 5);
         return response;
       }
       if (method === "turn/start") return { turn: { id: "turn-main" } };
@@ -166,6 +170,66 @@ test("broker uses schema-supported thread start and settings contracts", async (
     () => mismatchedBroker.handleServerRequest(brokerToolCall("call-settings-mismatch")),
     /BROKER_PERMISSION_PROFILE_MISMATCH/u,
   );
+});
+
+test("broker requires permission profile provenance before turn start", async (context) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), "sdd-profile-provenance-"));
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const projectRoot = await fs.realpath(project);
+
+  function rpcFor(response, requests) {
+    return {
+      async request(method, params) {
+        requests.push({ method, params });
+        if (method === "initialize") {
+          return { platformFamily: "unix", platformOs: "macos", userAgent: "codex_cli_rs/0.153.0-alpha.5" };
+        }
+        if (method === "thread/start") return response;
+        if (method === "turn/start") return { turn: { id: "turn-main" } };
+        throw new Error(`unexpected request ${method}`);
+      },
+      notify() {},
+    };
+  }
+
+  const safeRequests = [];
+  const safeBroker = await createAppServerBroker({
+    rpc: rpcFor(appServerThread(projectRoot), safeRequests),
+    targetPath: projectRoot,
+    operations: { check: async () => ({ trusted: false }) },
+  });
+  await safeBroker.startTurn("accept the live experimental response profile");
+  assert.equal(safeRequests.at(-1).method, "turn/start");
+
+  const unsafeRequests = [];
+  const unsafeBroker = await createAppServerBroker({
+    rpc: rpcFor(appServerThread(projectRoot, {
+      activePermissionProfile: { id: ":danger-full-access", extends: null },
+    }), unsafeRequests),
+    targetPath: projectRoot,
+    operations: { check: async () => ({ trusted: false }) },
+  });
+  await assert.rejects(
+    () => unsafeBroker.startTurn("reject a mismatched experimental response profile"),
+    /BROKER_PERMISSION_PROFILE_MISMATCH/u,
+  );
+  assert.equal(unsafeRequests.some((request) => request.method === "turn/start"), false);
+
+  const missingResponse = appServerThread(projectRoot);
+  delete missingResponse.activePermissionProfile;
+  const missingRequests = [];
+  const missingBroker = await createAppServerBroker({
+    rpc: rpcFor(missingResponse, missingRequests),
+    targetPath: projectRoot,
+    operations: { check: async () => ({ trusted: false }) },
+    testHooks: { permissionAttestationTimeoutMs: 20 },
+  });
+  await assert.rejects(
+    () => missingBroker.startTurn("reject missing permission profile provenance"),
+    /BROKER_PERMISSION_PROFILE_MISSING/u,
+  );
+  assert.equal(missingRequests.some((request) => request.method === "turn/start"), false);
 });
 
 test("caller-minted runtime attestation cannot produce trusted protection", async (context) => {

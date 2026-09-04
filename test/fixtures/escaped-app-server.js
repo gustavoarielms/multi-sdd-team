@@ -35,6 +35,7 @@ if (mode === "--inert-survivor") {
       result = { platformFamily: "unix", platformOs: "macos", userAgent: "codex_cli_rs/fixture" };
     } else if (request.method === "thread/start") {
       result = {
+        activePermissionProfile: { id: ":read-only", extends: null },
         approvalPolicy: "never",
         approvalsReviewer: "user",
         cwd: request.params.cwd,

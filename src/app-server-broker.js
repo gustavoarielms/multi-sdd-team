@@ -25,6 +25,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 const DEFAULT_TURN_TIMEOUT_MS = 120_000;
 const DEFAULT_INTERRUPT_TIMEOUT_MS = 1_000;
+const DEFAULT_PERMISSION_ATTESTATION_TIMEOUT_MS = 1_000;
 const MAX_PROMPT_FILE_BYTES = 1024 * 1024;
 const MAX_MANAGED_PROMPT_COUNT = 64;
 const MAX_MANAGED_PROMPT_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -315,6 +316,15 @@ function validateThread(response, projectRoot, permissionProfile) {
   requireValue(typeof response?.thread?.sessionId === "string", "BROKER_SESSION_ID_MISSING");
 }
 
+function validateResponsePermissionProfile(response, permissionProfile) {
+  if (!Object.hasOwn(response ?? {}, "activePermissionProfile")) return false;
+  requireValue(
+    response.activePermissionProfile?.id === permissionProfileId(permissionProfile),
+    "BROKER_PERMISSION_PROFILE_MISMATCH",
+  );
+  return true;
+}
+
 function validateThreadSettings(settings, projectRoot, permissionProfile) {
   requireValue(settings?.approvalPolicy === "never", "BROKER_APPROVAL_POLICY_MISMATCH");
   requireValue(
@@ -400,6 +410,8 @@ export async function createAppServerBroker(options) {
   let threadId;
   let turnId;
   let pendingThreadSettings;
+  let permissionProfileAttested = false;
+  let threadSettingsWaiter;
 
   function assertLive(expectedThreadId = threadId, expectedTurnId = turnId) {
     requireValue(revocationReason === undefined, revocationReason ?? "BROKER_SESSION_REVOKED");
@@ -437,6 +449,7 @@ export async function createAppServerBroker(options) {
       runtimeWorkspaceRoots: [projectRoot],
     });
     validateThread(threadResponse, projectRoot, permissionProfile);
+    permissionProfileAttested = validateResponsePermissionProfile(threadResponse, permissionProfile);
     threadId = threadResponse.thread.id;
     if (pendingThreadSettings) {
       const notification = pendingThreadSettings;
@@ -444,6 +457,7 @@ export async function createAppServerBroker(options) {
       handleThreadSettings(notification);
       requireValue(revocationReason === undefined, revocationReason ?? "BROKER_SESSION_REVOKED");
     }
+    if (!permissionProfileAttested) await waitForPermissionAttestation();
     const turnRequest = {
       threadId,
       input: [{ type: "text", text: prompt }],
@@ -518,9 +532,27 @@ export async function createAppServerBroker(options) {
     try {
       requireValue(notification?.params?.threadId === threadId, "BROKER_THREAD_MISMATCH");
       validateThreadSettings(notification.params.threadSettings, projectRoot, permissionProfile);
+      permissionProfileAttested = true;
     } catch (error) {
       revocationReason ??= brokerReason(error) ? error.message : "BROKER_THREAD_SETTINGS_INVALID";
     }
+    threadSettingsWaiter?.();
+  }
+
+  async function waitForPermissionAttestation() {
+    const timeoutMs = options.testHooks?.permissionAttestationTimeoutMs
+      ?? DEFAULT_PERMISSION_ATTESTATION_TIMEOUT_MS;
+    try {
+      await withDeadline(
+        () => new Promise((resolve) => { threadSettingsWaiter = resolve; }),
+        timeoutMs,
+        "BROKER_PERMISSION_PROFILE_MISSING",
+        () => { revocationReason ??= "BROKER_PERMISSION_PROFILE_MISSING"; },
+      );
+    } finally {
+      threadSettingsWaiter = undefined;
+    }
+    requireValue(permissionProfileAttested, revocationReason ?? "BROKER_PERMISSION_PROFILE_MISSING");
   }
 
   function disconnect() {
