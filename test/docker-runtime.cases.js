@@ -61,7 +61,9 @@ function safeInspect(permissionProfile = "workspace-only") {
       },
       {
         destination: "/run/codex",
+        gid: 10001,
         mode: 0o700,
+        uid: 10001,
         readOnly: false,
         sizeBytes: 67_108_864,
         type: "tmpfs",
@@ -82,6 +84,7 @@ function safeInspect(permissionProfile = "workspace-only") {
       uts: "private",
     },
     noNewPrivileges: true,
+    openStdin: true,
     privileged: false,
     resources: {
       memoryBytes: 1_073_741_824,
@@ -171,6 +174,12 @@ test("Docker runtime input accepts only trusted fixed parameters", () => {
     })),
     "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
   );
+  assertReason(
+    () => buildDockerCreateInvocation(runtimeInput("workspace-only", {
+      approvedImage: { ...APPROVED_IMAGE, user: "2147483648:10001" },
+    })),
+    "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
+  );
   for (const override of [
     { approvedImage: { ...APPROVED_IMAGE, digest: [APPROVED_IMAGE.digest] } },
     { approvedImage: { ...APPROVED_IMAGE, reference: [APPROVED_IMAGE.reference] } },
@@ -203,6 +212,7 @@ test("Docker create argv is deterministic and package-owned", () => {
     args: [
       "create",
       "--pull=never",
+      "--interactive",
       "--label=io.github.gustavoarielms.sdd-codegraph.package=@gustavoarielms/sdd-codegraph-cli",
       "--label=io.github.gustavoarielms.sdd-codegraph.contract-version=1",
       `--label=io.github.gustavoarielms.sdd-codegraph.run-id=${RUN_ID}`,
@@ -220,7 +230,7 @@ test("Docker create argv is deterministic and package-owned", () => {
       "--env=CODEX_HOME=/run/codex",
       "--mount=type=bind,src=/safe/project,dst=/workspace,bind-propagation=rprivate",
       "--mount=type=bind,src=/safe/project/.codex,dst=/workspace/.codex,readonly,bind-propagation=rprivate,bind-recursive=readonly",
-      "--mount=type=tmpfs,dst=/run/codex,tmpfs-size=67108864,tmpfs-mode=0700",
+      "--tmpfs=/run/codex:rw,size=67108864,mode=0700,uid=10001,gid=10001",
       "--mount=type=tmpfs,dst=/tmp,tmpfs-size=67108864,tmpfs-mode=01777",
       APPROVED_IMAGE.reference,
     ],
@@ -250,7 +260,9 @@ test("normalized Docker inspect rejects every authority-changing variant", () =>
   const cases = [
     ["mutable image", (value) => { value.image.reference = "registry.example/sdd/codex-app-server:latest"; }, "BROKER_CONTAINER_IMAGE_MISMATCH"],
     ["wrong digest", (value) => { value.image.digest = `sha256:${"c".repeat(64)}`; }, "BROKER_CONTAINER_IMAGE_MISMATCH"],
+    ["malformed image reference", (value) => { value.image.reference = { toString: null }; }, "BROKER_CONTAINER_IMAGE_MISMATCH"],
     ["root user", (value) => { value.image.user = "0:0"; }, "BROKER_CONTAINER_USER_MISMATCH"],
+    ["closed stdin", (value) => { value.openStdin = false; }, "BROKER_CONTAINER_INSPECT_INVALID"],
     ["writable rootfs", (value) => { value.rootfsReadOnly = false; }, "BROKER_CONTAINER_READONLY_UNAVAILABLE"],
     ["privileged", (value) => { value.privileged = true; }, "BROKER_CONTAINER_PRIVILEGE_MISMATCH"],
     ["privilege escalation", (value) => { value.noNewPrivileges = false; }, "BROKER_CONTAINER_PRIVILEGE_MISMATCH"],
@@ -266,6 +278,7 @@ test("normalized Docker inspect rejects every authority-changing variant", () =>
     ["writable managed prompts", (value) => { value.mounts[1].readOnly = false; }, "BROKER_CONTAINER_MOUNT_MISMATCH"],
     ["non-recursive managed prompts", (value) => { value.mounts[1].recursiveReadOnly = false; }, "BROKER_CONTAINER_READONLY_UNAVAILABLE"],
     ["wrong project source", (value) => { value.mounts[0].source = "/other"; }, "BROKER_CONTAINER_MOUNT_MISMATCH"],
+    ["root-owned Codex state", (value) => { value.mounts[2].uid = 0; }, "BROKER_CONTAINER_MOUNT_MISMATCH"],
     ["missing resources", (value) => { delete value.resources.memoryBytes; }, "BROKER_CONTAINER_RESOURCE_MISMATCH"],
     ["unbounded pids", (value) => { value.resources.pidsLimit = 0; }, "BROKER_CONTAINER_RESOURCE_MISMATCH"],
     ["wrong labels", (value) => { value.labels["io.github.gustavoarielms.sdd-codegraph.run-id"] = "attacker"; }, "BROKER_CONTAINER_LABEL_MISMATCH"],

@@ -32,6 +32,7 @@ const TMPFS_SIZE_BYTES = 67_108_864;
 const MEMORY_BYTES = 1_073_741_824;
 const NANO_CPUS = 2_000_000_000;
 const PIDS_LIMIT = 256;
+const MAX_USER_ID = 2_147_483_647;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const IMAGE_PATTERN = /^[A-Za-z0-9._/-]+@sha256:[a-f0-9]{64}$/u;
 const RUN_ID_PATTERN = /^[a-f0-9]{64}$/u;
@@ -203,6 +204,12 @@ function projectPathApi(projectRoot) {
   return path.posix.isAbsolute(projectRoot) ? path.posix : path.win32;
 }
 
+function isSafeApprovedUser(user) {
+  return typeof user === "string"
+    && SAFE_USER_PATTERN.test(user)
+    && user.split(":").every((id) => Number(id) <= MAX_USER_ID);
+}
+
 function validateRuntimeInput(input) {
   requireExactKeys(
     input,
@@ -223,9 +230,8 @@ function validateRuntimeInput(input) {
     typeof input.runId === "string"
       && typeof input.approvedImage.digest === "string"
       && typeof input.approvedImage.reference === "string"
-      && typeof input.approvedImage.user === "string"
       && RUN_ID_PATTERN.test(input.runId)
-      && SAFE_USER_PATTERN.test(input.approvedImage.user),
+      && isSafeApprovedUser(input.approvedImage.user),
     "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
   );
   requireContract(
@@ -245,9 +251,15 @@ function expectedLabels(runId) {
   };
 }
 
-function expectedMounts(projectRoot, permissionProfile) {
+function approvedUserOwnership(user) {
+  const [uidText, gidText = uidText] = user.split(":");
+  return { gid: Number(gidText), uid: Number(uidText) };
+}
+
+function expectedMounts(projectRoot, permissionProfile, approvedUser) {
   const readOnlyProject = permissionProfile === "read-only";
   const projectPath = projectPathApi(projectRoot);
+  const ownership = approvedUserOwnership(approvedUser);
   return [
     {
       destination: WORKSPACE,
@@ -267,7 +279,9 @@ function expectedMounts(projectRoot, permissionProfile) {
     },
     {
       destination: CODEX_HOME,
+      gid: ownership.gid,
       mode: 0o700,
+      uid: ownership.uid,
       readOnly: false,
       sizeBytes: TMPFS_SIZE_BYTES,
       type: "tmpfs",
@@ -299,16 +313,25 @@ function tmpfsMountArgument(mount) {
   return `--mount=type=tmpfs,dst=${mount.destination},tmpfs-size=${mount.sizeBytes},tmpfs-mode=${mode}`;
 }
 
+function privateTmpfsArgument(mount) {
+  return `--tmpfs=${mount.destination}:rw,size=${mount.sizeBytes},mode=0700,uid=${mount.uid},gid=${mount.gid}`;
+}
+
 export function buildDockerCreateInvocation(input) {
   validateRuntimeInput(input);
   const labels = expectedLabels(input.runId);
-  const mounts = expectedMounts(input.projectRoot, input.permissionProfile);
+  const mounts = expectedMounts(
+    input.projectRoot,
+    input.permissionProfile,
+    input.approvedImage.user,
+  );
   return {
     command: "docker",
     shell: false,
     args: [
       "create",
       "--pull=never",
+      "--interactive",
       `--label=${PACKAGE_LABEL}=${labels[PACKAGE_LABEL]}`,
       `--label=${CONTRACT_LABEL}=${labels[CONTRACT_LABEL]}`,
       `--label=${RUN_LABEL}=${labels[RUN_LABEL]}`,
@@ -326,7 +349,7 @@ export function buildDockerCreateInvocation(input) {
       `--env=CODEX_HOME=${CODEX_HOME}`,
       bindMountArgument(mounts[0]),
       bindMountArgument(mounts[1]),
-      tmpfsMountArgument(mounts[2]),
+      privateTmpfsArgument(mounts[2]),
       tmpfsMountArgument(mounts[3]),
       input.approvedImage.reference,
     ],
@@ -336,7 +359,8 @@ export function buildDockerCreateInvocation(input) {
 function validateInspectImage(image, approvedImage) {
   requireExactKeys(image, ["digest", "reference", "user"], "BROKER_CONTAINER_IMAGE_MISMATCH");
   requireContract(
-    IMAGE_PATTERN.test(image.reference)
+    typeof image.reference === "string"
+      && IMAGE_PATTERN.test(image.reference)
       && image.reference === approvedImage.reference
       && image.digest === approvedImage.digest,
     "BROKER_CONTAINER_IMAGE_MISMATCH",
@@ -372,7 +396,11 @@ function validateInspectNamespaces(namespaces) {
 
 function validateInspectMounts(mounts, input) {
   requireContract(Array.isArray(mounts) && mounts.length === 4, "BROKER_CONTAINER_MOUNT_MISMATCH");
-  const expected = expectedMounts(input.projectRoot, input.permissionProfile);
+  const expected = expectedMounts(
+    input.projectRoot,
+    input.permissionProfile,
+    input.approvedImage.user,
+  );
   for (let index = 0; index < 2; index += 1) {
     requireContract(
       isRecord(mounts[index]) && Object.keys(mounts[index]).length === 6,
@@ -404,12 +432,14 @@ export function validateDockerInspect(inspect, input) {
     "mounts",
     "namespaces",
     "noNewPrivileges",
+    "openStdin",
     "privileged",
     "resources",
     "rootfsReadOnly",
     "workingDirectory",
   ], "BROKER_CONTAINER_INSPECT_INVALID");
   validateInspectImage(inspect.image, input.approvedImage);
+  requireContract(inspect.openStdin === true, "BROKER_CONTAINER_INSPECT_INVALID");
   requireContract(inspect.workingDirectory === WORKSPACE, "BROKER_CONTAINER_INSPECT_INVALID");
   validateInspectPrivileges(inspect);
   validateInspectNamespaces(inspect.namespaces);
