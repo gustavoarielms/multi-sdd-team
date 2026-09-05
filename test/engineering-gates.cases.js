@@ -340,6 +340,7 @@ function syntheticCoverage(file, uncovered = false, baselineFile) {
 
 test("engineering gate configuration is strict and requires the exact executor allowlist", async () => {
   const inventoryFiles = [
+    "docker-runtime.cases.js",
     "engineering-gates.cases.js",
     "governance-checks.cases.js",
     "governance-schema.cases.js",
@@ -353,14 +354,14 @@ test("engineering gate configuration is strict and requires the exact executor a
     const source = await fs.readFile(path.join(repositoryRoot, "test", relative), "utf8");
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
-  assert.equal(UNIT_TEST_NAMES.size, 21);
-  assert.equal(inventory.length, 143);
-  assert.equal(new Set(inventory).size, 143);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 21);
+  assert.equal(UNIT_TEST_NAMES.size, 29);
+  assert.equal(inventory.length, 151);
+  assert.equal(new Set(inventory).size, 151);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 29);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 122);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
-  assert.equal(unitFiles.length, 7);
+  assert.equal(unitFiles.length, 8);
   assert.equal(integrationFiles.length, 8);
   assert.equal(meetsCoverageThreshold({ covered: 89, total: 100 }, 90), false);
   assert.equal(meetsCoverageThreshold({ covered: 9, total: 10 }, 90), true);

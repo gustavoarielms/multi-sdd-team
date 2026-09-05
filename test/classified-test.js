@@ -22,6 +22,14 @@ export const UNIT_TEST_NAMES = Object.freeze(new Set([
   "runtime attestation accepts only supported Node release lines",
   "broker does not expose run-gates while execution isolation is unavailable",
   "JSONL RPC bounds input, request lifetime, and concurrent server requests",
+  "Docker runtime reason codes are stable, bounded, and closed",
+  "Docker runtime input accepts only trusted fixed parameters",
+  "Docker create argv is deterministic and package-owned",
+  "normalized Docker inspect accepts only the exact safe contract",
+  "normalized Docker inspect rejects every authority-changing variant",
+  "Docker launcher results are strictly allowlisted and internally consistent",
+  "Docker launcher result schema is closed and requires semantic identity validation",
+  "Docker Task 1 contract remains pure and cannot execute a daemon",
 ]));
 
 export function classifyTestName(name) {
