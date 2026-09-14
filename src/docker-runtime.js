@@ -534,14 +534,19 @@ async function removeLifecycleContainer(state) {
   } finally { state.clock.clearTimeout(timer); }
 }
 
-async function finishLifecycle(state) {
+async function interruptFailedOperation(state) {
   const { attached, options, clock } = state;
-  state.cancel.operation.abort();
-  clock.clearTimeout(state.startupTimer);
   if (state.failure && attached && !attached.closed && typeof options.interrupt === "function") {
     try { await deadline(() => options.interrupt(attached.transport), LIMITS.interruptTimeoutMs, clock); }
     catch { /* Removal is authoritative even when interruption cannot complete. */ }
   }
+}
+
+async function finishLifecycle(state) {
+  const { attached, clock } = state;
+  state.cancel.operation.abort();
+  clock.clearTimeout(state.startupTimer);
+  await interruptFailedOperation(state);
   attached?.stop();
   if (state.operationSettled) {
     try { await deadline(() => state.operationSettled, LIMITS.interruptTimeoutMs, clock); }
