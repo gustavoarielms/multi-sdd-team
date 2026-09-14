@@ -355,14 +355,14 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 29);
-  assert.equal(inventory.length, 151);
-  assert.equal(new Set(inventory).size, 151);
+  assert.equal(inventory.length, 171);
+  assert.equal(new Set(inventory).size, 171);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 29);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 122);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 142);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 8);
-  assert.equal(integrationFiles.length, 8);
+  assert.equal(integrationFiles.length, 9);
   assert.equal(meetsCoverageThreshold({ covered: 89, total: 100 }, 90), false);
   assert.equal(meetsCoverageThreshold({ covered: 9, total: 10 }, 90), true);
   assert.equal(meetsCoverageThreshold({ covered: 0, total: 0 }, 90), true);

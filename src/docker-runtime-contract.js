@@ -18,6 +18,7 @@ export const BROKER_REASON_CODES = Object.freeze([
   "BROKER_CONTAINER_RESOURCE_MISMATCH",
   "BROKER_CONTAINER_LABEL_MISMATCH",
   "BROKER_LAUNCH_RESULT_INVALID",
+  "BROKER_CONTAINER_CLEANUP_UNPROVEN",
 ]);
 
 const PACKAGE_LABEL = "io.github.gustavoarielms.sdd-codegraph.package";
