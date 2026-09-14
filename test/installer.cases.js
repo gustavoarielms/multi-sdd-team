@@ -241,6 +241,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "setup.sh",
     "src/app-server-broker.js",
     "src/docker-runtime-contract.js",
+    "src/docker-runtime.js",
     "src/engineering-gate-runtime.js",
     "src/engineering-gates.js",
     "src/git-change-selector.js",
