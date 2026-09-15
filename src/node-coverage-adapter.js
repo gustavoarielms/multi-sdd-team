@@ -11,6 +11,7 @@ import istanbulCoverage from "istanbul-lib-coverage";
 
 import { isContained, runBoundedCommand } from "./engineering-gate-runtime.js";
 import { collectProductionChanges } from "./git-change-selector.js";
+import { parseNodeTestReporter } from "./node-test-suite-adapter.js";
 
 const require = createRequire(import.meta.url);
 const { createCoverageMap } = istanbulCoverage;
@@ -315,6 +316,51 @@ async function discoverSuiteFiles(target, suite) {
   return files.sort();
 }
 
+const COVERAGE_COMMAND_FAILURES = Object.freeze({
+  COMMAND_OUTPUT_LIMIT: "exceeded its command output limit",
+  COMMAND_OWNERSHIP_HANDOFF_FAILED: "could not establish command ownership",
+  COMMAND_SIGNALLED: "was terminated by a signal",
+  COMMAND_SPAWN_FAILED: "could not start",
+  COMMAND_TERMINATION_FAILED: "could not prove command termination",
+  COMMAND_TIMEOUT: "exceeded its command time limit",
+});
+
+function coverageSuiteFailure(suite, cause, detail) {
+  const prefix = `COVERAGE_${suite.toUpperCase()}`;
+  return {
+    status: "error",
+    reason_code: `${prefix}_${cause}`,
+    summary: `The ${suite} coverage suite ${detail}.`,
+  };
+}
+
+function classifyCoverageCommandError(suite, command) {
+  if (command.reason_code === "EXECUTOR_ABORTED") return command;
+  const detail = Object.hasOwn(COVERAGE_COMMAND_FAILURES, command.reason_code)
+    ? COVERAGE_COMMAND_FAILURES[command.reason_code]
+    : undefined;
+  return detail
+    ? coverageSuiteFailure(suite, command.reason_code, detail)
+    : coverageSuiteFailure(suite, "COMMAND_ERROR", "could not produce a trustworthy command result");
+}
+
+function classifyCoverageNonzeroExit(suite, command) {
+  const parsed = parseNodeTestReporter(command.stdout, suite);
+  const counts = parsed.report?.counts;
+  const trustworthyFailureReport = parsed.report?.status === "fail"
+    && counts.tests > 0
+    && counts.skipped === 0
+    && counts.todo === 0
+    && counts.passed + counts.failed + counts.cancelled === counts.tests;
+  if (trustworthyFailureReport && counts.cancelled > 0) {
+    return coverageSuiteFailure(suite, "TESTS_CANCELLED", "reported cancelled tests");
+  }
+  if (trustworthyFailureReport && counts.failed > 0) {
+    return coverageSuiteFailure(suite, "TESTS_FAILED", "reported failed tests");
+  }
+  return coverageSuiteFailure(suite, "PROCESS_EXIT_NONZERO", "exited with a non-zero status");
+}
+
 async function runCoverageSuite(target, suite, productionPaths, root, configPath, limits, runner) {
   const reportDirectory = path.join(root, `${suite}-report`);
   const temporaryDirectory = path.join(root, `${suite}-v8`);
@@ -340,10 +386,10 @@ async function runCoverageSuite(target, suite, productionPaths, root, configPath
     env: { PATH: process.env.PATH ?? "", SDD_TEST_SUITE: suite },
     ...limits,
   });
-  if (command.status === "error") return command;
+  if (command.status === "error") return classifyCoverageCommandError(suite, command);
   return command.exit_code === 0
     ? { status: "completed", mapPath: path.join(reportDirectory, "coverage-final.json") }
-    : { status: "error", reason_code: "COVERAGE_EXECUTION_FAILED" };
+    : classifyCoverageNonzeroExit(suite, command);
 }
 
 function setCoveragePhase(context, state, phase) {
