@@ -2050,6 +2050,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   const failedWindowsController = new AbortController();
   let failedWindowsCommandPid;
   let failedWindowsSupervisorPid;
+  let failedWindowsSupervisorWasAlive = false;
   let failedWindowsTerminationInvoked = false;
   const failedWindowsExecution = runBoundedCommand(
     process.execPath,
@@ -2076,9 +2077,13 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
           assert.equal(Number.isSafeInteger(failedWindowsCommandPid) && failedWindowsCommandPid > 0, true);
           assert.equal(Number.isSafeInteger(pid) && pid > 0, true);
           assert.notEqual(pid, failedWindowsCommandPid);
-          assert.doesNotThrow(() => process.kill(pid, 0));
-          for (const candidate of [failedWindowsCommandPid, pid]) {
-            try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+          try {
+            process.kill(pid, 0);
+            failedWindowsSupervisorWasAlive = true;
+          } finally {
+            for (const candidate of [failedWindowsCommandPid, pid]) {
+              try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+            }
           }
         },
         verifyWindows: async () => { throw new Error("verification unavailable"); },
@@ -2098,6 +2103,7 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   });
   assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
   assert.equal(failedWindowsTerminationInvoked, true);
+  assert.equal(failedWindowsSupervisorWasAlive, true);
   assert.equal(Number.isSafeInteger(failedWindowsSupervisorPid) && failedWindowsSupervisorPid > 0, true);
   assert.notEqual(failedWindowsSupervisorPid, failedWindowsCommandPid);
 
