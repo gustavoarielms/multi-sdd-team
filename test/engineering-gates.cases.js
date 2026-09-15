@@ -611,6 +611,52 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   assert.deepEqual(coveragePhases, [
     "precondition", "controls", "unit", "integration", "map", "evaluation", "denominator", "evaluation", "cleanup",
   ]);
+  const coverageFailureRunner = (suite, failure) => async (executable, args, options) => {
+    if (executable !== "git" && options.env.SDD_TEST_SUITE === suite) return failure;
+    return coverageRunner(false)(executable, args, options);
+  };
+  const timedOutUnit = await runNodeCoverage(coverageContext, coverageFailureRunner("unit", {
+    status: "error",
+    reason_code: "COMMAND_TIMEOUT",
+  }));
+  assert.equal(timedOutUnit.reason_code, "COVERAGE_UNIT_COMMAND_TIMEOUT");
+  assert.equal(timedOutUnit.summary, "The unit coverage suite exceeded its command time limit.");
+
+  const unknownCommandFailure = await runNodeCoverage(coverageContext, coverageFailureRunner("unit", {
+    status: "error",
+    reason_code: "toString",
+    stdout: "unknown-command-secret",
+  }));
+  assert.equal(unknownCommandFailure.reason_code, "COVERAGE_UNIT_COMMAND_ERROR");
+  assert.equal(unknownCommandFailure.summary, "The unit coverage suite could not produce a trustworthy command result.");
+  assert.doesNotMatch(JSON.stringify(unknownCommandFailure), /unknown-command-secret|toString/u);
+
+  const sensitiveFailure = "customer-secret-must-not-escape";
+  const failedIntegration = await runNodeCoverage(coverageContext, coverageFailureRunner("integration", {
+    status: "completed",
+    exit_code: 1,
+    stdout: `${JSON.stringify({
+      protocol_version: "1.0.0",
+      suite: "integration",
+      status: "fail",
+      counts: { tests: 1, passed: 0, failed: 1, cancelled: 0, skipped: 0, todo: 0, suites: 0 },
+      failures: [{ name: sensitiveFailure }],
+    })}\n`,
+    stderr: sensitiveFailure,
+  }));
+  assert.equal(failedIntegration.reason_code, "COVERAGE_INTEGRATION_TESTS_FAILED");
+  assert.equal(failedIntegration.summary, "The integration coverage suite reported failed tests.");
+  assert.doesNotMatch(JSON.stringify(failedIntegration), new RegExp(sensitiveFailure));
+
+  const unexplainedIntegration = await runNodeCoverage(coverageContext, coverageFailureRunner("integration", {
+    status: "completed",
+    exit_code: 1,
+    stdout: sensitiveFailure,
+    stderr: sensitiveFailure,
+  }));
+  assert.equal(unexplainedIntegration.reason_code, "COVERAGE_INTEGRATION_PROCESS_EXIT_NONZERO");
+  assert.equal(unexplainedIntegration.summary, "The integration coverage suite exited with a non-zero status.");
+  assert.doesNotMatch(JSON.stringify(unexplainedIntegration), new RegExp(sensitiveFailure));
   assert.deepEqual(changedFailure.evidence.map((item) => [item.check_id, item.outcome]), [
     ["coverage_global", "pass"], ["coverage_changed", "fail"],
     ["coverage_unit", "observed"], ["coverage_integration", "observed"],

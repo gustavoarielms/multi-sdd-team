@@ -37,7 +37,7 @@ async function discoverTests(target, suite) {
   return files.length === 0 ? { error: "TEST_SUITE_EMPTY" } : { files };
 }
 
-function parseReporter(stdout, suite) {
+export function parseNodeTestReporter(stdout, suite) {
   if (Buffer.byteLength(stdout) > 65536) return { error: "TEST_REPORTER_OVERFLOW" };
   let report;
   try {
@@ -96,7 +96,7 @@ export async function runNodeTestSuite(context, suite, runner = runBoundedComman
     ...context.limits,
   });
   if (command.status === "error") return command;
-  const parsed = parseReporter(command.stdout, suite);
+  const parsed = parseNodeTestReporter(command.stdout, suite);
   if (parsed.error) return { status: "error", reason_code: parsed.error };
   return classifySuiteExecution(command, parsed.report, suite);
 }
