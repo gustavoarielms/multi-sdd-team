@@ -2054,7 +2054,11 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
   const failedWindowsExecution = runBoundedCommand(
     process.execPath,
     ["-e", [
-      `require('node:fs').writeFileSync(${JSON.stringify(failedWindowsCommandPath)}, String(process.pid));`,
+      "const fs = require('node:fs');",
+      `const commandPidPath = ${JSON.stringify(failedWindowsCommandPath)};`,
+      "const temporaryPidPath = `${commandPidPath}.${process.pid}.tmp`;",
+      "fs.writeFileSync(temporaryPidPath, String(process.pid));",
+      "fs.renameSync(temporaryPidPath, commandPidPath);",
       "setInterval(() => {}, 1000);",
     ].join("\n")],
     {
@@ -2069,7 +2073,8 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
         terminateWindows: async ({ pid }) => {
           failedWindowsTerminationInvoked = true;
           failedWindowsSupervisorPid = pid;
-          assert.equal(Number.isSafeInteger(pid), true);
+          assert.equal(Number.isSafeInteger(failedWindowsCommandPid) && failedWindowsCommandPid > 0, true);
+          assert.equal(Number.isSafeInteger(pid) && pid > 0, true);
           assert.notEqual(pid, failedWindowsCommandPid);
           assert.doesNotThrow(() => process.kill(pid, 0));
           for (const candidate of [failedWindowsCommandPid, pid]) {
@@ -2081,18 +2086,19 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
     },
   );
   failedWindowsCommandPid = await waitForPidFile(failedWindowsCommandPath);
-  assert.equal(Number.isSafeInteger(failedWindowsCommandPid), true);
+  assert.equal(Number.isSafeInteger(failedWindowsCommandPid) && failedWindowsCommandPid > 0, true);
   assert.doesNotThrow(() => process.kill(failedWindowsCommandPid, 0));
   failedWindowsController.abort();
   const failedWindowsVerification = await failedWindowsExecution;
   t.after(() => {
     for (const candidate of [failedWindowsCommandPid, failedWindowsSupervisorPid]) {
+      if (!Number.isSafeInteger(candidate) || candidate <= 0) continue;
       try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
     }
   });
   assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
   assert.equal(failedWindowsTerminationInvoked, true);
-  assert.equal(Number.isSafeInteger(failedWindowsSupervisorPid), true);
+  assert.equal(Number.isSafeInteger(failedWindowsSupervisorPid) && failedWindowsSupervisorPid > 0, true);
   assert.notEqual(failedWindowsSupervisorPid, failedWindowsCommandPid);
 
   const cleanupProtocolWorker = spawn(process.execPath, ["-e", [
