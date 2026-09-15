@@ -2047,36 +2047,65 @@ test("bounded command execution distinguishes timeout, overflow, and functional 
 
   const failedWindowsDirectory = await temporaryDirectory(t);
   const failedWindowsCommandPath = path.join(failedWindowsDirectory, "command.pid");
+  const failedWindowsController = new AbortController();
   let failedWindowsCommandPid;
-  const failedWindowsVerification = await runBoundedCommand(
+  let failedWindowsSupervisorPid;
+  let failedWindowsSupervisorWasAlive = false;
+  let failedWindowsTerminationInvoked = false;
+  const failedWindowsExecution = runBoundedCommand(
     process.execPath,
     ["-e", [
-      `require('node:fs').writeFileSync(${JSON.stringify(failedWindowsCommandPath)}, String(process.pid));`,
+      "const fs = require('node:fs');",
+      `const commandPidPath = ${JSON.stringify(failedWindowsCommandPath)};`,
+      "const temporaryPidPath = `${commandPidPath}.${process.pid}.tmp`;",
+      "fs.writeFileSync(temporaryPidPath, String(process.pid));",
+      "fs.renameSync(temporaryPidPath, commandPidPath);",
       "setInterval(() => {}, 1000);",
     ].join("\n")],
     {
       cwd: repositoryRoot,
-      timeoutMs: 20,
+      timeoutMs: 5000,
       maxOutputBytes: 1024,
+      signal: failedWindowsController.signal,
       terminationControl: {
         platform: "win32",
         windowsExecutable: "C:\\Windows\\System32\\taskkill.exe",
         windowsVerifierExecutable: "C:\\Windows\\System32\\tasklist.exe",
         terminateWindows: async ({ pid }) => {
-          failedWindowsCommandPid = await waitForPidFile(failedWindowsCommandPath);
-          for (const candidate of [failedWindowsCommandPid, pid]) {
-            try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+          failedWindowsTerminationInvoked = true;
+          failedWindowsSupervisorPid = pid;
+          assert.equal(Number.isSafeInteger(failedWindowsCommandPid) && failedWindowsCommandPid > 0, true);
+          assert.equal(Number.isSafeInteger(pid) && pid > 0, true);
+          assert.notEqual(pid, failedWindowsCommandPid);
+          try {
+            process.kill(pid, 0);
+            failedWindowsSupervisorWasAlive = true;
+          } finally {
+            for (const candidate of [failedWindowsCommandPid, pid]) {
+              try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+            }
           }
         },
         verifyWindows: async () => { throw new Error("verification unavailable"); },
       },
     },
   );
+  failedWindowsCommandPid = await waitForPidFile(failedWindowsCommandPath);
+  assert.equal(Number.isSafeInteger(failedWindowsCommandPid) && failedWindowsCommandPid > 0, true);
+  assert.doesNotThrow(() => process.kill(failedWindowsCommandPid, 0));
+  failedWindowsController.abort();
+  const failedWindowsVerification = await failedWindowsExecution;
   t.after(() => {
-    try { process.kill(failedWindowsCommandPid, "SIGKILL"); } catch { /* Already terminated. */ }
+    for (const candidate of [failedWindowsCommandPid, failedWindowsSupervisorPid]) {
+      if (!Number.isSafeInteger(candidate) || candidate <= 0) continue;
+      try { process.kill(candidate, "SIGKILL"); } catch { /* Already terminated. */ }
+    }
   });
   assert.equal(failedWindowsVerification.reason_code, "COMMAND_TERMINATION_FAILED");
-  assert.equal(Number.isSafeInteger(failedWindowsCommandPid), true);
+  assert.equal(failedWindowsTerminationInvoked, true);
+  assert.equal(failedWindowsSupervisorWasAlive, true);
+  assert.equal(Number.isSafeInteger(failedWindowsSupervisorPid) && failedWindowsSupervisorPid > 0, true);
+  assert.notEqual(failedWindowsSupervisorPid, failedWindowsCommandPid);
 
   const cleanupProtocolWorker = spawn(process.execPath, ["-e", [
     `import(${JSON.stringify(path.join(repositoryRoot, "src", "engineering-gate-runtime.js"))}).then(async ({ runBoundedCommand }) => {`,
