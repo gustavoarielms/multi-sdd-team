@@ -347,14 +347,15 @@ function classifyCoverageCommandError(suite, command) {
 function classifyCoverageNonzeroExit(suite, command) {
   const parsed = parseNodeTestReporter(command.stdout, suite);
   const counts = parsed.report?.counts;
-  const trustworthyFailure = parsed.report?.status === "fail"
+  const trustworthyFailureReport = parsed.report?.status === "fail"
     && counts.tests > 0
-    && counts.failed > 0
-    && counts.cancelled === 0
     && counts.skipped === 0
     && counts.todo === 0
-    && counts.passed + counts.failed === counts.tests;
-  if (trustworthyFailure) {
+    && counts.passed + counts.failed + counts.cancelled === counts.tests;
+  if (trustworthyFailureReport && counts.cancelled > 0) {
+    return coverageSuiteFailure(suite, "TESTS_CANCELLED", "reported cancelled tests");
+  }
+  if (trustworthyFailureReport && counts.failed > 0) {
     return coverageSuiteFailure(suite, "TESTS_FAILED", "reported failed tests");
   }
   return coverageSuiteFailure(suite, "PROCESS_EXIT_NONZERO", "exited with a non-zero status");
