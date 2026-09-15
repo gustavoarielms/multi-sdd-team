@@ -648,6 +648,22 @@ test("the real Node lint and complexity adapter preserves runner exit and eviden
   assert.equal(failedIntegration.summary, "The integration coverage suite reported failed tests.");
   assert.doesNotMatch(JSON.stringify(failedIntegration), new RegExp(sensitiveFailure));
 
+  const inconsistentIntegration = await runNodeCoverage(coverageContext, coverageFailureRunner("integration", {
+    status: "completed",
+    exit_code: 1,
+    stdout: `${JSON.stringify({
+      protocol_version: "1.0.0",
+      suite: "integration",
+      status: "fail",
+      counts: { tests: 0, passed: 0, failed: 1, cancelled: 0, skipped: 0, todo: 0, suites: 0 },
+      failures: [{ name: sensitiveFailure }],
+    })}\n`,
+    stderr: sensitiveFailure,
+  }));
+  assert.equal(inconsistentIntegration.reason_code, "COVERAGE_INTEGRATION_PROCESS_EXIT_NONZERO");
+  assert.equal(inconsistentIntegration.summary, "The integration coverage suite exited with a non-zero status.");
+  assert.doesNotMatch(JSON.stringify(inconsistentIntegration), new RegExp(sensitiveFailure));
+
   const unexplainedIntegration = await runNodeCoverage(coverageContext, coverageFailureRunner("integration", {
     status: "completed",
     exit_code: 1,
