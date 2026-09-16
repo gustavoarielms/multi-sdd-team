@@ -98,3 +98,11 @@ Corresponding license texts are shipped under vendor/node-architecture-runtime/l
 - watskeburt@6.0.0 — MIT
 
 <!-- END GENERATED NODE ARCHITECTURE RUNTIME NOTICES -->
+
+## Codex App Server runtime image source
+
+The package includes source and contracts for assembling an optional runtime
+image around OpenAI Codex App Server 0.154.0. The upstream Codex artifact is
+licensed under Apache-2.0; its license and NOTICE are included under
+`container/licenses/` and copied into the runtime image. The artifact itself
+and a built image are not included in this npm package.

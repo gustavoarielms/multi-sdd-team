@@ -5,9 +5,18 @@
 - Design decision: approved on 2026-09-04.
 - Specification status: approved on 2026-09-04, including `--prompt-file`
   input and ephemeral, non-persisted container authentication state.
-- Implementation status: not started by this document.
-- Source baseline: `origin/main` at `f5fe4ca8bfdb2e9857cd7b6b4555f87cfda33ed8`
-  (PR #27).
+- Implementation status: Tasks 1 and 2 are complete. Task 3 source contracts,
+  image definition, wrapper, and tests are implemented. Two local OCI builds
+  and two wrapper builds are byte-identical; their observed hashes are recorded
+  in `container/runtime-image-build-record.json` as `candidate-unpublished`.
+  The exact OCI A was published privately to GHCR on 2026-09-16 as
+  `0.154.0-task3-candidate-arm64`; registry rereads matched the reviewed bytes.
+  The final runtime manifest was prepared from registry evidence and received
+  separate human approval on 2026-09-16. The publication, registry reread, and
+  binding gates are complete; the approved manifest hash is recorded in
+  `container/BUILD.md`. Task 4 and the positive launcher remain disabled.
+- Task 3 source baseline: `origin/main` at
+  `9b553914d5814298cddb17c2c48f7dac03cc2439` (PR #31).
 - Delivery boundary: this specification does not authorize a branch, commit,
   pull request, image publication, release, consumer update, or deployment.
 

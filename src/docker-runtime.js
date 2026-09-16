@@ -113,16 +113,20 @@ function validateDaemon(server, info, host) {
 }
 
 function safeImage(image, input, host) {
-  requireValue(typeof image.Id === "string" && DIGEST.test(image.Id), "BROKER_CONTAINER_IMAGE_MISMATCH");
+  requireValue(
+    typeof image.Id === "string"
+      && DIGEST.test(image.Id)
+      && image.Id === input.approvedImage.configDigest,
+    "BROKER_CONTAINER_IMAGE_MISMATCH",
+  );
   requireValue(Array.isArray(image.RepoDigests) && new Set(image.RepoDigests).size === image.RepoDigests.length
     && image.RepoDigests.includes(input.approvedImage.reference), "BROKER_CONTAINER_IMAGE_MISMATCH");
   requireValue(image.Os === "linux" && architecture(image.Architecture) === architecture(host.arch), "BROKER_CONTAINER_IMAGE_MISMATCH");
   requireValue(record(image.Config), "BROKER_CONTAINER_IMAGE_MISMATCH");
   equal(image.Config.User, input.approvedImage.user, "BROKER_CONTAINER_USER_MISMATCH");
-  for (const key of ["Entrypoint", "Cmd", "Env"]) {
-    requireValue(Array.isArray(image.Config[key]) && image.Config[key].every((item) => typeof item === "string"));
-  }
-  requireValue(image.Config.Entrypoint.length > 0);
+  equal(image.Config.Entrypoint, input.approvedImage.entrypoint, "BROKER_CONTAINER_IMAGE_MISMATCH");
+  equal(image.Config.Cmd, input.approvedImage.command, "BROKER_CONTAINER_IMAGE_MISMATCH");
+  equal(image.Config.Env, input.approvedImage.environment, "BROKER_CONTAINER_IMAGE_MISMATCH");
   requireValue(image.Config.Volumes == null && image.Config.Healthcheck == null);
   return image;
 }

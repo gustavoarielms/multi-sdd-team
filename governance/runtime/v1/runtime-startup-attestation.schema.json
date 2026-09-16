@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/runtime/v1/runtime-startup-attestation.schema.json",
+  "title": "Codex App Server runtime startup attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "codexArtifactSha256",
+    "codexVersion",
+    "contractVersion",
+    "platform",
+    "promptSnapshotSha256",
+    "schemaVersion"
+  ],
+  "properties": {
+    "codexArtifactSha256": { "$ref": "#/$defs/digest" },
+    "codexVersion": { "const": "0.154.0" },
+    "contractVersion": { "const": "1" },
+    "platform": { "const": "linux/arm64" },
+    "promptSnapshotSha256": { "$ref": "#/$defs/digest" },
+    "schemaVersion": { "const": "1.0.0" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

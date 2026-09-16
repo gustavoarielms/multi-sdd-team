@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/gustavoarielms/multi-sdd-team/main/governance/runtime/v1/codex-app-server-image.schema.json",
+  "title": "Approved Codex App Server runtime image v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "platform",
+    "image",
+    "base",
+    "entrypoint",
+    "codex",
+    "identity",
+    "rootfsInventorySha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "contractVersion": { "const": "1" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "const": "linux" },
+        "architecture": { "const": "arm64" }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "reference", "indexDigest", "platformDigest", "configDigest"],
+      "properties": {
+        "repository": { "const": "ghcr.io/gustavoarielms/multi-sdd-team-codex-app-server" },
+        "reference": {
+          "type": "string",
+          "pattern": "^ghcr\\.io/gustavoarielms/multi-sdd-team-codex-app-server@sha256:[a-f0-9]{64}$"
+        },
+        "indexDigest": { "$ref": "#/$defs/digest" },
+        "platformDigest": { "$ref": "#/$defs/digest" },
+        "configDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distribution", "version", "reference", "indexDigest", "platformDigest", "configDigest"],
+      "properties": {
+        "distribution": { "const": "debian" },
+        "version": { "const": "13.6" },
+        "reference": { "const": "debian@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132" },
+        "indexDigest": { "const": "sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132" },
+        "platformDigest": { "const": "sha256:7215f78f35ffe58fe13f244fac9c4f21326d55187271fbb3e1a8aa5cc7e387ab" },
+        "configDigest": { "const": "sha256:7e3898f7b011a107d0ef7393d5f604a6e0c0ff05ac4f2476630a8af21059ec9b" }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "/usr/local/libexec/sdd-codegraph/runtime-entrypoint" },
+        "sha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "source", "archiveSha256", "binaryPath", "binarySha256"],
+      "properties": {
+        "version": { "const": "0.154.0" },
+        "source": { "const": "https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz" },
+        "archiveSha256": { "const": "sha256:295bb1b94a8b964b2d2461db9736b9907a9e4daa6ceb8e9bbb820b304fa897ed" },
+        "binaryPath": { "const": "/opt/openai/codex-app-server/bin/codex-app-server" },
+        "binarySha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uid", "gid"],
+      "properties": {
+        "uid": { "const": 10001 },
+        "gid": { "const": 10001 }
+      }
+    },
+    "rootfsInventorySha256": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

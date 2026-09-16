@@ -1,0 +1,10 @@
+[package]
+name = "sdd-codegraph-runtime-entrypoint"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "runtime-entrypoint"
+path = "src/main.rs"

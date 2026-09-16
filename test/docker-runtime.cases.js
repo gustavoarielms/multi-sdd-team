@@ -16,10 +16,19 @@ import {
 } from "../src/docker-runtime-contract.js";
 
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
+const IMAGE_CONFIG_DIGEST = `sha256:${"e".repeat(64)}`;
 const RUN_ID = "b".repeat(64);
 const PROJECT_ROOT = "/safe/project";
 const APPROVED_IMAGE = Object.freeze({
+  command: Object.freeze(["--listen", "stdio://"]),
+  configDigest: IMAGE_CONFIG_DIGEST,
   digest: IMAGE_DIGEST,
+  entrypoint: Object.freeze(["/usr/local/libexec/sdd-codegraph/runtime-entrypoint"]),
+  environment: Object.freeze([
+    "PATH=/opt/openai/codex-app-server/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME=/run/codex",
+    "CODEX_HOME=/run/codex",
+  ]),
   reference: `registry.example/sdd/codex-app-server@${IMAGE_DIGEST}`,
   user: "10001:10001",
 });
@@ -39,7 +48,11 @@ function safeInspect(permissionProfile = "workspace-only") {
   return {
     capabilities: { add: [], drop: ["ALL"] },
     devices: [],
-    image: { ...APPROVED_IMAGE },
+    image: {
+      digest: APPROVED_IMAGE.digest,
+      reference: APPROVED_IMAGE.reference,
+      user: APPROVED_IMAGE.user,
+    },
     labels: {
       "io.github.gustavoarielms.sdd-codegraph.contract-version": "1",
       "io.github.gustavoarielms.sdd-codegraph.package": "@gustavoarielms/sdd-codegraph-cli",
@@ -113,6 +126,10 @@ test("Docker runtime reason codes are stable, bounded, and closed", () => {
     "BROKER_RUNTIME_PROTECTED",
     "BROKER_PROCESS_CONTAINMENT_UNAVAILABLE",
     "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
+    "BROKER_RUNTIME_IMAGE_UNAVAILABLE",
+    "BROKER_RUNTIME_IMAGE_MANIFEST_INVALID",
+    "BROKER_RUNTIME_IMAGE_EVIDENCE_INVALID",
+    "BROKER_RUNTIME_ATTESTATION_INVALID",
     "BROKER_IMAGE_REFERENCE_MUTABLE",
     "BROKER_CONTAINER_INSPECT_INVALID",
     "BROKER_CONTAINER_IMAGE_MISMATCH",
@@ -185,7 +202,11 @@ test("Docker runtime input accepts only trusted fixed parameters", () => {
     "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
   );
   for (const override of [
+    { approvedImage: { ...APPROVED_IMAGE, command: ["sh", "-c", "codex"] } },
+    { approvedImage: { ...APPROVED_IMAGE, configDigest: [APPROVED_IMAGE.configDigest] } },
     { approvedImage: { ...APPROVED_IMAGE, digest: [APPROVED_IMAGE.digest] } },
+    { approvedImage: { ...APPROVED_IMAGE, entrypoint: ["/bin/sh"] } },
+    { approvedImage: { ...APPROVED_IMAGE, environment: ["TOKEN=secret"] } },
     { approvedImage: { ...APPROVED_IMAGE, reference: [APPROVED_IMAGE.reference] } },
     { approvedImage: { ...APPROVED_IMAGE, user: [APPROVED_IMAGE.user] } },
     { runId: [RUN_ID] },
@@ -420,7 +441,7 @@ test("Docker Task 1 contract remains pure and cannot execute a daemon", async ()
 
 const CONTAINER_ID = "c".repeat(64);
 const FOREIGN_CONTAINER_ID = "d".repeat(64);
-const IMAGE_ID = `sha256:${"e".repeat(64)}`;
+const IMAGE_ID = IMAGE_CONFIG_DIGEST;
 const UNAVAILABLE = "BROKER_PROCESS_CONTAINMENT_UNAVAILABLE";
 const CLEANUP_UNPROVEN = "BROKER_CONTAINER_CLEANUP_UNPROVEN";
 
@@ -431,8 +452,8 @@ function rawContainer(input = runtimeInput()) {
     Id: CONTAINER_ID, Image: IMAGE_ID,
     Config: {
       Image: APPROVED_IMAGE.reference, User: APPROVED_IMAGE.user, OpenStdin: true,
-      WorkingDir: "/workspace", Tty: false, Env: ["CODEX_HOME=/run/codex"],
-      Entrypoint: ["/entry"], Cmd: ["app-server"], Labels: normalized.labels,
+      WorkingDir: "/workspace", Tty: false, Env: [...APPROVED_IMAGE.environment],
+      Entrypoint: [...APPROVED_IMAGE.entrypoint], Cmd: [...APPROVED_IMAGE.command], Labels: normalized.labels,
       Volumes: null, Healthcheck: null,
     },
     State: { Status: "created", Running: false, Paused: false, Restarting: false, Dead: false },
@@ -464,7 +485,7 @@ function fakeDocker(overrides = {}) {
   let input = runtimeInput();
   const image = {
     Id: IMAGE_ID, RepoDigests: [APPROVED_IMAGE.reference], Os: "linux", Architecture: "arm64",
-    Config: { User: APPROVED_IMAGE.user, Entrypoint: ["/entry"], Cmd: ["app-server"], Env: ["CODEX_HOME=/run/codex"], Volumes: null, Healthcheck: null, Labels: null },
+    Config: { User: APPROVED_IMAGE.user, Entrypoint: [...APPROVED_IMAGE.entrypoint], Cmd: [...APPROVED_IMAGE.command], Env: [...APPROVED_IMAGE.environment], Volumes: null, Healthcheck: null, Labels: null },
   };
   const steps = [
     { stdout: JSON.stringify({ Os: "linux", Arch: "arm64", Version: "28.0.0", ApiVersion: "1.48", Components: [{ Name: "Engine" }] }) },
@@ -777,6 +798,10 @@ test("Docker lifecycle rejects daemon and approved image identity changes", asyn
     [1, (v) => { v.KernelVersion = "5.11.0"; }],
     [2, (v) => { v[0].RepoDigests = []; }],
     [2, (v) => { v[0].RepoDigests.push(APPROVED_IMAGE.reference); }],
+    [2, (v) => { v[0].Id = `sha256:${"f".repeat(64)}`; }],
+    [2, (v) => { v[0].Config.Entrypoint = ["/bin/sh"]; }],
+    [2, (v) => { v[0].Config.Cmd = ["-c", "codex"]; }],
+    [2, (v) => { v[0].Config.Env.push("TOKEN=secret"); }],
     [2, (v) => { v[0].Config.User = "0"; }],
     [2, (v) => { v[0].Architecture = "amd64"; }],
     [2, (v) => { v[0].Config.Volumes = { "/workspace/.codex": {} }; }],

@@ -14,7 +14,15 @@ import {
 } from "../src/docker-runtime-contract.js";
 
 const APPROVED_IMAGE = Object.freeze({
+  command: Object.freeze(["--listen", "stdio://"]),
+  configDigest: "sha256:45e46f8d613548260ae31e627184ca50cbb2b128999cf835ae6bc99f9715a5fe",
   digest: "sha256:32d7b44df8092f6f1aadcdd59b94693596597d9a51ee1360ffe1869cc100fe91",
+  entrypoint: Object.freeze(["/usr/local/libexec/sdd-codegraph/runtime-entrypoint"]),
+  environment: Object.freeze([
+    "PATH=/opt/openai/codex-app-server/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME=/run/codex",
+    "CODEX_HOME=/run/codex",
+  ]),
   reference: "issue18-task2-fixture-v2@sha256:32d7b44df8092f6f1aadcdd59b94693596597d9a51ee1360ffe1869cc100fe91",
   user: "10001:10001",
 });
