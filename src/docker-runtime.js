@@ -7,6 +7,7 @@ import {
   BROKER_REASON_CODES,
   DOCKER_RUNTIME_CONTRACT as CONTRACT,
   buildDockerCreateInvocation,
+  expectedDockerLabels,
   validateDockerInspect,
 } from "./docker-runtime-contract.js";
 
@@ -127,6 +128,7 @@ function safeImage(image, input, host) {
   equal(image.Config.Entrypoint, input.approvedImage.entrypoint, "BROKER_CONTAINER_IMAGE_MISMATCH");
   equal(image.Config.Cmd, input.approvedImage.command, "BROKER_CONTAINER_IMAGE_MISMATCH");
   equal(image.Config.Env, input.approvedImage.environment, "BROKER_CONTAINER_IMAGE_MISMATCH");
+  equal(image.Config.Labels, CONTRACT.imageLabels, "BROKER_CONTAINER_IMAGE_MISMATCH");
   requireValue(image.Config.Volumes == null && image.Config.Healthcheck == null);
   return image;
 }
@@ -428,11 +430,7 @@ function ownershipFilter(input) {
 
 function validateOwnership(raw, candidate, input) {
   equal(raw.Id, candidate);
-  equal(raw.Config?.Labels, {
-    [CONTRACT.labels.package]: CONTRACT.packageName,
-    [CONTRACT.labels.contract]: CONTRACT.contractVersion,
-    [CONTRACT.labels.run]: input.runId,
-  });
+  equal(raw.Config?.Labels, expectedDockerLabels(input.runId));
   return candidate;
 }
 

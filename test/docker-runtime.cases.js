@@ -19,6 +19,11 @@ const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE_CONFIG_DIGEST = `sha256:${"e".repeat(64)}`;
 const RUN_ID = "b".repeat(64);
 const PROJECT_ROOT = "/safe/project";
+const IMAGE_LABELS = Object.freeze({
+  "io.github.gustavoarielms.sdd-codegraph.contract-version": "1",
+  "org.opencontainers.image.source": "https://github.com/gustavoarielms/multi-sdd-team",
+  "org.opencontainers.image.version": "0.154.0",
+});
 const APPROVED_IMAGE = Object.freeze({
   command: Object.freeze(["--listen", "stdio://"]),
   configDigest: IMAGE_CONFIG_DIGEST,
@@ -54,7 +59,7 @@ function safeInspect(permissionProfile = "workspace-only") {
       user: APPROVED_IMAGE.user,
     },
     labels: {
-      "io.github.gustavoarielms.sdd-codegraph.contract-version": "1",
+      ...IMAGE_LABELS,
       "io.github.gustavoarielms.sdd-codegraph.package": "@gustavoarielms/sdd-codegraph-cli",
       "io.github.gustavoarielms.sdd-codegraph.run-id": RUN_ID,
     },
@@ -307,6 +312,9 @@ test("normalized Docker inspect rejects every authority-changing variant", () =>
     ["missing resources", (value) => { delete value.resources.memoryBytes; }, "BROKER_CONTAINER_RESOURCE_MISMATCH"],
     ["unbounded pids", (value) => { value.resources.pidsLimit = 0; }, "BROKER_CONTAINER_RESOURCE_MISMATCH"],
     ["wrong labels", (value) => { value.labels["io.github.gustavoarielms.sdd-codegraph.run-id"] = "attacker"; }, "BROKER_CONTAINER_LABEL_MISMATCH"],
+    ["missing image label", (value) => { delete value.labels["org.opencontainers.image.source"]; }, "BROKER_CONTAINER_LABEL_MISMATCH"],
+    ["wrong image label", (value) => { value.labels["org.opencontainers.image.version"] = "latest"; }, "BROKER_CONTAINER_LABEL_MISMATCH"],
+    ["unknown image label", (value) => { value.labels["org.opencontainers.image.extra"] = "unapproved"; }, "BROKER_CONTAINER_LABEL_MISMATCH"],
     ["extra authority field", (value) => { value.hostConfig = { privileged: true }; }, "BROKER_CONTAINER_INSPECT_INVALID"],
   ];
 
@@ -485,7 +493,7 @@ function fakeDocker(overrides = {}) {
   let input = runtimeInput();
   const image = {
     Id: IMAGE_ID, RepoDigests: [APPROVED_IMAGE.reference], Os: "linux", Architecture: "arm64",
-    Config: { User: APPROVED_IMAGE.user, Entrypoint: [...APPROVED_IMAGE.entrypoint], Cmd: [...APPROVED_IMAGE.command], Env: [...APPROVED_IMAGE.environment], Volumes: null, Healthcheck: null, Labels: null },
+    Config: { User: APPROVED_IMAGE.user, Entrypoint: [...APPROVED_IMAGE.entrypoint], Cmd: [...APPROVED_IMAGE.command], Env: [...APPROVED_IMAGE.environment], Volumes: null, Healthcheck: null, Labels: { ...IMAGE_LABELS } },
   };
   const steps = [
     { stdout: JSON.stringify({ Os: "linux", Arch: "arm64", Version: "28.0.0", ApiVersion: "1.48", Components: [{ Name: "Engine" }] }) },
@@ -587,6 +595,7 @@ test("Docker lifecycle uses only owned argv and never grants trust", async () =>
     const fake = fakeDocker();
     assertSanitized(await lifecycle(fake, {}, { permissionProfile }));
     assert.equal(fake.calls.length, 9);
+    assert.ok(fake.calls.some((call) => call.args.includes("start")));
     assertRemoval(fake);
     for (const call of fake.calls) {
       assert.equal(call.command, "docker");
@@ -802,6 +811,11 @@ test("Docker lifecycle rejects daemon and approved image identity changes", asyn
     [2, (v) => { v[0].Config.Entrypoint = ["/bin/sh"]; }],
     [2, (v) => { v[0].Config.Cmd = ["-c", "codex"]; }],
     [2, (v) => { v[0].Config.Env.push("TOKEN=secret"); }],
+    [2, (v) => { v[0].Config.Labels = null; }],
+    [2, (v) => { delete v[0].Config.Labels["org.opencontainers.image.source"]; }],
+    [2, (v) => { v[0].Config.Labels["org.opencontainers.image.version"] = "latest"; }],
+    [2, (v) => { v[0].Config.Labels["org.opencontainers.image.extra"] = "unapproved"; }],
+    [2, (v) => { v[0].Config.Labels[DOCKER_RUNTIME_CONTRACT.labels.run] = RUN_ID; }],
     [2, (v) => { v[0].Config.User = "0"; }],
     [2, (v) => { v[0].Architecture = "amd64"; }],
     [2, (v) => { v[0].Config.Volumes = { "/workspace/.codex": {} }; }],
@@ -825,6 +839,20 @@ test("Docker lifecycle recovers only one exact ID with all ownership labels", as
   for (const badLabels of [null, {}, { [DOCKER_RUNTIME_CONTRACT.labels.run]: RUN_ID }]) {
     const bad = fakeDocker({ 3: { stdout: "" }, 8: { stdout: `${CONTAINER_ID}\n` } });
     bad.steps[4].stdout = () => JSON.stringify([{ Id: CONTAINER_ID, Config: { Labels: badLabels } }]);
+    assertSanitized(await lifecycle(bad), CLEANUP_UNPROVEN);
+    assert.ok(!bad.calls.some((c) => c.args.includes("rm")));
+  }
+  for (const mutate of [
+    (labels) => { delete labels["org.opencontainers.image.source"]; },
+    (labels) => { labels["org.opencontainers.image.version"] = "latest"; },
+    (labels) => { labels["org.opencontainers.image.extra"] = "unapproved"; },
+  ]) {
+    const bad = fakeDocker({ 3: { stdout: "" }, 8: { stdout: `${CONTAINER_ID}\n` } });
+    bad.steps[4].stdout = () => {
+      const raw = rawContainer(bad.input);
+      mutate(raw.Config.Labels);
+      return JSON.stringify([raw]);
+    };
     assertSanitized(await lifecycle(bad), CLEANUP_UNPROVEN);
     assert.ok(!bad.calls.some((c) => c.args.includes("rm")));
   }
