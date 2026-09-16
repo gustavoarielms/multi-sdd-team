@@ -1,0 +1,15 @@
+{
+  "fixture": "issue18-task3-fixture-v3",
+  "platform": "linux/arm64",
+  "sourceDateEpoch": 1789511465,
+  "ociSha256": "sha256:df93b06d6b99ba7d482c1a4fe91b77bd8e29157db87dc332e06e15a89af33982",
+  "manifestDigest": "sha256:98dee65bf05641d0c464b03580dacb0cdefc91aa8ff0fdb6994f375218ffe79f",
+  "configDigest": "sha256:1c8483139c8d5131c129fc0bd3531a0cc15dc275d0f37afd4835bb8d78ab28bc",
+  "binarySha256": "sha256:e96af1bb81f7a15a24c96381f3f10411b14bc53aaac4379323a6c7131a28c6c5",
+  "reproducibleArchives": 2,
+  "sources": {
+    "Dockerfile": "sha256:3f330e0ee054035dca5687ccd5bea1c09d0a1bb1c3a6e37dc37da5c8b2a2b41a",
+    "Dockerfile.dockerignore": "sha256:0a29d191fd142e3daf028ef90bcf39e43dedaaadaa2ed36c1117b478ea4b2474",
+    "main.rs": "sha256:0a6d9dd8b4b98586646d65f60f8b67e935d14ee89e47517907db669363c8f5d9"
+  }
+}

@@ -5,6 +5,10 @@ export const BROKER_REASON_CODES = Object.freeze([
   "BROKER_RUNTIME_PROTECTED",
   "BROKER_PROCESS_CONTAINMENT_UNAVAILABLE",
   "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
+  "BROKER_RUNTIME_IMAGE_UNAVAILABLE",
+  "BROKER_RUNTIME_IMAGE_MANIFEST_INVALID",
+  "BROKER_RUNTIME_IMAGE_EVIDENCE_INVALID",
+  "BROKER_RUNTIME_ATTESTATION_INVALID",
   "BROKER_IMAGE_REFERENCE_MUTABLE",
   "BROKER_CONTAINER_INSPECT_INVALID",
   "BROKER_CONTAINER_IMAGE_MISMATCH",
@@ -40,6 +44,20 @@ const RUN_ID_PATTERN = /^[a-f0-9]{64}$/u;
 const SAFE_USER_PATTERN = /^[1-9][0-9]*(?::[1-9][0-9]*)?$/u;
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const REASON_CODE_SET = new Set(BROKER_REASON_CODES);
+const APPROVED_ENTRYPOINT = Object.freeze([
+  "/usr/local/libexec/sdd-codegraph/runtime-entrypoint",
+]);
+const APPROVED_COMMAND = Object.freeze(["--listen", "stdio://"]);
+const APPROVED_ENVIRONMENT = Object.freeze([
+  "PATH=/opt/openai/codex-app-server/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  "HOME=/run/codex",
+  "CODEX_HOME=/run/codex",
+]);
+const APPROVED_IMAGE_LABELS = Object.freeze({
+  [CONTRACT_LABEL]: CONTRACT_VERSION,
+  "org.opencontainers.image.source": "https://github.com/gustavoarielms/multi-sdd-team",
+  "org.opencontainers.image.version": "0.154.0",
+});
 
 const PERMISSION_PROFILES = Object.freeze(["workspace-only", "read-only"]);
 const RESOURCE_LIMITS = Object.freeze({
@@ -62,6 +80,7 @@ export const DOCKER_RUNTIME_CONTRACT = Object.freeze({
   capabilityDrop: Object.freeze(["ALL"]),
   codexHome: CODEX_HOME,
   contractVersion: CONTRACT_VERSION,
+  imageLabels: APPROVED_IMAGE_LABELS,
   labels: Object.freeze({
     contract: CONTRACT_LABEL,
     package: PACKAGE_LABEL,
@@ -219,7 +238,7 @@ function validateRuntimeInput(input) {
   );
   requireExactKeys(
     input.approvedImage,
-    ["digest", "reference", "user"],
+    ["command", "configDigest", "digest", "entrypoint", "environment", "reference", "user"],
     "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
   );
   requireContract(
@@ -230,6 +249,7 @@ function validateRuntimeInput(input) {
   requireContract(
     typeof input.runId === "string"
       && typeof input.approvedImage.digest === "string"
+      && typeof input.approvedImage.configDigest === "string"
       && typeof input.approvedImage.reference === "string"
       && RUN_ID_PATTERN.test(input.runId)
       && isSafeApprovedUser(input.approvedImage.user),
@@ -237,16 +257,23 @@ function validateRuntimeInput(input) {
   );
   requireContract(
     DIGEST_PATTERN.test(input.approvedImage.digest)
+      && DIGEST_PATTERN.test(input.approvedImage.configDigest)
       && IMAGE_PATTERN.test(input.approvedImage.reference)
       && input.approvedImage.reference.endsWith(`@${input.approvedImage.digest}`),
     "BROKER_IMAGE_REFERENCE_MUTABLE",
   );
+  requireContract(
+    isDeepStrictEqual(input.approvedImage.entrypoint, APPROVED_ENTRYPOINT)
+      && isDeepStrictEqual(input.approvedImage.command, APPROVED_COMMAND)
+      && isDeepStrictEqual(input.approvedImage.environment, APPROVED_ENVIRONMENT),
+    "BROKER_DOCKER_CONTRACT_INPUT_INVALID",
+  );
   return input;
 }
 
-function expectedLabels(runId) {
+export function expectedDockerLabels(runId) {
   return {
-    [CONTRACT_LABEL]: CONTRACT_VERSION,
+    ...APPROVED_IMAGE_LABELS,
     [PACKAGE_LABEL]: PACKAGE_NAME,
     [RUN_LABEL]: runId,
   };
@@ -320,7 +347,7 @@ function privateTmpfsArgument(mount) {
 
 export function buildDockerCreateInvocation(input) {
   validateRuntimeInput(input);
-  const labels = expectedLabels(input.runId);
+  const labels = expectedDockerLabels(input.runId);
   const mounts = expectedMounts(
     input.projectRoot,
     input.permissionProfile,
@@ -446,9 +473,9 @@ export function validateDockerInspect(inspect, input) {
   validateInspectNamespaces(inspect.namespaces);
   validateInspectMounts(inspect.mounts, input);
   validateInspectResources(inspect.resources);
-  requireExactKeys(inspect.labels, [CONTRACT_LABEL, PACKAGE_LABEL, RUN_LABEL], "BROKER_CONTAINER_LABEL_MISMATCH");
+  requireExactKeys(inspect.labels, Object.keys(expectedDockerLabels(input.runId)), "BROKER_CONTAINER_LABEL_MISMATCH");
   requireContract(
-    isDeepStrictEqual(inspect.labels, expectedLabels(input.runId)),
+    isDeepStrictEqual(inspect.labels, expectedDockerLabels(input.runId)),
     "BROKER_CONTAINER_LABEL_MISMATCH",
   );
   return inspect;

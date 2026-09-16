@@ -30,6 +30,12 @@ export const UNIT_TEST_NAMES = Object.freeze(new Set([
   "Docker launcher results are strictly allowlisted and internally consistent",
   "Docker launcher result schema is closed and requires semantic identity validation",
   "Docker Task 1 contract remains pure and cannot execute a daemon",
+  "runtime image schemas are strict and accept only the approved v1 shape",
+  "approved runtime inputs bind Debian Codex platform and non-root identity",
+  "runtime image manifest validation rejects mutable or divergent authority",
+  "approved Docker input is derived only from a validated image manifest",
+  "startup attestation is one bounded canonical line without sensitive fields",
+  "runtime image evidence rejects tampered binaries identities and inventories",
 ]));
 
 export function classifyTestName(name) {

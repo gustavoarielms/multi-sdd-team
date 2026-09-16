@@ -1,0 +1,18 @@
+{
+  "command": [
+    "--listen",
+    "stdio://"
+  ],
+  "configDigest": "sha256:1c8483139c8d5131c129fc0bd3531a0cc15dc275d0f37afd4835bb8d78ab28bc",
+  "digest": "sha256:98dee65bf05641d0c464b03580dacb0cdefc91aa8ff0fdb6994f375218ffe79f",
+  "entrypoint": [
+    "/usr/local/libexec/sdd-codegraph/runtime-entrypoint"
+  ],
+  "environment": [
+    "PATH=/opt/openai/codex-app-server/codex-path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOME=/run/codex",
+    "CODEX_HOME=/run/codex"
+  ],
+  "reference": "fixture.local/issue18-task3-fixture-v3@sha256:98dee65bf05641d0c464b03580dacb0cdefc91aa8ff0fdb6994f375218ffe79f",
+  "user": "10001:10001"
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0.0",
+  "contractVersion": "1",
+  "platform": {
+    "os": "linux",
+    "architecture": "arm64"
+  },
+  "builder": {
+    "repository": "docker.io/library/rust",
+    "version": "1.98.1-bookworm",
+    "reference": "docker.io/library/rust@sha256:09e98f39fa15751de9476fefafe4be0e4ef92b292d608410595bbbde9ebdd375",
+    "indexDigest": "sha256:9a73a5088750b4c95158ab26629c854c3d6fc4b173cb7bc8079ad252d8ed7bfa",
+    "platformDigest": "sha256:09e98f39fa15751de9476fefafe4be0e4ef92b292d608410595bbbde9ebdd375",
+    "configDigest": "sha256:690e6fc7bbfdeff8f8d3cd808062a58c0afe5416ca5aaf8e32cb94ad1d995bc7",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "llvm": "22.1.8"
+  },
+  "registry": {
+    "repository": "ghcr.io/gustavoarielms/multi-sdd-team-codex-app-server"
+  },
+  "base": {
+    "distribution": "debian",
+    "version": "13.6",
+    "reference": "debian@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132",
+    "indexDigest": "sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132",
+    "platformDigest": "sha256:7215f78f35ffe58fe13f244fac9c4f21326d55187271fbb3e1a8aa5cc7e387ab",
+    "configDigest": "sha256:7e3898f7b011a107d0ef7393d5f604a6e0c0ff05ac4f2476630a8af21059ec9b"
+  },
+  "entrypoint": {
+    "path": "/usr/local/libexec/sdd-codegraph/runtime-entrypoint"
+  },
+  "codex": {
+    "version": "0.154.0",
+    "source": "https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz",
+    "archiveSha256": "sha256:295bb1b94a8b964b2d2461db9736b9907a9e4daa6ceb8e9bbb820b304fa897ed",
+    "binaryPath": "/opt/openai/codex-app-server/bin/codex-app-server"
+  },
+  "identity": {
+    "uid": 10001,
+    "gid": 10001
+  }
+}

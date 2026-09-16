@@ -1,0 +1,12 @@
+**
+!container/
+container/*
+!container/Dockerfile
+!container/dist/
+container/dist/*
+!container/dist/codex-app-server-package-aarch64-unknown-linux-musl.tar.gz
+!container/dist/runtime-entrypoint-aarch64-unknown-linux-gnu
+!container/licenses/
+container/licenses/*
+!container/licenses/openai-codex-LICENSE
+!container/licenses/openai-codex-NOTICE
