@@ -462,7 +462,7 @@ function rawContainer(input = runtimeInput()) {
     Id: CONTAINER_ID, Image: IMAGE_ID,
     Config: {
       Image: APPROVED_IMAGE.reference, User: APPROVED_IMAGE.user, OpenStdin: true,
-      WorkingDir: "/workspace", Tty: false, Env: [...APPROVED_IMAGE.environment],
+      WorkingDir: "/workspace", Tty: false, Env: ["CODEX_HOME=/run/codex", ...APPROVED_IMAGE.environment.filter((value) => !value.startsWith("CODEX_HOME="))],
       Entrypoint: [...APPROVED_IMAGE.entrypoint], Cmd: [...APPROVED_IMAGE.command], Labels: normalized.labels,
       Volumes: null, Healthcheck: null,
     },
@@ -642,7 +642,7 @@ test("real Docker fixture pins observed OCI bytes and passes strict image prefli
   fake.steps[4].stdout = () => {
     const container = rawContainer(fake.input);
     container.Image = digest(configBytes);
-    container.Config = { ...container.Config, ...config.config, Image: FIXTURE_IMAGE.reference, Labels: container.Config.Labels };
+    container.Config = { ...container.Config, ...config.config, Env: ["CODEX_HOME=/run/codex", ...config.config.Env.filter((value) => !value.startsWith("CODEX_HOME="))], Image: FIXTURE_IMAGE.reference, Labels: container.Config.Labels };
     return JSON.stringify([container]);
   };
   assertSanitized(await lifecycle(fake, {}, { approvedImage: FIXTURE_IMAGE }));
@@ -708,6 +708,10 @@ test("Docker lifecycle rejects inspect authority mismatches before start", async
     [(c) => { c.HostConfig.MaskedPaths = ["/workspace"]; }, true],
     [(c) => { c.HostConfig.EvilAuthority = true; }, true],
     [(c) => { c.Config.Env.push("DOCKER_HOST=tcp://attacker"); }, true],
+    [(c) => { c.Config.Env.push("CODEX_HOME=/run/codex"); }, true],
+    [(c) => { c.Config.Env[0] = "CODEX_HOME=/tmp"; }, true],
+    [(c) => { c.Config.Env.shift(); }, true],
+    [(c) => { c.Config.Env.push(c.Config.Env.shift()); }, true],
   ]) {
     const fake = fakeDocker();
     const normal = fake.steps[4].stdout;

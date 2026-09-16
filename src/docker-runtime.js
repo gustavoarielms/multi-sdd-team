@@ -141,7 +141,7 @@ function validateRawConfig(config, image) {
   equal(config.Entrypoint, image.Config.Entrypoint);
   equal(config.Cmd, image.Config.Cmd);
   const environment = image.Config.Env.filter((v) => !v.startsWith("CODEX_HOME="));
-  environment.push(`CODEX_HOME=${CONTRACT.codexHome}`);
+  environment.unshift(`CODEX_HOME=${CONTRACT.codexHome}`);
   equal(config.Env, environment);
 }
 

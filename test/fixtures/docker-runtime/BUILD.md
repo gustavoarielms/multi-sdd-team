@@ -59,8 +59,15 @@ Confirm Docker reports both its matching config ID and immutable `RepoDigests`
 entry. Remove the temporary registry, hostname mapping and CA before running:
 
 ```sh
-SDD_REAL_DOCKER_FIXTURE=1 npm run test:docker-real
+(umask 000; SDD_REAL_DOCKER_FIXTURE=1 npm run test:docker-real)
 ```
+
+The fixture requests mode `0666` for its synthetic prompt files. Use the
+subshell's `umask 000` so those files remain writable by the container UID
+before mounting them read-only. Otherwise a host umask such as `022` can
+cause a DAC permission denial instead of the required `EROFS` observation.
+This changes only fixture setup; all mount, identity and cleanup assertions
+remain enabled.
 
 The probe writes an ordinary workspace file, attempts writes to protected
 prompts and a real nested mount, and starts a new-session descendant. The
@@ -85,8 +92,23 @@ no host Docker socket and no external network. Docker Desktop's daemon
 configuration was not changed. The temporary daemon container and its owned
 anonymous data volume were removed after collecting the failure evidence.
 
-The deterministic regression checks the recorded manifest/config/source
-hashes and exercises strict image preflight with the actual OCI config. Its
-simulated lifecycle is not evidence that the real lifecycle passed. The
-remaining real-environment ordering failure needs a separate adapter fix;
-changing this fixture's image metadata cannot correct that expectation.
+The environment-order correction was subsequently authorized and applied to
+the adapter: explicit `CODEX_HOME` comes first, followed by inherited image
+variables, with exact array equality retained. The deterministic regression
+first reproduced `BROKER_CONTAINER_INSPECT_INVALID` with the observed order
+and then passed after the fix. Duplicate, missing, changed and incorrectly
+ordered container environment values remain rejected before start.
+
+The final real run on 2026-09-16 passed with the same immutable fixture, Node
+24.19.0, Docker 29.4.0/API 1.54, kernel 6.12.76-linuxkit and explicit userns-remap.
+`verification.json` preserves the sanitized canonical result. It proves the
+ordinary workspace write, recursive read-only nested mount, unchanged prompts,
+reparented descendant heartbeat, exact-ID force removal, stopped heartbeat and
+absence by ID and ownership label. An initial run with umask `022` failed the
+strict existing-prompt `EROFS` assertion; the final run used the documented
+umask `000` without changing that assertion or rebuilding the fixture.
+
+Final evidence is retained at `/private/tmp/task3-env-order-20260916/`. The
+disposable verifier and its owned data volume were removed after the run.
+Production artifacts and the approved binding remain unchanged. The adapter
+still returns `trusted:false`; Task 4 and the positive launcher remain pending.
