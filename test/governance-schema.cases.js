@@ -22,37 +22,6 @@ async function readJson(url) {
   return JSON.parse(await fs.readFile(url, "utf8"));
 }
 
-test("execution ownership and sensitive review rules are human-approved and trust-bound", async () => {
-  const catalog = await readJson(catalogUrl);
-  const registry = await readJson(registryUrl);
-  const rules = new Map(catalog.rules.map((rule) => [rule.rule_id, rule]));
-  const versions = {
-    "GOV-ROLE-CAPABILITY-001": 3,
-    "GOV-REMEDIATION-LOOP-001": 2,
-    "ENG-IMPLEMENTER-TDD-001": 3,
-    "GOV-SENSITIVE-REVIEW-001": 1,
-  };
-  for (const [id, version] of Object.entries(versions)) {
-    const rule = rules.get(id);
-    assert.ok(rule, id);
-    assert.equal(rule.version, version);
-    assert.equal(rule.status, "approved");
-    assert.equal(rule.approval.approved_by.kind, "human");
-    assert.equal(rule.approval.approved_by.id, "gustavo");
-    assert.match(rule.approval.reference, /01a0aa85-905d-79e0-b6b8-979f3c246630/);
-    const altered = structuredClone(catalog);
-    altered.rules.find((candidate) => candidate.rule_id === id).description += " Omit required review.";
-    assert.equal((await validateGovernanceCatalog(altered, registry)).ok, false, id);
-  }
-  assert.match(rules.get("GOV-ROLE-CAPABILITY-001").description, /main session/);
-  assert.equal(rules.get("GOV-REMEDIATION-LOOP-001").enforcement.gate_effect, "warn");
-  assert.equal(rules.get("ENG-IMPLEMENTER-TDD-001").enforcement.gate_effect, "warn");
-  const review = rules.get("GOV-SENSITIVE-REVIEW-001");
-  assert.equal(review.enforcement.mode, "agent_review");
-  assert.equal(review.enforcement.gate_effect, "block");
-  assert.equal((await validateGovernanceCatalog(catalog, registry)).ok, true);
-});
-
 test("all governance schemas compile in strict Draft 2020-12 mode", async () => {
   const files = (await fs.readdir(schemasUrl))
     .filter((name) => name.endsWith(".schema.json"))
@@ -311,7 +280,6 @@ test("versioned governance catalog and check registry are valid and linked", asy
   const approvedInventory = [
     "GOV-ORCHESTRATOR-AUTHORITY-001",
     "GOV-ROLE-CAPABILITY-001",
-    "GOV-SENSITIVE-REVIEW-001",
     "GOV-ARCH-REVIEW-SCOPE-001",
     "GOV-SECURITY-ACTIVE-001",
     "ENG-IMPLEMENTER-TDD-001",
@@ -332,9 +300,9 @@ test("versioned governance catalog and check registry are valid and linked", asy
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").enforcement.gate_effect, "warn");
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-REPORTONLY-001").version, 2);
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-HANDOFF-001").version, 2);
-  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ROLE-CAPABILITY-001").version, 3);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ROLE-CAPABILITY-001").version, 2);
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-SECURITY-ACTIVE-001").version, 2);
-  assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").version, 3);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").version, 2);
   assert.ok(approvedInventory
     .filter((ruleId) => !["GOV-ARCH-REVIEW-SCOPE-001", "ENG-IMPLEMENTER-TDD-001"].includes(ruleId))
     .every((ruleId) => catalog.rules.find((rule) => rule.rule_id === ruleId).enforcement.gate_effect === "block"));

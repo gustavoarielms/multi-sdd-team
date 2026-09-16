@@ -13,37 +13,11 @@
 2. The governance contract is the canonical source for Codex agents, deterministic checks, and human approvals.
 3. The active/main session is the orchestration authority. A separate orchestrator agent is not part of the normal execution path.
 4. Review agents remain report-only.
-5. Findings that require code changes return to the implementation owner, which may be the main session or implementer, and must be revalidated by the gate that raised them.
+5. Findings that require code changes return to the implementer and must be revalidated by the gate that raised them.
 6. Deterministic checks take precedence over agent opinion whenever a rule can be automated.
 7. Architecture rules and exceptions require approval by the user or a designated human authority.
 8. The canonical v1 catalog is the only source for approved blocking effects and deterministic check links.
 9. Deterministic check output is a strict, evidence-bearing governance envelope; warnings do not change process exit status.
-
-### Execution-policy approval — 2026-09-16
-
-In Codex task `01a0aa85-905d-79e0-b6b8-979f3c246630`, Gustavo approved the
-reviewed execution-policy proposal with: “apruebo esas decisiones”. The approval
-was recorded at `2026-09-16T19:05:09Z`; this is the recording timestamp, not a
-claim about the original message's exact delivery time.
-
-The approved decisions allow the main session to implement and remediate owned
-changes, replace size-based routing and mandatory specialist chains with
-proportional planning and selective delegation, and require independent review
-for material changes to monetary calculations, payments, fiscal operations,
-durable persistence, security, or native interoperability. Existing architecture
-gates, TDD for testable changes, structured review handoffs, safety controls,
-permission profiles, and managed prompt protection remain in force.
-
-This approval covers versions 3, 2, and 3 of `GOV-ROLE-CAPABILITY-001`,
-`GOV-REMEDIATION-LOOP-001`, and `ENG-IMPLEMENTER-TDD-001`, respectively, and
-version 1 of `GOV-SENSITIVE-REVIEW-001`, plus their package-owned trust bindings.
-The first two warning effects for remediation and TDD are preserved; sensitive
-independent review uses an agent-reviewed blocking rule. No new deterministic
-executor is claimed for contextual risk assessment.
-
-It authorizes isolated implementation and validation, including independent
-review. It does not authorize merge, npm publication, installation in projects,
-global configuration changes, Task 4, or deployment.
 
 ## Implemented catalog and checks
 
@@ -110,13 +84,11 @@ document does not override executable behavior by itself.
 
 **Purpose**
 
-Complete the authorized task, select proportional planning and delegation,
-enforce dependencies and required gates, and integrate the final result.
+Classify the request, select the execution strategy, enforce sequencing, route handoffs, and integrate the final result.
 
 **Owns**
 
 - strategy selection;
-- inspection, implementation, tests, and remediation within the scope it owns;
 - pipeline sequencing and dependency enforcement;
 - assignment of bounded work to specialist roles;
 - confirmation that all required gates completed;
@@ -139,7 +111,7 @@ enforce dependencies and required gates, and integrate the final result.
 
 **Expected outputs**
 
-- selected strategy and its justification from clarity, risk, and dependencies;
+- selected strategy and rule that triggered it;
 - ordered handoff plan;
 - current gate status;
 - final evidence summary;
@@ -156,7 +128,7 @@ enforce dependencies and required gates, and integrate the final result.
 
 - that failed tests or policy checks can be ignored;
 - that a security finding is resolved without hacker revalidation;
-- that implementation passed an independent gate when required but not completed;
+- that implementation is correct without an independent gate;
 - product or architectural choices that materially exceed the approved scope.
 
 **Blocking conditions**
@@ -395,9 +367,7 @@ verify implementation compliance afterward without changing code or specificatio
 
 **Purpose**
 
-Implement the approved scope using test-driven development and produce change
-evidence. This specialist is optional: the main session may own implementation
-instead, with the same TDD and validation obligations for testable changes.
+Implement the approved plan using test-driven development and produce change evidence.
 
 **Owns**
 
@@ -416,7 +386,7 @@ instead, with the same TDD and validation obligations for testable changes.
 
 **Expected inputs**
 
-- defined expected behavior and approved decisions or specifications where needed;
+- approved plan and specifications;
 - acceptance criteria and required gates;
 - repository state and change ownership;
 - assigned findings during remediation.
@@ -483,7 +453,7 @@ Independently evaluate correctness, maintainability, test quality, and observabl
 - commands/checks executed and outcomes;
 - findings with stable identity, evidence, location, severity, and reproduction;
 - gate recommendation;
-- remediation handoff to the implementation owner.
+- remediation handoff to the implementer.
 
 **May decide**
 
@@ -539,7 +509,7 @@ Independently identify, validate, and prioritize security risks without implemen
 - findings with stable identity, evidence, affected asset, severity, exploitability, and validation state;
 - commands/actions performed and their impact;
 - recommended mitigation and residual risk;
-- gate recommendation and remediation handoff to the implementation owner.
+- gate recommendation and remediation handoff to the implementer.
 
 **May decide**
 
@@ -596,45 +566,37 @@ Evaluate objective rules and produce reproducible results independently of agent
   creation date, and expiry or review date.
 - Until an authority is designated, the user is the approving authority.
 
-## Proportional handoff flow
+## Canonical handoff flow
 
 ```text
-user/main session establishes scope, ownership, inputs, and pending decisions
-  -> selected investigation/specification/planning only when needed
-  -> architecture design review before dependent changes when required
-  -> main session or assigned implementer makes the change
-  -> required deterministic enforcement
-  -> applicable independent architecture, security, and quality gates
-  -> main-session completion within authorized delivery boundaries
+user/main session
+  -> explorer
+  -> documentator
+  -> planner
+  -> architecture design review when required
+  -> optional pre-implementation security review
+  -> implementer
+  -> deterministic enforcement
+  -> architecture compliance review when required
+  -> tester/reviewer
+  -> optional hacker/security gate
+  -> main-session integration
 ```
 
-Every dependent stage waits for its applicable predecessors. Gates marked
-conditional remain mandatory when their canonical conditions apply; record why
-they were included or skipped. Questions and read-only tasks do not require
-code changes or tests of unchanged code. Sensitive changes and project-specific
-rules require the appropriate independent reviewers even on INLINE routes.
-
-Investigation, documentation, and planning have no fixed specialist chain or
-file/line/test-count thresholds. The main session may advance independent work
-while a specialist runs, with separate ownership and no duplicate work or
-concurrent edits to the same files. A revision and shared environment under
-review must remain unchanged; use isolated worktrees or immutable snapshots.
-The standalone orchestrator remains read-only. Risk applicability and actual
-execution are review-owned; static pipeline validation does not attest behavior.
+Every stage begins only after its mandatory predecessors complete. Optional stages must record why they were included or skipped.
 
 ## Finding remediation loop
 
 ```text
 review gate raises finding
-  -> main session routes finding to the implementation owner
-  -> owner changes code/tests and cites finding ID
+  -> main session routes finding to implementer
+  -> implementer changes code/tests and cites finding ID
   -> deterministic checks run again
   -> the original review gate revalidates
   -> finding becomes resolved, remains open, or is superseded
 ```
 
-The main session may remediate code it owns but must not replace the independent
-reviewer or close its finding without originating-gate revalidation.
+The main session coordinates this loop but does not replace the implementer or the independent reviewer.
 
 ## Approval model
 
@@ -644,13 +606,12 @@ An initiative is eligible for final integration only when:
 2. implementation is complete and traceable to acceptance criteria;
 3. every mandatory deterministic gate passes or has an approved exception;
 4. architecture reviewer has no unresolved blocking findings when its gate is required;
-5. tester/reviewer has no unresolved blocking findings when its gate is required;
+5. tester/reviewer has no unresolved blocking findings;
 6. hacker has no unresolved blocking findings when the security gate is required;
 7. all required evidence is present;
 8. the main session reports residual risk and unresolved non-blocking findings.
 
-When independent review is required, the implementation author cannot satisfy
-that review condition alone.
+No single agent can satisfy all eight conditions alone.
 
 ## Current overlaps
 

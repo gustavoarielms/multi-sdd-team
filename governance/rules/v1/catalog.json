@@ -114,9 +114,9 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-REMEDIATION-LOOP-001",
-      "version": 2,
+      "version": 1,
       "title": "Review findings must return through remediation and revalidation",
-      "description": "A finding routes to the implementation owner, including the main session when it owns the change, deterministic checks rerun, and the originating gate revalidates the updated revision.",
+      "description": "A finding routes to the implementer, deterministic checks rerun, and the originating gate revalidates the correction.",
       "category": "process",
       "status": "approved",
       "owner": "originating_gate",
@@ -127,7 +127,7 @@
       "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/pipeline.json"],
       "responsible_gate": "originating_gate",
       "evidence_requirements": ["A linked implementation handoff, repeated deterministic result, and originating gate decision."],
-      "approval": {"approved_by":{"kind":"human","id":"gustavo","runtime":"manual"},"approved_at":"2026-09-16T19:05:09Z","rationale":"Gustavo approved the reviewed proportional execution-policy decisions with “apruebo esas decisiones”. Approval recording time is documented in the responsibility map; existing safety restrictions and remediation/TDD warning effects remain unchanged.","reference":"conversation:01a0aa85-905d-79e0-b6b8-979f3c246630:execution-policy-approval-2026-09-16"}
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T18:00:00Z", "rationale": "Approved with warning effect until execution persistence can prove the loop occurred.", "reference": "conversation:019ffbd4-b28d-7643-bdc2-168b0da1eb8f" }
     },
     {
       "schema_version": "1.0.0",
@@ -150,9 +150,9 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-ROLE-CAPABILITY-001",
-      "version": 3,
+      "version": 2,
       "title": "Role capabilities must match approved ownership",
-      "description": "The main session or assigned implementer owns code changes. Explorer, planner, and the standalone orchestrator remain read-only, documentator writes only specifications, and independent reviewers remain report-only without implementation ownership.",
+      "description": "Explorer and planner remain read-only, documentator writes only specifications, implementer owns code changes, and independent reviewers remain report-only.",
       "category": "governance",
       "status": "approved",
       "owner": "governance_gate",
@@ -163,25 +163,7 @@
       "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents"],
       "responsible_gate": "governance_gate",
       "evidence_requirements": ["Role sandboxes and prompt ownership constraints for Codex."],
-      "approval": {"approved_by":{"kind":"human","id":"gustavo","runtime":"manual"},"approved_at":"2026-09-16T19:05:09Z","rationale":"Gustavo approved the reviewed proportional execution-policy decisions with “apruebo esas decisiones”. Approval recording time is documented in the responsibility map; existing safety restrictions and remediation/TDD warning effects remain unchanged.","reference":"conversation:01a0aa85-905d-79e0-b6b8-979f3c246630:execution-policy-approval-2026-09-16"}
-    },
-    {
-      "schema_version": "1.0.0",
-      "rule_id": "GOV-SENSITIVE-REVIEW-001",
-      "version": 1,
-      "title": "Material sensitive changes require independent review",
-      "description": "Material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability require the applicable independent quality, architecture, or security review. Project rules and explicit user requirements also apply. The implementation author cannot satisfy independent review, and speed or size never waives an applicable gate.",
-      "category": "governance",
-      "status": "approved",
-      "owner": "governance_gate",
-      "default_severity": "high",
-      "enforcement": {"mode":"agent_review","gate_effect":"block"},
-      "scope": {"description":"Material sensitive changes and independent-review requirements across all execution routes."},
-      "exceptions_allowed": false,
-      "source_refs": ["codex/AGENTS.md","codex/pipeline.json","docs/agent-governance-responsibility-map.md"],
-      "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Recorded review applicability, independent reviewer identity, immutable reviewed revision, validated handoff and passing required gate decisions."],
-      "approval": {"approved_by":{"kind":"human","id":"gustavo","runtime":"manual"},"approved_at":"2026-09-16T19:05:09Z","rationale":"Gustavo approved mandatory independent review by material risk as part of the execution-policy decisions. Applicability remains agent-reviewed; no deterministic executor is claimed.","reference":"conversation:01a0aa85-905d-79e0-b6b8-979f3c246630:execution-policy-approval-2026-09-16"}
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved in the Codex-only responsibility design.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",
@@ -222,9 +204,9 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "ENG-IMPLEMENTER-TDD-001",
-      "version": 3,
+      "version": 2,
       "title": "Testable implementation follows strict TDD",
-      "description": "For testable code and contract changes, the implementation owner, whether main session or assigned implementer, demonstrates RED, implements the minimum GREEN change, refactors safely, and reports final test evidence.",
+      "description": "The implementer demonstrates RED, implements the minimum GREEN change, refactors safely, and reports final test evidence.",
       "category": "testing",
       "status": "approved",
       "owner": "quality_gate",
@@ -235,7 +217,7 @@
       "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents/implementer.toml"],
       "responsible_gate": "quality_gate",
       "evidence_requirements": ["Failing regression evidence before implementation and passing evidence after implementation."],
-      "approval": {"approved_by":{"kind":"human","id":"gustavo","runtime":"manual"},"approved_at":"2026-09-16T19:05:09Z","rationale":"Gustavo approved the reviewed proportional execution-policy decisions with “apruebo esas decisiones”. Approval recording time is documented in the responsibility map; existing safety restrictions and remediation/TDD warning effects remain unchanged.","reference":"conversation:01a0aa85-905d-79e0-b6b8-979f3c246630:execution-policy-approval-2026-09-16"}
+      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved with warning effect because testability and RED evidence still require review judgment.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
     },
     {
       "schema_version": "1.0.0",

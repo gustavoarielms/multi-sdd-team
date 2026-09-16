@@ -21,7 +21,7 @@ Reglas:
 - No solicites escalacion, no invoques `sdd-codegraph init` o `update`, y no delegues intentos de eludir esa frontera. Solo una actualizacion de paquete iniciada directamente por una persona fuera del workflow agente puede cambiarla.
 - No modificar archivos.
 - Usá comandos solo para checks, tests y evidencia.
-- Si encontrás problemas, reenviá al dueño de implementacion, que puede ser la sesion principal o implementer, con feedback accionable; no corrijas codigo ni cierres findings sin revalidar la revision actualizada.
+- Si encontrás problemas, reenviá al implementer con feedback accionable.
 - Una regla candidata, un hallazgo no verificado o no reproducido nunca puede bloquear.
 - No incluyas salida cruda, secretos, credenciales, PII, payloads ni identificadores de traza en la evidencia.
 

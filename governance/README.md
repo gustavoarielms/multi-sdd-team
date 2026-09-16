@@ -270,20 +270,6 @@ canonical result settles.
 
 ## Versioning
 
-- Pipeline version 3 preserves strategy identifiers but changes routing and
-  conditional-gate semantics. Version 2/3 package and managed-asset combinations
-  fail closed; human-controlled updates must install policy, prompts, pipeline,
-  and catalog together, then start a new Codex session.
-- Main-session implementation follows the same TDD and objective validation
-  requirements as delegated implementation. Independent review is required for
-  material sensitive changes or applicable project rules, not every cosmetic task.
-- `pipeline_dependency_order` checks all five routes, canonical applicability
-  conditions, independent actors, and required dependency edges. It does not
-  decide whether a task is sensitive, schedule agents, or prove gate execution.
-- `GOV-SENSITIVE-REVIEW-001` is human-approved and agent-reviewed with a blocking
-  effect. It does not add a deterministic executor or weaken the existing six
-  governance checks, ten engineering gates, thresholds, or prompt boundary.
-
 - Compatible additions use a new `1.x` contract version while retaining the v1 directory.
 - The v1 envelope shape remains stable; agent producers are fixed to the supported Codex runtime.
 - Unsupported agent-runtime values fail closed. This narrowing is a breaking package-level change.

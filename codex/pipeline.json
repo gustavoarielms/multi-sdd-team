@@ -1,464 +1,191 @@
 {
   "name": "multi-sdd-team",
-  "version": 3,
+  "version": 2,
   "owner": "main_session_orchestrator",
   "mode": "demo_fast",
   "principles": [
-    "The main session owns completion and may implement and remediate changes it owns.",
-    "Approved specifications and architecture decisions are reused; ambiguity or significant pending design decisions justify SDD, not file counts, line counts, or new tests.",
-    "Select specialists only for bounded investigation, independent implementation, or applicable review. Never spawn an orchestrator merely for classification unless requested.",
-    "Independent tasks may advance concurrently with separate ownership, worktrees or immutable snapshots. Never duplicate delegated work, edit the same files concurrently, or change a revision or shared environment under review.",
-    "No dependent stage starts until its applicable dependencies and required gates pass.",
-    "Conditional stages are mandatory when their canonical condition applies. Record why each conditional stage was included or skipped; a read-only task does not authorize code changes.",
-    "Demo-fast agent settings remain unchanged; speed never waives required architecture, security, or independent quality review.",
-    "Findings return to the implementation owner, checks rerun, and the originating reviewer revalidates the updated revision.",
+    "The main session is the orchestrator.",
+    "The orchestrator classifies first and does not spawn an orchestrator subagent.",
+    "After spawning any subagent, the orchestrator waits for the required handoff before the next local or delegated step.",
+    "No delegated stage may start until its declared dependencies are complete.",
+    "The orchestrator must not inspect, scaffold, implement, or validate locally while subagents are running unless the user explicitly authorizes parallel local work.",
+    "Demo-fast mode: run agents in fast mode and skip hacker by default.",
+    "Review findings return to the implementer, then deterministic checks and the originating gate run again.",
     "Architecture rules and exceptions require approval by the user or a designated human authority.",
-    "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues. A valid envelope is not a passing gate decision.",
+    "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues.",
     "Managed prompts under .codex/agents are immutable to every AI-mediated stage; only a human-controlled package update outside the agent workflow may replace them."
   ],
   "strategies": {
     "INLINE": {
-      "description": "Default direct execution by the main session, with applicable independent gates.",
+      "description": "Small/simple task. Main session implements directly.",
       "sequence": [
         {
-          "id": "prepare",
+          "id": "main_execute",
           "actor": "main_session",
           "depends_on": [],
-          "action": "Establish scope, approved inputs, acceptance criteria, pending decisions, ownership and applicable gates. Select bounded specialists only when useful; no mandatory explorer/documentator/planner chain. In SUBAGENT_SINGLE, the selected specialist completes its bounded read-only task or implementation preparation here."
-        },
-        {
-          "id": "architecture_design_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "prepare"
-          ],
-          "optional": true,
-          "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review.",
-          "action": "Independent report-only design gate on an immutable revision; validate JSON and require a passing decision before dependent implementation."
-        },
-        {
-          "id": "implement",
-          "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review"
-          ],
-          "optional": true,
-          "condition": "Run only when the authorized task requires code or contract changes.",
-          "action": "The implementation owner makes the scoped change with required RED/GREEN evidence. Do not overlap delegated ownership or modify a revision being reviewed."
-        },
-        {
-          "id": "deterministic_checks",
-          "actor": "deterministic_enforcement",
-          "depends_on": [
-            "implement"
-          ],
-          "optional": true,
-          "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code.",
-          "action": "Run required objective checks and preserve actual results. Do not weaken thresholds or claim environments that were not executed."
-        },
-        {
-          "id": "architecture_compliance_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review.",
-          "action": "Independent report-only architecture compliance gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "security_review",
-          "actor": "hacker",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized.",
-          "action": "Independent report-only security gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "review",
-          "actor": "tester_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review.",
-          "action": "Independent report-only quality gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "main_integrate",
-          "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review",
-            "implement",
-            "deterministic_checks",
-            "architecture_compliance_review",
-            "security_review",
-            "review"
-          ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Implement or answer directly."
         }
       ]
     },
     "SUBAGENT_SINGLE": {
-      "description": "One bounded specialist task; implementation and applicable gates depend on the authorized scope.",
+      "description": "One bounded specialist task.",
       "sequence": [
         {
-          "id": "prepare",
+          "id": "specialist",
           "actor": "selected_subagent",
           "depends_on": [],
-          "action": "Establish scope, approved inputs, acceptance criteria, pending decisions, ownership and applicable gates. Select bounded specialists only when useful; no mandatory explorer/documentator/planner chain. In SUBAGENT_SINGLE, the selected specialist completes its bounded read-only task or implementation preparation here."
-        },
-        {
-          "id": "architecture_design_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "prepare"
-          ],
-          "optional": true,
-          "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review.",
-          "action": "Independent report-only design gate on an immutable revision; validate JSON and require a passing decision before dependent implementation."
-        },
-        {
-          "id": "implement",
-          "actor": "implementer",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review"
-          ],
-          "optional": true,
-          "condition": "Run only when the authorized task requires code or contract changes.",
-          "action": "The implementation owner makes the scoped change with required RED/GREEN evidence. Do not overlap delegated ownership or modify a revision being reviewed."
-        },
-        {
-          "id": "deterministic_checks",
-          "actor": "deterministic_enforcement",
-          "depends_on": [
-            "implement"
-          ],
-          "optional": true,
-          "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code.",
-          "action": "Run required objective checks and preserve actual results. Do not weaken thresholds or claim environments that were not executed."
-        },
-        {
-          "id": "architecture_compliance_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review.",
-          "action": "Independent report-only architecture compliance gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "security_review",
-          "actor": "hacker",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized.",
-          "action": "Independent report-only security gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "review",
-          "actor": "tester_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review.",
-          "action": "Independent report-only quality gate on the checked revision; validate JSON and honor unresolved findings."
+          "action": "Complete the bounded delegated task and return a handoff."
         },
         {
           "id": "main_integrate",
           "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review",
-            "implement",
-            "deterministic_checks",
-            "architecture_compliance_review",
-            "security_review",
-            "review"
-          ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "depends_on": ["specialist"],
+          "action": "Review the handoff, integrate if needed, and report."
         }
       ]
     },
     "SUBAGENT_CHAIN": {
-      "description": "Selected specialist tasks with actual dependencies; no fixed investigation or planning chain.",
+      "description": "Clear multi-step work without full SDD.",
       "sequence": [
         {
-          "id": "prepare",
-          "actor": "main_session",
+          "id": "explore_if_needed",
+          "actor": "explorer",
           "depends_on": [],
-          "action": "Establish scope, approved inputs, acceptance criteria, pending decisions, ownership and applicable gates. Select bounded specialists only when useful; no mandatory explorer/documentator/planner chain. In SUBAGENT_SINGLE, the selected specialist completes its bounded read-only task or implementation preparation here."
-        },
-        {
-          "id": "architecture_design_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "prepare"
-          ],
           "optional": true,
-          "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review.",
-          "action": "Independent report-only design gate on an immutable revision; validate JSON and require a passing decision before dependent implementation."
+          "action": "Read-only reconnaissance. Return relevant files, architecture notes, and start points."
         },
         {
           "id": "implement",
           "actor": "implementer",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review"
-          ],
-          "optional": true,
-          "condition": "Run only when the authorized task requires code or contract changes.",
-          "action": "The implementation owner makes the scoped change with required RED/GREEN evidence. Do not overlap delegated ownership or modify a revision being reviewed."
+          "depends_on": ["explore_if_needed"],
+          "action": "Make the scoped change using the available handoff."
         },
         {
           "id": "deterministic_checks",
           "actor": "deterministic_enforcement",
-          "depends_on": [
-            "implement"
-          ],
-          "optional": true,
-          "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code.",
-          "action": "Run required objective checks and preserve actual results. Do not weaken thresholds or claim environments that were not executed."
+          "depends_on": ["implement"],
+          "action": "Run all required objective checks and preserve machine-readable outcomes."
         },
         {
           "id": "architecture_compliance_review",
           "actor": "architecture_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
+          "depends_on": ["deterministic_checks"],
           "optional": true,
-          "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review.",
-          "action": "Independent report-only architecture compliance gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "security_review",
-          "actor": "hacker",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized.",
-          "action": "Independent report-only security gate on the checked revision; validate JSON and honor unresolved findings."
+          "condition": "Run when the change affects architecture-sensitive boundaries, dependencies, contracts, persistence, integrations, or decisions.",
+          "action": "Perform report-only architecture compliance review. Findings return to implementer and this gate must revalidate remediation."
         },
         {
           "id": "review",
           "actor": "tester_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review.",
-          "action": "Independent report-only quality gate on the checked revision; validate JSON and honor unresolved findings."
+          "depends_on": ["deterministic_checks", "architecture_compliance_review"],
+          "action": "Report-only validation of the implemented change."
         },
         {
           "id": "main_integrate",
           "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review",
-            "implement",
-            "deterministic_checks",
-            "architecture_compliance_review",
-            "security_review",
-            "review"
-          ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "depends_on": ["review"],
+          "action": "Integrate only after required gates pass. Route findings to the implementer and require revalidation by the originating gate."
         }
       ]
     },
     "SDD_INLINE": {
-      "description": "Resolve significant pending requirements or design decisions, then implement directly with applicable gates.",
+      "description": "SDD justified but small enough for the main session.",
       "sequence": [
         {
-          "id": "prepare",
+          "id": "main_spec_plan_implement",
           "actor": "main_session",
           "depends_on": [],
-          "action": "Establish scope, approved inputs, acceptance criteria, pending decisions, ownership and applicable gates. Select bounded specialists only when useful; no mandatory explorer/documentator/planner chain. In SUBAGENT_SINGLE, the selected specialist completes its bounded read-only task or implementation preparation here."
-        },
-        {
-          "id": "architecture_design_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "prepare"
-          ],
-          "optional": true,
-          "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review.",
-          "action": "Independent report-only design gate on an immutable revision; validate JSON and require a passing decision before dependent implementation."
-        },
-        {
-          "id": "implement",
-          "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review"
-          ],
-          "optional": true,
-          "condition": "Run only when the authorized task requires code or contract changes.",
-          "action": "The implementation owner makes the scoped change with required RED/GREEN evidence. Do not overlap delegated ownership or modify a revision being reviewed."
-        },
-        {
-          "id": "deterministic_checks",
-          "actor": "deterministic_enforcement",
-          "depends_on": [
-            "implement"
-          ],
-          "optional": true,
-          "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code.",
-          "action": "Run required objective checks and preserve actual results. Do not weaken thresholds or claim environments that were not executed."
-        },
-        {
-          "id": "architecture_compliance_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review.",
-          "action": "Independent report-only architecture compliance gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "security_review",
-          "actor": "hacker",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized.",
-          "action": "Independent report-only security gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "review",
-          "actor": "tester_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review.",
-          "action": "Independent report-only quality gate on the checked revision; validate JSON and honor unresolved findings."
-        },
-        {
-          "id": "main_integrate",
-          "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review",
-            "implement",
-            "deterministic_checks",
-            "architecture_compliance_review",
-            "security_review",
-            "review"
-          ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Write lightweight spec/plan, implement, and validate inline."
         }
       ]
     },
     "SDD_SUBAGENTS": {
-      "description": "Resolve pending requirements or design decisions using only the specialists needed, with applicable gates.",
+      "description": "Full SDD flow with strict sequential handoffs.",
       "sequence": [
         {
-          "id": "prepare",
-          "actor": "main_session",
+          "id": "explore",
+          "actor": "explorer",
           "depends_on": [],
-          "action": "Establish scope, approved inputs, acceptance criteria, pending decisions, ownership and applicable gates. Select bounded specialists only when useful; no mandatory explorer/documentator/planner chain. In SUBAGENT_SINGLE, the selected specialist completes its bounded read-only task or implementation preparation here."
+          "action": "Inspect codebase, inputs, data shape, dependencies, and risks in read-only mode. Return a compact handoff."
+        },
+        {
+          "id": "document",
+          "actor": "documentator",
+          "depends_on": ["explore"],
+          "action": "Write functional and technical specs using the explorer handoff. Do not start before explorer returns."
+        },
+        {
+          "id": "plan",
+          "actor": "planner",
+          "depends_on": ["document"],
+          "action": "Turn specs into ordered, verifiable implementation tasks. Do not start before documentator returns."
         },
         {
           "id": "architecture_design_review",
           "actor": "architecture_reviewer",
-          "depends_on": [
-            "prepare"
-          ],
+          "depends_on": ["plan"],
           "optional": true,
-          "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review.",
-          "action": "Independent report-only design gate on an immutable revision; validate JSON and require a passing decision before dependent implementation."
-        },
-        {
-          "id": "implement",
-          "actor": "implementer",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review"
-          ],
-          "optional": true,
-          "condition": "Run only when the authorized task requires code or contract changes.",
-          "action": "The implementation owner makes the scoped change with required RED/GREEN evidence. Do not overlap delegated ownership or modify a revision being reviewed."
-        },
-        {
-          "id": "deterministic_checks",
-          "actor": "deterministic_enforcement",
-          "depends_on": [
-            "implement"
-          ],
-          "optional": true,
-          "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code.",
-          "action": "Run required objective checks and preserve actual results. Do not weaken thresholds or claim environments that were not executed."
-        },
-        {
-          "id": "architecture_compliance_review",
-          "actor": "architecture_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review.",
-          "action": "Independent report-only architecture compliance gate on the checked revision; validate JSON and honor unresolved findings."
+          "condition": "Run when module or layer boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions change.",
+          "action": "Perform report-only design compliance review. New architecture policy or exceptions require human approval."
         },
         {
           "id": "security_review",
           "actor": "hacker",
-          "depends_on": [
-            "deterministic_checks"
-          ],
+          "depends_on": ["plan", "architecture_design_review"],
           "optional": true,
-          "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized.",
-          "action": "Independent report-only security gate on the checked revision; validate JSON and honor unresolved findings."
+          "disabled_by_default": true,
+          "condition": "Skip in demo-fast mode. Run only if the user explicitly asks for security review or the task involves auth, secrets, payments, destructive actions, or external network exposure.",
+          "action": "Perform passive security review and return findings before implementation."
+        },
+        {
+          "id": "implement",
+          "actor": "implementer",
+          "depends_on": ["plan", "architecture_design_review", "security_review"],
+          "action": "Implement according to the planner handoff and any security constraints."
+        },
+        {
+          "id": "deterministic_checks",
+          "actor": "deterministic_enforcement",
+          "depends_on": ["implement"],
+          "action": "Run all required objective checks and preserve machine-readable outcomes."
+        },
+        {
+          "id": "architecture_compliance_review",
+          "actor": "architecture_reviewer",
+          "depends_on": ["deterministic_checks"],
+          "optional": true,
+          "condition": "Run when architecture_design_review ran or the implementation changed an architecture-sensitive area.",
+          "action": "Perform report-only implementation compliance review. Findings return to implementer and this gate must revalidate remediation."
         },
         {
           "id": "review",
           "actor": "tester_reviewer",
-          "depends_on": [
-            "deterministic_checks"
-          ],
-          "optional": true,
-          "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review.",
-          "action": "Independent report-only quality gate on the checked revision; validate JSON and honor unresolved findings."
+          "depends_on": ["deterministic_checks", "architecture_compliance_review"],
+          "action": "Run report-only static/E2E/manual validation and return findings."
         },
         {
           "id": "main_integrate",
           "actor": "main_session",
-          "depends_on": [
-            "prepare",
-            "architecture_design_review",
-            "implement",
-            "deterministic_checks",
-            "architecture_compliance_review",
-            "security_review",
-            "review"
-          ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "depends_on": ["review"],
+          "action": "Integrate final results only after required gates pass. Route findings to implementer, rerun deterministic checks, and require revalidation by the originating gate."
         }
       ]
     }
   },
   "hard_rules": [
-    "Preserve explicit read-only, review-only, delivery and approval boundaries. Do not modify global configuration without authorization.",
+    "For SDD_SUBAGENTS, never spawn documentator in parallel with explorer.",
+    "For SDD_SUBAGENTS, never spawn planner before documentator returns.",
+    "For SDD_SUBAGENTS, never spawn an architecture design review before planner returns.",
+    "For SDD_SUBAGENTS, never spawn implementer before planner and required pre-implementation gates return.",
+    "For SDD_SUBAGENTS, never spawn an architecture compliance review before implementation and deterministic checks return.",
+    "For SDD_SUBAGENTS, never spawn tester_reviewer before implementation, deterministic checks, and required architecture compliance review return.",
+    "In demo-fast mode, skip hacker unless explicitly requested by the user or required by sensitive security scope.",
+    "The main session never fixes review findings while acting as orchestrator; route them to implementer and revalidate.",
+    "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",
     "Reject any architecture_reviewer, tester_reviewer, or hacker handoff that is not valid agent-result JSON for the expected role and runtime.",
     "Never treat invalid structured review output as a passing gate or continue to a dependent stage.",
-    "A required gate that failed, is invalid, remains unresolved, or was not run blocks dependent work and completion. Independent authorized work may continue.",
     "Never start or delegate work when managed prompt protection is drifted, elevated, legacy, or unproven.",
     "Never ask for escalation, invoke init or update, or delegate a bypass to modify .codex/agents.",
-    "Independent reviewers are report-only; implementation ownership and independent review ownership must remain separate.",
-    "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",
-    "No strategy may waive a canonical condition because of size, speed, fast mode, or the presence of an approved specification.",
-    "Report observed blockers and uncertainty; avoid identical retries without new evidence or changed conditions. Never claim unexecuted environment or scenario validation.",
-    "Pipeline version 3 replaces version 2 routing and fixed specialist chains. These are static workflow declarations, not an operational scheduler or evidence that gates executed."
+    "If a dependency is optional and skipped, note why it was skipped before continuing."
   ]
 }
