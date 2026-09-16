@@ -323,23 +323,33 @@ The Codex setup installs:
 - `service_tier = "fast"` and `[features].fast_mode = true`
 - `[agents].max_threads = 6` and `[agents].max_depth = 1`
 
-Codex demo-fast behavior:
+Codex execution behavior:
 
-- the main session acts as orchestrator
-- `SDD_SUBAGENTS` runs sequentially: `explorer -> documentator -> planner -> architecture-reviewer (when required) -> implementer -> architecture-reviewer (when required) -> tester-reviewer -> main integration`
-- `hacker` is skipped unless explicitly requested or security-sensitive
-- review findings return to `implementer`, then deterministic checks and the originating review gate run again
+- The main session owns completion and implements directly by default when expected behavior is defined.
+- SDD resolves ambiguous requirements or significant pending design decisions and reuses approved specifications. File counts, line counts, and adding tests do not force SDD or delegation.
+- Specialists receive bounded work only when useful. Independent work may proceed in parallel with separate ownership and immutable revisions under review.
+- Material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability require independent review. Existing architecture design/compliance gates and project-specific requirements remain in force on every route.
+- Review findings return to the implementation owner, checks rerun, and the originating gate revalidates. Fast settings never waive applicable gates.
+
+`pipeline.json` version 3 keeps the five strategy names while replacing version
+2's size routing and mandatory specialist chains. Its conditional gates are
+required when applicable. The static checker validates configuration, actors,
+canonical conditions, and dependencies; it does not evaluate task risk or prove
+that an agent executed the workflow. Update the package and managed assets
+together through the existing human-controlled update procedure; mixed version
+2/3 package and pipeline configurations fail closed. A new Codex session is
+required after the update. This change does not enable `launch`.
 
 ## Quick usage
 
 After installation, open the target project in Codex and describe the outcome
 and delivery boundaries. For example:
 
-> Add rate limiting to the public API. Use the full sequential SDD flow,
-> include passive security review, and stop before merge or deployment.
+> Add rate limiting to the public API using the approved behavior. Run the
+> applicable independent security review and stop before merge or deployment.
 
-The main Codex session reads the managed orchestrator policy and selects an
-inline, single-agent, chained, or full SDD strategy. You can also request a
+The main Codex session reads the execution policy and proceeds directly, using
+selective delegation and proportional SDD when needed. You can also request a
 specific native Codex delegation sequence, for example
 `explorer -> planner -> implementer -> tester-reviewer`.
 

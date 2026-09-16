@@ -279,57 +279,112 @@ async function checkReviewHandoffContract({ layout }) {
     : { pass: false, summary: "Structured review runtime validation is incomplete." };
 }
 
+const pipelineStages = {
+  "prepare": {
+    "actor": null,
+    "dependencies": []
+  },
+  "architecture_design_review": {
+    "actor": "architecture_reviewer",
+    "dependencies": [
+      "prepare"
+    ],
+    "condition": "Required before dependent implementation for material changes to boundaries, dependency direction, public contracts, persistence, integration topology, shared abstractions, or architecture decisions, or when project rules or the user require design review."
+  },
+  "implement": {
+    "actor": null,
+    "dependencies": [
+      "prepare",
+      "architecture_design_review"
+    ],
+    "condition": "Run only when the authorized task requires code or contract changes."
+  },
+  "deterministic_checks": {
+    "actor": "deterministic_enforcement",
+    "dependencies": [
+      "implement"
+    ],
+    "condition": "Required when the task changes code or contracts, or when project validation rules or the user require checks. Read-only questions do not require tests of unchanged code."
+  },
+  "architecture_compliance_review": {
+    "actor": "architecture_reviewer",
+    "dependencies": [
+      "deterministic_checks"
+    ],
+    "condition": "Required after checks when architecture design review applied, implementation materially changed an architecture-sensitive area, or project rules or the user require architecture review."
+  },
+  "security_review": {
+    "actor": "hacker",
+    "dependencies": [
+      "deterministic_checks"
+    ],
+    "condition": "Required after checks for material security changes, including authentication, secrets, payment security, destructive authority, or external network exposure, or when project rules or the user require security review. Validation is passive unless active testing is explicitly authorized."
+  },
+  "review": {
+    "actor": "tester_reviewer",
+    "dependencies": [
+      "deterministic_checks"
+    ],
+    "condition": "Required after checks for material changes to monetary calculations, payments, fiscal operations, durable persistence, security, or native interoperability, or when project rules or the user require independent quality review."
+  },
+  "main_integrate": {
+    "actor": "main_session",
+    "dependencies": [
+      "prepare",
+      "architecture_design_review",
+      "implement",
+      "deterministic_checks",
+      "architecture_compliance_review",
+      "security_review",
+      "review"
+    ]
+  }
+};
+const pipelineStrategies = ["INLINE", "SUBAGENT_SINGLE", "SUBAGENT_CHAIN", "SDD_INLINE", "SDD_SUBAGENTS"];
+
+function validStepShape(step) {
+  const allowedKeys = ["id", "actor", "depends_on", "action", "optional", "condition"];
+  return Boolean(step && typeof step.id === "string"
+    && typeof step.actor === "string" && typeof step.action === "string" && step.action.length > 0
+    && Object.keys(step).every((key) => allowedKeys.includes(key))
+    && Array.isArray(step.depends_on) && step.depends_on.every((id) => typeof id === "string")
+    && new Set(step.depends_on).size === step.depends_on.length);
+}
+
 function validateSequence(sequence) {
-  if (!Array.isArray(sequence)) return false;
+  if (!Array.isArray(sequence) || !sequence.every(validStepShape)) return false;
   const positions = new Map(sequence.map((step, index) => [step.id, index]));
   if (positions.size !== sequence.length) return false;
-  return sequence.every((step, index) => Array.isArray(step.depends_on)
-    && step.depends_on.every((dependency) => positions.has(dependency) && positions.get(dependency) < index));
+  return sequence.every((step, index) => step.depends_on.every((dependency) => (
+    positions.has(dependency) && positions.get(dependency) < index
+  )));
 }
 
-function hasDependencies(byId, stepId, dependencies) {
-  const step = byId.get(stepId);
-  return Boolean(step && dependencies.every((dependency) => step.depends_on.includes(dependency)));
+function expectedActor(id, name, actor) {
+  if (actor) return actor;
+  if (id === "prepare") return name === "SUBAGENT_SINGLE" ? "selected_subagent" : "main_session";
+  return ["INLINE", "SDD_INLINE"].includes(name) ? "main_session" : "implementer";
 }
 
-function validatesGovernedStrategy(strategy, { stages, edges }) {
-  if (!validateSequence(strategy?.sequence)) return false;
+function validatesStage(byId, name, id, requirement) {
+  const step = byId.get(id);
+  if (!step || step.actor !== expectedActor(id, name, requirement.actor)) return false;
+  const conditionMatches = requirement.condition
+    ? step.optional === true && step.condition === requirement.condition
+    : step.optional === undefined && step.condition === undefined;
+  return conditionMatches
+    && requirement.dependencies.every((dependency) => step.depends_on.includes(dependency));
+}
+
+function validatesGovernedStrategy(name, strategy) {
+  if (!strategy || !Object.keys(strategy).every((key) => ["description", "sequence"].includes(key))
+    || !validateSequence(strategy.sequence)) return false;
   const byId = new Map(strategy.sequence.map((step) => [step.id, step]));
-  return stages.every((stage) => byId.has(stage))
-    && edges.every(([step, dependency]) => hasDependencies(byId, step, [dependency]));
+  return byId.size === Object.keys(pipelineStages).length
+    && Object.entries(pipelineStages).every(([id, requirement]) => (
+      validatesStage(byId, name, id, requirement)
+    ));
 }
-
-const governedPipelineRequirements = {
-  SUBAGENT_CHAIN: {
-    stages: ["explore_if_needed", "implement", "deterministic_checks", "architecture_compliance_review", "review", "main_integrate"],
-    edges: [
-      ["implement", "explore_if_needed"],
-      ["deterministic_checks", "implement"],
-      ["architecture_compliance_review", "deterministic_checks"],
-      ["review", "deterministic_checks"],
-      ["review", "architecture_compliance_review"],
-      ["main_integrate", "review"],
-    ],
-  },
-  SDD_SUBAGENTS: {
-    stages: ["explore", "document", "plan", "architecture_design_review", "security_review", "implement", "deterministic_checks", "architecture_compliance_review", "review", "main_integrate"],
-    edges: [
-      ["document", "explore"],
-      ["plan", "document"],
-      ["architecture_design_review", "plan"],
-      ["security_review", "plan"],
-      ["security_review", "architecture_design_review"],
-      ["implement", "plan"],
-      ["implement", "architecture_design_review"],
-      ["implement", "security_review"],
-      ["deterministic_checks", "implement"],
-      ["architecture_compliance_review", "deterministic_checks"],
-      ["review", "deterministic_checks"],
-      ["review", "architecture_compliance_review"],
-      ["main_integrate", "review"],
-    ],
-  },
-};
 
 async function checkPipelineDependencyOrder({ layout }) {
   let pipeline;
@@ -338,17 +393,15 @@ async function checkPipelineDependencyOrder({ layout }) {
   } catch {
     return { pass: false, summary: "Pipeline configuration is missing or invalid JSON." };
   }
-  const strategies = Object.values(pipeline.strategies ?? {});
+  const strategies = Object.keys(pipeline?.strategies ?? {});
   const policy = JSON.stringify(pipeline);
-  const pass = strategies.length > 0
-    && strategies.every((strategy) => validateSequence(strategy.sequence))
-    && Object.entries(governedPipelineRequirements).every(([name, requirements]) => (
-      validatesGovernedStrategy(pipeline.strategies?.[name], requirements)
-    ))
-    && /must not inspect.*failed or unresolved|invalid structured review output.*passing gate|Never treat invalid structured review output as a passing gate/i.test(policy);
+  const pass = pipeline?.version === 3
+    && strategies.length === pipelineStrategies.length
+    && pipelineStrategies.every((name) => validatesGovernedStrategy(name, pipeline.strategies?.[name]))
+    && /invalid structured review output.*passing gate/i.test(policy);
   return pass
-    ? { pass: true, summary: "Pipeline dependencies are ordered and its review policy fails closed." }
-    : { pass: false, summary: "Pipeline dependencies or fail-closed review policy are invalid." };
+    ? { pass: true, summary: "All execution routes declare ordered dependencies and applicable independent gates." }
+    : { pass: false, summary: "Pipeline dependencies, conditional gates, or independent ownership are invalid." };
 }
 
 function timestamp() {

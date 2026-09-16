@@ -124,7 +124,7 @@ test("pipeline governance rejects missing mandatory stages and dependencies", as
   dependencyPipeline.strategies.SDD_SUBAGENTS.sequence
     .find((step) => step.id === "deterministic_checks").depends_on = [];
   dependencyPipeline.strategies.SDD_SUBAGENTS.sequence
-    .find((step) => step.id === "implement").depends_on = ["plan", "security_review"];
+    .find((step) => step.id === "implement").depends_on = [];
   await fs.writeFile(dependencyPipelinePath, `${JSON.stringify(dependencyPipeline, null, 2)}\n`, "utf8");
 
   for (const fixture of [missingStage, missingDependency]) {
@@ -134,6 +134,78 @@ test("pipeline governance rejects missing mandatory stages and dependencies", as
       result.document.results.find((check) => check.check_id === "pipeline_dependency_order").status,
       "fail",
     );
+  }
+});
+
+test("proportional pipelines allow main implementation without a specialist chain", async (context) => {
+  const fixture = await copyRepositoryFixture();
+  context.after(() => fs.rm(fixture, { recursive: true, force: true }));
+  const pipeline = JSON.parse(await fs.readFile(path.join(fixture, "codex", "pipeline.json"), "utf8"));
+  assert.equal(pipeline.version, 3);
+  for (const name of ["INLINE", "SDD_INLINE"]) {
+    const steps = pipeline.strategies[name].sequence;
+    assert.equal(steps.find((step) => step.id === "implement").actor, "main_session");
+    assert.equal(steps.find((step) => step.id === "review").actor, "tester_reviewer");
+  }
+  for (const strategy of Object.values(pipeline.strategies)) {
+    assert.ok(strategy.sequence.every((step) => !["explore", "document", "plan", "explore_if_needed"].includes(step.id)));
+  }
+  const result = await runGovernanceChecks(fixture);
+  assert.equal(result.blocking, false);
+});
+
+test("pipeline governance rejects unsafe conditions, actors, and dependency graphs on every route", async (context) => {
+  const fixture = await copyRepositoryFixture();
+  context.after(() => fs.rm(fixture, { recursive: true, force: true }));
+  const pipelinePath = path.join(fixture, "codex", "pipeline.json");
+  const baseline = JSON.parse(await fs.readFile(pipelinePath, "utf8"));
+  const mutations = [
+    (steps) => { steps.find((step) => step.id === "review").actor = "main_session"; },
+    (steps) => { steps.find((step) => step.id === "security_review").actor = "implementer"; },
+    (steps) => { steps.find((step) => step.id === "deterministic_checks").condition = "Skip when speed matters."; },
+    (steps) => { delete steps.find((step) => step.id === "review").condition; },
+    (steps) => { steps.find((step) => step.id === "architecture_design_review").condition = "Never run."; },
+    (steps) => { steps.find((step) => step.id === "architecture_compliance_review").condition = "Never run."; },
+    (steps) => { steps.find((step) => step.id === "security_review").condition = "Never run."; },
+    (steps) => { steps.find((step) => step.id === "review").disabled_by_default = true; },
+    (steps) => { steps.find((step) => step.id === "review").optional = false; },
+    (steps) => { steps.find((step) => step.id === "main_integrate").optional = true; },
+    (steps) => { steps[0].depends_on = ["missing_predecessor"]; },
+    (steps) => { steps[0].depends_on = [steps.at(-1).id]; },
+    (steps) => { steps[1].id = steps[0].id; },
+    (steps) => { steps[1].depends_on.push(steps[1].depends_on[0]); },
+    (steps) => { steps[0] = null; },
+    (steps) => { steps[0].action = ""; },
+    (steps) => { steps[0].actor = null; },
+    (steps) => { steps[0].id = 42; },
+    (steps) => { steps[0].depends_on = null; },
+    (steps) => { steps[0].depends_on = [42]; },
+    (steps) => { steps[0].skip = true; },
+  ];
+  for (const name of Object.keys(baseline.strategies)) {
+    for (const [index, mutate] of mutations.entries()) {
+      const pipeline = structuredClone(baseline);
+      mutate(pipeline.strategies[name].sequence);
+      await fs.writeFile(pipelinePath, `${JSON.stringify(pipeline, null, 2)}\n`);
+      const result = await runGovernanceChecks(fixture);
+      assert.equal(result.blocking, true, `${name} mutation ${index}`);
+      assert.equal(result.document.results.find((check) => check.check_id === "pipeline_dependency_order").status, "fail");
+      assert.equal((await validateGovernanceCheckResult(result.document)).ok, true);
+    }
+  }
+  for (const mutate of [
+    (pipeline) => { pipeline.version = 2; },
+    (pipeline) => { delete pipeline.strategies.INLINE; },
+    (pipeline) => { pipeline.strategies.BYPASS = structuredClone(pipeline.strategies.INLINE); },
+    (pipeline) => { pipeline.strategies.INLINE.sequence = null; },
+    (pipeline) => { pipeline.strategies.INLINE.skip = true; },
+    (pipeline) => { pipeline.strategies.INLINE = null; },
+    (pipeline) => { pipeline.hard_rules = []; },
+  ]) {
+    const pipeline = structuredClone(baseline);
+    mutate(pipeline);
+    await fs.writeFile(pipelinePath, `${JSON.stringify(pipeline, null, 2)}\n`);
+    assert.equal((await runGovernanceChecks(fixture)).blocking, true);
   }
 });
 
@@ -242,37 +314,24 @@ test("pipeline governance rejects every missing governed stage and edge", async 
   context.after(() => fs.rm(fixture, { recursive: true, force: true }));
   const pipelinePath = path.join(fixture, "codex", "pipeline.json");
   const baseline = JSON.parse(await fs.readFile(pipelinePath, "utf8"));
-  const requirements = {
-    SUBAGENT_CHAIN: {
-      stages: ["explore_if_needed", "implement", "deterministic_checks", "architecture_compliance_review", "review", "main_integrate"],
-      edges: [
-        ["implement", "explore_if_needed"],
-        ["deterministic_checks", "implement"],
-        ["architecture_compliance_review", "deterministic_checks"],
-        ["review", "deterministic_checks"],
-        ["review", "architecture_compliance_review"],
-        ["main_integrate", "review"],
-      ],
-    },
-    SDD_SUBAGENTS: {
-      stages: ["explore", "document", "plan", "architecture_design_review", "security_review", "implement", "deterministic_checks", "architecture_compliance_review", "review", "main_integrate"],
-      edges: [
-        ["document", "explore"],
-        ["plan", "document"],
-        ["architecture_design_review", "plan"],
-        ["security_review", "plan"],
-        ["security_review", "architecture_design_review"],
-        ["implement", "plan"],
-        ["implement", "architecture_design_review"],
-        ["implement", "security_review"],
-        ["deterministic_checks", "implement"],
-        ["architecture_compliance_review", "deterministic_checks"],
-        ["review", "deterministic_checks"],
-        ["review", "architecture_compliance_review"],
-        ["main_integrate", "review"],
-      ],
-    },
-  };
+  const stages = ["prepare", "architecture_design_review", "implement", "deterministic_checks", "architecture_compliance_review", "security_review", "review", "main_integrate"];
+  const edges = [
+    ["architecture_design_review", "prepare"],
+    ["implement", "prepare"],
+    ["implement", "architecture_design_review"],
+    ["deterministic_checks", "implement"],
+    ["architecture_compliance_review", "deterministic_checks"],
+    ["security_review", "deterministic_checks"],
+    ["review", "deterministic_checks"],
+    ["main_integrate", "prepare"],
+    ["main_integrate", "implement"],
+    ["main_integrate", "deterministic_checks"],
+    ["main_integrate", "architecture_design_review"],
+    ["main_integrate", "architecture_compliance_review"],
+    ["main_integrate", "security_review"],
+    ["main_integrate", "review"],
+  ];
+  const requirements = Object.fromEntries(Object.keys(baseline.strategies).map((name) => [name, { stages, edges }]));
 
   for (const [strategyName, requirement] of Object.entries(requirements)) {
     for (const stageId of requirement.stages) {
