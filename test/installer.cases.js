@@ -352,17 +352,19 @@ test("Codex review gates require pure governance JSON", async () => {
   }
 });
 
-test("pipeline routes review remediation through implementer and architecture revalidation", async () => {
+test("pipeline routes remediation through its owner and independent revalidation", async () => {
   const pipeline = JSON.parse(await fs.readFile(new URL("../codex/pipeline.json", import.meta.url), "utf8"));
   const sdd = pipeline.strategies.SDD_SUBAGENTS.sequence;
   const byId = new Map(sdd.map((step) => [step.id, step]));
 
-  assert.equal(pipeline.version, 2);
+  assert.equal(pipeline.version, 3);
   assert.equal(byId.get("architecture_design_review").actor, "architecture_reviewer");
   assert.equal(byId.get("architecture_compliance_review").actor, "architecture_reviewer");
   assert.deepEqual(byId.get("architecture_compliance_review").depends_on, ["deterministic_checks"]);
-  assert.match(byId.get("main_integrate").action, /Route findings to implementer/);
-  assert.doesNotMatch(JSON.stringify(pipeline), /main (?:session|orchestrator) (?:applies|fixes|resolve)/i);
+  assert.match(byId.get("main_integrate").action, /Findings return to the implementation owner/);
+  assert.match(byId.get("main_integrate").action, /originating gate revalidates/);
+  assert.equal(pipeline.strategies.INLINE.sequence.find((step) => step.id === "implement").actor, "main_session");
+  assert.equal(pipeline.strategies.SDD_INLINE.sequence.find((step) => step.id === "implement").actor, "main_session");
 });
 
 test("mergeManagedBlock preserves unmanaged content and replaces the managed block", () => {
@@ -425,6 +427,10 @@ test("installProject is idempotent and preserves project-specific content", asyn
   const manifest = JSON.parse(await fs.readFile(path.join(project, ".sdd-codegraph.json"), "utf8"));
   assert.match(agents, /^# Product rules/m);
   assert.match(agents, /<!-- multi-sdd-team: begin -->/);
+  assert.equal(agents.match(/<!-- multi-sdd-team: begin -->/g).length, 1);
+  assert.equal(agents.match(/<!-- multi-sdd-team: end -->/g).length, 1);
+  assert.match(agents, /# Project Execution Policy/);
+  assert.match(agents, /The main session may implement and remediate changes it owns/);
   assert.match(agents, /sdd-codegraph validate-result - --agent <agent_name>/);
   assert.doesNotMatch(agents, /validate-result[^\n]*--runtime/);
   assert.match(architectureReviewer, /name = "architecture_reviewer"/);
@@ -449,6 +455,29 @@ test("installProject is idempotent and preserves project-specific content", asyn
   assert.equal(manifest.package, "@gustavoarielms/sdd-codegraph-cli");
   assert.equal(manifest.version, "0.3.0");
   assert.equal(manifest.permissionsProfile, "workspace-only");
+  assert.equal((await checkProjectFiles(project)).drift.length, 0);
+});
+
+test("project update replaces the legacy execution policy without altering unmanaged rules", async (context) => {
+  const project = await temporaryProject();
+  context.after(() => fs.rm(project, { recursive: true, force: true }));
+  await installProject(project);
+  const policyPath = path.join(project, "AGENTS.md");
+  await fs.writeFile(policyPath, "# Product rules\n\n<!-- multi-sdd-team: begin -->\n# Legacy policy\nStop local work while agents run.\n<!-- multi-sdd-team: end -->\n\nUser-owned footer.\n");
+  await installProject(project);
+  const installed = await fs.readFile(policyPath, "utf8");
+  assert.ok(installed.startsWith("# Product rules\n\n"));
+  assert.ok(installed.endsWith("\n\nUser-owned footer.\n"));
+  assert.equal(installed.match(/<!-- multi-sdd-team: begin -->/g).length, 1);
+  assert.doesNotMatch(installed, /Legacy policy|Stop local work while agents run/);
+  assert.match(installed, /sdd-codegraph validate-result - --agent <agent_name>/);
+  const pipeline = JSON.parse(await fs.readFile(path.join(project, "pipeline.json"), "utf8"));
+  assert.equal(pipeline.version, 3);
+  const orchestrator = await fs.readFile(path.join(project, ".codex", "agents", "orchestrator.toml"), "utf8");
+  assert.match(orchestrator, /^default_permissions = ":read-only"$/m);
+  assert.doesNotMatch(orchestrator, /R1 INLINE|R5 SDD_SUBAGENTS/);
+  assert.match(orchestrator, /No solicites escalacion/);
+  assert.deepEqual((await installProject(project)).changed, []);
   assert.equal((await checkProjectFiles(project)).drift.length, 0);
 });
 

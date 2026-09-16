@@ -356,10 +356,10 @@ test("engineering gate configuration is strict and requires the exact executor a
     return [...source.matchAll(/^test\("([^"]+)"/gm)].map((match) => match[1]);
   }))).flat();
   assert.equal(UNIT_TEST_NAMES.size, 35);
-  assert.equal(inventory.length, 180);
-  assert.equal(new Set(inventory).size, 180);
+  assert.equal(inventory.length, 184);
+  assert.equal(new Set(inventory).size, 184);
   assert.equal(inventory.filter((name) => classifyTestName(name) === "unit").length, 35);
-  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 145);
+  assert.equal(inventory.filter((name) => classifyTestName(name) === "integration").length, 149);
   const unitFiles = (await fs.readdir(path.join(repositoryRoot, "test", "unit"))).filter((name) => name.endsWith(".test.js"));
   const integrationFiles = (await fs.readdir(path.join(repositoryRoot, "test", "integration"))).filter((name) => name.endsWith(".test.js"));
   assert.equal(unitFiles.length, 9);
