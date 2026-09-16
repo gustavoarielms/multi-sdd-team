@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import Ajv2020 from "ajv/dist/2020.js";
 import { EventEmitter } from "node:events";
@@ -15,6 +16,7 @@ import {
   validateDockerLauncherResult,
 } from "../src/docker-runtime-contract.js";
 
+const FIXTURE_IMAGE = JSON.parse(await fs.readFile(new URL("./fixtures/docker-runtime/image.json", import.meta.url), "utf8"));
 const IMAGE_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE_CONFIG_DIGEST = `sha256:${"e".repeat(64)}`;
 const RUN_ID = "b".repeat(64);
@@ -614,6 +616,38 @@ test("Docker lifecycle uses only owned argv and never grants trust", async () =>
     assert.deepEqual(create, buildDockerCreateInvocation(runtimeInput(permissionProfile, { runId })).args);
   }
   assertSanitized(await runDockerLifecycle({ approvedImage: APPROVED_IMAGE, permissionProfile: "workspace-only", projectRoot: PROJECT_ROOT }));
+});
+
+test("real Docker fixture pins observed OCI bytes and passes strict image preflight", async () => {
+  const read = (name) => fs.readFile(new URL(`./fixtures/docker-runtime/${name}`, import.meta.url));
+  const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const manifestBytes = await read("manifest.json");
+  const configBytes = await read("config.json");
+  const manifest = JSON.parse(manifestBytes);
+  const config = JSON.parse(configBytes);
+  const record = JSON.parse(await read("build-record.json"));
+  assert.equal(digest(manifestBytes), FIXTURE_IMAGE.digest);
+  assert.equal(digest(configBytes), FIXTURE_IMAGE.configDigest);
+  assert.equal(manifest.config.digest, FIXTURE_IMAGE.configDigest);
+  assert.equal(manifest.config.size, configBytes.length);
+  assert.equal(record.manifestDigest, FIXTURE_IMAGE.digest);
+  assert.equal(record.configDigest, FIXTURE_IMAGE.configDigest);
+  for (const [name, hash] of Object.entries(record.sources)) assert.equal(digest(await read(name)), hash);
+
+  const fake = fakeDocker();
+  fake.steps[2].stdout = JSON.stringify([{
+    Id: digest(configBytes), RepoDigests: [FIXTURE_IMAGE.reference],
+    Os: config.os, Architecture: config.architecture, Config: config.config,
+  }]);
+  fake.steps[4].stdout = () => {
+    const container = rawContainer(fake.input);
+    container.Image = digest(configBytes);
+    container.Config = { ...container.Config, ...config.config, Image: FIXTURE_IMAGE.reference, Labels: container.Config.Labels };
+    return JSON.stringify([container]);
+  };
+  assertSanitized(await lifecycle(fake, {}, { approvedImage: FIXTURE_IMAGE }));
+  assert.ok(fake.calls.some((call) => call.args.includes("start")));
+  assertRemoval(fake);
 });
 
 test("Docker lifecycle rejects malformed daemon image and container output", async () => {
