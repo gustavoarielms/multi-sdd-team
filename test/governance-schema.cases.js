@@ -330,7 +330,7 @@ test("versioned governance catalog and check registry are valid and linked", asy
   );
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ARCH-REVIEW-SCOPE-001").enforcement.gate_effect, "warn");
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "ENG-IMPLEMENTER-TDD-001").enforcement.gate_effect, "warn");
-  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-REPORTONLY-001").version, 2);
+  assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-REPORTONLY-001").version, 3);
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-REVIEW-HANDOFF-001").version, 2);
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-ROLE-CAPABILITY-001").version, 3);
   assert.equal(catalog.rules.find((rule) => rule.rule_id === "GOV-SECURITY-ACTIVE-001").version, 2);

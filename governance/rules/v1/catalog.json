@@ -42,20 +42,44 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-REVIEW-REPORTONLY-001",
-      "version": 2,
+      "version": 3,
       "title": "Independent reviewers must remain report-only",
-      "description": "Architecture, quality, and security reviewers must not receive write capability or implementation ownership.",
+      "description": "Architecture, quality, and security reviewers must remain report-only without implementation ownership. Managed reviewer declarations retain read-only profiles. In the explicitly authorized instruction-based MVP for multi-sdd-team source without installed managed prompts, native reviewers may inherit write-capable tools but are instructed not to mutate; technical separation is deferred, and before/after observation plus honest reporting is required.",
       "category": "governance",
       "status": "approved",
       "owner": "governance_gate",
       "default_severity": "critical",
-      "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "reviewer_report_only" } },
-      "scope": { "description": "Codex architecture, quality, and security reviewer declarations." },
+      "enforcement": {
+        "mode": "deterministic",
+        "gate_effect": "block",
+        "automation": {
+          "engine": "sdd_governance",
+          "check_id": "reviewer_report_only"
+        }
+      },
+      "scope": {
+        "description": "Codex architecture, quality, and security reviewer declarations."
+      },
       "exceptions_allowed": false,
-      "source_refs": ["docs/agent-governance-responsibility-map.md", "codex/agents/tester-reviewer.toml"],
+      "source_refs": [
+        "docs/agent-governance-responsibility-map.md",
+        "codex/agents/tester-reviewer.toml",
+        "docs/scoped-pr-workflow.md"
+      ],
       "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Reviewer capability declarations and explicit report-only instructions."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-08-13T22:48:19Z", "rationale": "Approved to preserve independent Codex review ownership.", "reference": "conversation:019ffd45-4de2-71a3-bcbe-68fb8fdee78c" }
+      "evidence_requirements": [
+        "Reviewer declarations and explicit report-only instructions; for the source MVP, scoped handoff, version identity, before/after state observations and action records without unsupported authorship or isolation claims. Static declaration validation does not attest runtime capability restrictions."
+      ],
+      "approval": {
+        "approved_by": {
+          "kind": "human",
+          "id": "gustavo",
+          "runtime": "manual"
+        },
+        "approved_at": "2026-10-15T15:30:45Z",
+        "rationale": "Approval recorded at this timestamp, not the original message time. The repository owner explicitly approved deferring technical reviewer-permission separation for an instruction-based MVP with clear scope and subsequent checks. This changes product policy only; platform restrictions, installed-prompt immutability, launcher blocking, independent ownership and v1 handoffs remain binding.",
+        "reference": "human-decision:instruction-review-mvp-2026-10-15"
+      }
     },
     {
       "schema_version": "1.0.0",
@@ -96,20 +120,46 @@
     {
       "schema_version": "1.0.0",
       "rule_id": "GOV-MANAGED-PROMPT-PROTECTION-001",
-      "version": 1,
+      "version": 2,
       "title": "Managed prompts are immutable to AI-mediated work",
-      "description": "Project-installed agent prompts must match the approved package baseline and remain non-writable under the effective Codex runtime; drift, legacy configuration, elevation, or missing evidence blocks execution.",
+      "description": "Project-installed agent prompts must match the approved package baseline and remain non-writable under the effective managed Codex runtime; drift, legacy configuration, elevation, or missing evidence blocks that runtime. Canonical source checks validate declarations only. The explicitly authorized instruction-based MVP reviews multi-sdd-team source without installed managed prompts and makes no protected-runtime claim; it cannot modify installed prompts, enable the launcher, use test hooks, or override platform restrictions.",
       "category": "security",
       "status": "approved",
       "owner": "governance_gate",
       "default_severity": "critical",
-      "enforcement": { "mode": "deterministic", "gate_effect": "block", "automation": { "engine": "sdd_governance", "check_id": "managed_prompt_protection" } },
-      "scope": { "description": "Canonical prompt contracts and project-installed .codex/agents files in supported Codex workflows." },
+      "enforcement": {
+        "mode": "deterministic",
+        "gate_effect": "block",
+        "automation": {
+          "engine": "sdd_governance",
+          "check_id": "managed_prompt_protection"
+        }
+      },
+      "scope": {
+        "description": "Canonical prompt contracts and project-installed .codex/agents files in supported Codex workflows."
+      },
       "exceptions_allowed": false,
-      "source_refs": ["src/prompt-protection.js", "src/installer.js", "codex/agents", "codex/AGENTS.md"],
+      "source_refs": [
+        "src/prompt-protection.js",
+        "src/installer.js",
+        "codex/agents",
+        "codex/AGENTS.md",
+        "docs/scoped-pr-workflow.md"
+      ],
       "responsible_gate": "governance_gate",
-      "evidence_requirements": ["Canonical prompt digests, physical path safety, safe permission profile identity, and a non-mutating effective write-boundary probe."],
-      "approval": { "approved_by": { "kind": "human", "id": "gustavo", "runtime": "manual" }, "approved_at": "2026-09-03T16:00:00Z", "rationale": "Approved after Issue #18 Phase A to make prompt protection a deterministic blocking boundary.", "reference": "issue:18" }
+      "evidence_requirements": [
+        "For installed managed execution: canonical prompt digests, physical path safety, safe permission profile identity and effective write-boundary evidence. For package source: unchanged protection declarations and explicit separation of the instruction-based MVP from managed execution; source checks do not attest a live runtime."
+      ],
+      "approval": {
+        "approved_by": {
+          "kind": "human",
+          "id": "gustavo",
+          "runtime": "manual"
+        },
+        "approved_at": "2026-10-15T15:30:45Z",
+        "rationale": "Approval recorded at this timestamp, not the original message time. The repository owner explicitly approved deferring technical reviewer-permission separation for an instruction-based MVP with clear scope and subsequent checks. This changes product policy only; platform restrictions, installed-prompt immutability, launcher blocking, independent ownership and v1 handoffs remain binding.",
+        "reference": "human-decision:instruction-review-mvp-2026-10-15"
+      }
     },
     {
       "schema_version": "1.0.0",

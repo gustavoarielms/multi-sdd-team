@@ -226,6 +226,7 @@ test("npm package contains only the supported Codex distribution", async (contex
     "docs/functional-spec.md",
     "docs/issue-13-quality-proof.md",
     "docs/issue-18-docker-first-runtime.md",
+    "docs/scoped-pr-workflow.md",
     "docs/technical-spec.md",
     "governance/README.md",
     "governance/adapters/v1/node-architecture-notice-header.md",

@@ -112,10 +112,10 @@ export const CANONICAL_ENGINEERING_GATE_BINDINGS = Object.freeze({
 export const APPROVED_GOVERNANCE_RULES = Object.freeze({
   "GOV-CATALOG-INTEGRITY-001": Object.freeze({ version: 1, digest: "sha256:88d7119b6b2ad954bf5d9036818e5445391c3f3d63c8f956d5dfded9d7a0e78b" }),
   "GOV-CODEX-ROLE-CATALOG-001": Object.freeze({ version: 1, digest: "sha256:039673dc096c71ca43dc05bda04fcd340dcb1f942c118450aeac03a3b253b498" }),
-  "GOV-REVIEW-REPORTONLY-001": Object.freeze({ version: 2, digest: "sha256:7efb55a76a38e7f59d4d468f544d7ab3b88576b67604b74b21c1c013c79e1c5a" }),
+  "GOV-REVIEW-REPORTONLY-001": Object.freeze({ version: 3, digest: "sha256:5dd81448da2a23b640b609e8dd57f81059d1055e583e7e0947665aea5dd37995" }),
   "GOV-REVIEW-HANDOFF-001": Object.freeze({ version: 2, digest: "sha256:6d09129b6fe33ee9e1d1da43f1fc16ce9a3dc1c68d8b699223c3f3f40ba674d5" }),
   "GOV-PIPELINE-ORDER-001": Object.freeze({ version: 1, digest: "sha256:72491722fedff21829e355a77ba271e63bbebdaa97ebfc85c5769f71ab85af8c" }),
-  "GOV-MANAGED-PROMPT-PROTECTION-001": Object.freeze({ version: 1, digest: "sha256:f66425e1e4ebcaf5a3205b0c9696bfcee8b227e21b5c354feaa4db6dab8036da" }),
+  "GOV-MANAGED-PROMPT-PROTECTION-001": Object.freeze({ version: 2, digest: "sha256:06eb77e93f25c14639940bc1810a0d5787f4ebda3dd67dfa534269ed7a49cbfa" }),
   "GOV-REMEDIATION-LOOP-001": Object.freeze({ version: 2, digest: "sha256:fdfbaaa3b767e5a0ba347ddf32ac9e42433147740b83d4ae5c9bf7aaffa84d10" }),
   "GOV-ORCHESTRATOR-AUTHORITY-001": Object.freeze({ version: 1, digest: "sha256:04236ecb671e0cd140de6ec4def89881f8ffc3328536dfe0bce7365c7eca591c" }),
   "GOV-ROLE-CAPABILITY-001": Object.freeze({ version: 3, digest: "sha256:805a952ae840acf5a844f7ac6f31bc35e5dc223a608b6bdb8cb2d255fcd273d3" }),

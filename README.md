@@ -340,6 +340,13 @@ together through the existing human-controlled update procedure; mixed version
 2/3 package and pipeline configurations fail closed. A new Codex session is
 required after the update. This change does not enable `launch`.
 
+The [scoped PR workflow](docs/scoped-pr-workflow.md) defines authorized
+implementation, checks, commit/push, PR review, and corrections, ending at
+explicit human merge approval. The source-review MVP uses report-only
+instructions and before/after observations while technical permission separation
+is deferred. It does not claim isolation, enable the managed launcher, or
+authorize publication for a local-only task.
+
 ## Quick usage
 
 After installation, open the target project in Codex and describe the outcome
