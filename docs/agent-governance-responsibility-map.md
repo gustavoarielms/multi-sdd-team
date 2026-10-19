@@ -45,6 +45,32 @@ It authorizes isolated implementation and validation, including independent
 review. It does not authorize merge, npm publication, installation in projects,
 global configuration changes, Task 4, or deployment.
 
+### Scoped delivery policy — 2026-10-14
+
+The [scoped PR workflow](scoped-pr-workflow.md) records the repository owner's approval to
+define and adapt the delivery policy, its task-specific authorization boundary,
+and the review-runtime blocker verified on that date. Commit, push, PR, and
+corrections may form one authorized delivery cycle; merge still needs explicit
+human approval of the final PR SHA. This addition changes no catalog rule,
+trust binding, runtime guarantee, or required independent gate.
+
+### Instruction-based source-review MVP approval — 2026-10-15
+
+The repository owner explicitly deferred technical reviewer-permission separation in favor
+of a complete prompt, clear scope and subsequent deviation checks. The supplied
+transcript and recording timestamp are in the [scoped workflow](scoped-pr-workflow.md).
+This authorizes local adaptation of source policy and the reviewer prompt;
+it does not authorize a reviewer run, publication, merge or platform changes
+in the current preparation task.
+
+For the narrowly scoped native source-review mode, report-only is an instruction
+and independent ownership constraint, not a claim that available tools cannot
+write. `GOV-REVIEW-REPORTONLY-001` version 3 and
+`GOV-MANAGED-PROMPT-PROTECTION-001` version 2, with updated trust bindings,
+record this product decision. Managed installed prompts remain protected and
+the launcher stays disabled. Reviewer JSON schemas, gate identities, other
+rules, applicability conditions and remediation ownership remain unchanged.
+
 ## Implemented catalog and checks
 
 `governance/rules/v1/catalog.json` holds approved and proposed rules in one

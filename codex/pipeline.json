@@ -14,7 +14,9 @@
     "Findings return to the implementation owner, checks rerun, and the originating reviewer revalidates the updated revision.",
     "Architecture rules and exceptions require approval by the user or a designated human authority.",
     "Architecture, quality, and security review gates emit pure governance JSON that must validate before dependent work continues. A valid envelope is not a passing gate decision.",
-    "Managed prompts under .codex/agents are immutable to every AI-mediated stage; only a human-controlled package update outside the agent workflow may replace them."
+    "Managed prompts under .codex/agents are immutable to every AI-mediated stage; only a human-controlled package update outside the agent workflow may replace them.",
+    "Task-scoped delivery authorization may cover commit, push, draft PR, verified review requests, and remediation without intermediate permission requests. It never substitutes for runtime protection or applicable gates; main_integrate is a verified handoff, not Git merge. Merge requires explicit human approval of the final PR SHA; never enable auto-merge.",
+    "The 2026-10-15 source-repository review MVP permits inherited write-capable tools under report-only instructions and before/after observation, without claiming isolation. It is limited to explicitly scoped native Codex reviews of multi-sdd-team source without installed managed prompts; platform restrictions, v1 handoffs, applicable gates, and human merge approval remain in force."
   ],
   "strategies": {
     "INLINE": {
@@ -99,7 +101,7 @@
             "security_review",
             "review"
           ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision. Assemble the verified handoff for human merge approval; this stage does not authorize Git merge or auto-merge. Follow the scoped delivery policy in AGENTS.md."
         }
       ]
     },
@@ -185,7 +187,7 @@
             "security_review",
             "review"
           ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision. Assemble the verified handoff for human merge approval; this stage does not authorize Git merge or auto-merge. Follow the scoped delivery policy in AGENTS.md."
         }
       ]
     },
@@ -271,7 +273,7 @@
             "security_review",
             "review"
           ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision. Assemble the verified handoff for human merge approval; this stage does not authorize Git merge or auto-merge. Follow the scoped delivery policy in AGENTS.md."
         }
       ]
     },
@@ -357,7 +359,7 @@
             "security_review",
             "review"
           ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision. Assemble the verified handoff for human merge approval; this stage does not authorize Git merge or auto-merge. Follow the scoped delivery policy in AGENTS.md."
         }
       ]
     },
@@ -443,7 +445,7 @@
             "security_review",
             "review"
           ],
-          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision."
+          "action": "Complete only after all applicable dependencies and gates pass. A skipped conditional stage must record why its condition does not apply; optional never means skippable when applicable. Findings return to the implementation owner, checks rerun, and the originating gate revalidates the updated revision. Assemble the verified handoff for human merge approval; this stage does not authorize Git merge or auto-merge. Follow the scoped delivery policy in AGENTS.md."
         }
       ]
     }
@@ -453,7 +455,7 @@
     "Reject any architecture_reviewer, tester_reviewer, or hacker handoff that is not valid agent-result JSON for the expected role and runtime.",
     "Never treat invalid structured review output as a passing gate or continue to a dependent stage.",
     "A required gate that failed, is invalid, remains unresolved, or was not run blocks dependent work and completion. Independent authorized work may continue.",
-    "Never start or delegate work when managed prompt protection is drifted, elevated, legacy, or unproven.",
+    "Never start or delegate work when managed prompt protection is drifted, elevated, legacy, or unproven in a managed-runtime workflow. The separately approved instruction-based source-review MVP is not a managed-runtime launch or an attestation; it follows AGENTS.md and cannot enable launch, use test hooks, install prompts, or override platform restrictions.",
     "Never ask for escalation, invoke init or update, or delegate a bypass to modify .codex/agents.",
     "Independent reviewers are report-only; implementation ownership and independent review ownership must remain separate.",
     "Architecture rules and exceptions require explicit approval by the user or a designated human authority.",

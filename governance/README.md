@@ -260,8 +260,12 @@ canonical result settles.
 - Codex agent configuration supplies the JSON-only contract, while the main
   session policy requires the deterministic CLI validator before accepting a
   review handoff.
-- Codex reviewer sandboxes are read-only and their prompts prohibit implementation
-  ownership or conditional write exceptions.
+- Codex reviewer source declarations request read-only profiles and prohibit
+  implementation ownership or conditional mutation authority. These declarations
+  do not prove effective sandbox/tool restrictions. The explicitly approved
+  [source-review MVP](../docs/scoped-pr-workflow.md) permits inherited capable
+  tools under report-only instructions and before/after observation; managed
+  runtime protection checks and the disabled launcher remain unchanged.
 - Project and global Codex installers copy the v1 schemas, canonical catalog,
   check registry, engineering gate registry, and quality profile under
   `.codex/governance/` or `$CODEX_HOME/governance/`.
